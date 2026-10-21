@@ -261,8 +261,7 @@
 | 询盘与分析 `leads-analytics` | 访问分析 | `/analytics` | `analytics.read` | 国家聚合、PV/UV/活跃会话等数据。 |
 | 报价与文件 `quotes-files` | 报价模板 | `/quote-templates` | `quote-template.read` | Excel 模板上传、版本、字段映射。 |
 | 报价与文件 `quotes-files` | 导出记录 | `/quote-exports` | `quote-export.read` | 下载历史导出文件、删除记录与物理文件联动。 |
-| 报价与文件 `quotes-files` | Excel 转 PDF | `/excel-pdf` | `file-convert.read` | 文件转换任务与下载。 |
-| 报价与文件 `quotes-files` | 形式发票 PI | `/pi` | `pi.read` | PI 草稿、明细、版本和 PDF/Excel 输出。 |
+| 报价与文件 `quotes-files` | 形式发票 PI | `/pi` | `pi.read` | PI 草稿、明细、版本和 Excel 输出。 |
 | 内容管理 `content-management` | 广告管理 | `/ads` | `ad.read` | 广告素材、投放位、启用状态和时间范围。 |
 | 内容管理 `content-management` | 内容页面 | `/content-pages` | `content.read` | About、Contact、FAQ 等页面维护。 |
 | 系统管理（优先核实 `administration` / `system`） | 用户管理 | `/users` | `user.read` | 用户 CRUD；登录账号、角色、状态分权操作。 |

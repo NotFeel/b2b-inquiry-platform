@@ -118,14 +118,6 @@ export const MENU_SEED: MenuSeed[] = [
         labels: { 'zh-CN': '导出记录', 'en-US': 'Exports' },
       },
       {
-        code: 'pdf-conversions',
-        route: '/pdf-conversions',
-        icon: 'swap',
-        permissionCode: 'pdf.convert',
-        sortOrder: 43,
-        labels: { 'zh-CN': 'Excel 转 PDF', 'en-US': 'Excel to PDF' },
-      },
-      {
         code: 'pi-documents',
         route: '/pi-documents',
         icon: 'invoice',

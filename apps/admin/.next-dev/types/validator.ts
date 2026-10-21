@@ -153,15 +153,6 @@ type LayoutConfig<Route extends LayoutRoutes = LayoutRoutes> = {
   type __Unused = __Check
 }
 
-// Validate ../../src/app/[locale]/(admin)/pdf-conversions/page.tsx
-{
-  type __IsExpected<Specific extends AppPageConfig<"/[locale]/pdf-conversions">> = Specific
-  const handler = {} as typeof import("../../src/app/[locale]/(admin)/pdf-conversions/page.js")
-  type __Check = __IsExpected<typeof handler>
-  // @ts-ignore
-  type __Unused = __Check
-}
-
 // Validate ../../src/app/[locale]/(admin)/pi-documents/page.tsx
 {
   type __IsExpected<Specific extends AppPageConfig<"/[locale]/pi-documents">> = Specific

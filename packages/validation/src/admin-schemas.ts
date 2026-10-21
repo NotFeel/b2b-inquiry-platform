@@ -1075,12 +1075,6 @@ export const quoteExportPreviewSchema = quoteExportCreateSchema.omit({ templateI
 });
 export type QuoteExportPreviewInput = z.infer<typeof quoteExportPreviewSchema>;
 
-export const pdfConversionCreateSchema = z.object({
-  fileAssetId: uuidSchema,
-  sheetName: z.string().trim().max(120).nullable().optional(),
-});
-export type PdfConversionCreateInput = z.infer<typeof pdfConversionCreateSchema>;
-
 // --------------------------------------------------------------------- PI
 
 export const piPartySchema = z.object({

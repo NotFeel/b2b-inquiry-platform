@@ -3,7 +3,7 @@
 > 仓库：NotFeel/b2b-inquiry-platform
 > 默认分支：main
 > 文档版本：1.0
-> 目标：把当前 pnpm monorepo 部署到公网服务器，支持前台产品目录、后台管理、API、后台任务、PostgreSQL、Redis、图片存储与 PDF 处理。
+> 目标：把当前 pnpm monorepo 部署到公网服务器，支持前台产品目录、后台管理、API、后台任务、PostgreSQL、Redis、图片存储以及商品报价/PI Excel 导出。
 >
 > **重要现状说明**：当前仓库包含 `infra/docker-compose.dev.yml`，仅用于本地 PostgreSQL / Redis 开发依赖；检查仓库树时未发现生产 Dockerfile、生产 Docker Compose 或 GitHub Actions 部署 workflow。因此，本手册先提供“单台 Linux 服务器 + Docker 运行 PostgreSQL/Redis + Node 服务由 systemd 托管”的首发路径。不要直接使用开发 Compose 作为生产编排。
 
@@ -35,7 +35,7 @@ flowchart TB
 | 场景 | CPU | 内存 | SSD | 说明 |
 |---|---:|---:|---:|---|
 | 测试/验收 | 2 vCPU | 4 GB | 60–80 GB | 可作预发布，同机全套生产组件会较紧张 |
-| **建议首发生产** | **4 vCPU** | **8 GB** | **160 GB NVMe** | 适合低至中等访问、单副本；必须监控数据库、内存与 PDF 峰值 |
+| **建议首发生产** | **4 vCPU** | **8 GB** | **160 GB NVMe** | 适合低至中等访问、单副本；必须监控数据库、内存与 Excel 导出峰值 |
 | 图片/PDF任务较多或流量增长 | 8 vCPU | 16 GB | 250 GB+ NVMe | 可提高 worker 并发，优先将 PostgreSQL 与对象存储外置 |
 
 以上是规划建议，不是压测结果或容量保证。应根据并发量、图片规模、PDF频率、数据库增长和监控调整。
@@ -236,9 +236,6 @@ UPLOAD_MAX_BYTES=10485760
 UPLOAD_MAX_PIXELS=50000000
 WORKER_CONCURRENCY=2
 FILE_DELETE_SWEEP_INTERVAL_SECONDS=30
-PDF_CONVERTER_PATH=soffice
-PDF_CONVERTER_TIMEOUT_SECONDS=120
-PDF_MAX_OUTPUT_PAGES=200
 
 BOOTSTRAP_ADMIN_USERNAME=YOUR_ADMIN_USERNAME
 BOOTSTRAP_ADMIN_PASSWORD=
@@ -593,7 +590,7 @@ curl -i http://127.0.0.1:3002/health/ready
 - [ ] 商品创建/编辑、图片上传、主图与排序正常。
 - [ ] 测试图片删除确实清理存储对象；失败时留存可重试记录，不能假报成功。
 - [ ] Redis 队列可被 worker 消费。
-- [ ] 若启用 Excel/PDF/PI，验证成功路径、大文件、超时和重试。
+- [ ] 验证商品报价 Excel 与 PI Excel 的成功路径、大文件、超时和重试。
 - [ ] 数据库备份已完成，恢复演练已记录。
 - [ ] HTTPS 自动续期、服务自启、磁盘/内存告警已验证。
 
@@ -681,7 +678,6 @@ systemd `WorkingDirectory` 指向 `/opt/b2b-inquiry-platform/current`。切换�
 | Prisma 连不上 DB | DATABASE_URL、用户权限、数据库健康、URL 编码 | `docker exec b2b-postgres pg_isready -U b2b_app -d b2b_catalog` |
 | migration 失败 | 数据库、权限、锁表、migration 状态与 SQL | `pnpm --filter @b2b/database run migrate:status` |
 | Worker 不消费任务 | Redis URL、队列前缀、进程、worker 日志 | `systemctl status b2b-worker`；`journalctl -u b2b-worker -n 300` |
-| PDF 失败 | soffice 是否存在、临时磁盘、内存和超时 | 检查 `PDF_CONVERTER_PATH` 与 worker 日志 |
 | 图片上传/删除失败 | S3 权限、Storage Driver 配置一致性、删除任务 | 查看 API/worker 日志和持久化文件操作记录 |
 | 磁盘增长 | Docker 日志、journal、发布包、导出临时文件 | `df -h`；`docker system df`；`sudo journalctl --disk-usage` |
 | 重启后服务不恢复 | systemd enable、路径、环境变量、持久化卷 | `systemctl is-enabled b2b-api`；检查 volume 和 WorkingDirectory |
@@ -709,7 +705,8 @@ systemd `WorkingDirectory` 指向 `/opt/b2b-inquiry-platform/current`。切换�
 
 ## 17. 下一步要补齐的生产自动化
 
-1. 为 Storefront、Admin、API、Worker 编写多阶段 Dockerfile，固定运行时版本并以非 root 用户运行；PDF worker 使用包含 LibreOffice 的独立镜像。
+1. 为 Storefront、Admin、API、Worker 编写多阶段 Dockerfile，固定运行时版本
+   并以非 root 用户运行。
 2. 增加生产 `compose.yml`：内部网络、健康检查、资源限制、日志轮转、持久化卷、数据库/Redis不暴露公网。
 3. 为生产应用建立最小权限数据库角色；迁移作为独立发布步骤，而不是由多个 API 实例同时执行。
 4. 建立 GitHub Actions：PR 阶段执行 install/lint/typecheck/test/build；发布阶段构建不可变镜像、推送镜像仓库，并通过受控部署 Agent 更新服务器。

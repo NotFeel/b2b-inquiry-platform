@@ -18,7 +18,6 @@ import { InquiryModule } from './modules/inquiry/inquiry.module';
 import { JobsModule } from './modules/jobs/jobs.module';
 import { LeadsModule } from './modules/leads/leads.module';
 import { MenusModule } from './modules/menus/menus.module';
-import { PdfModule } from './modules/pdf/pdf.module';
 import { PiModule } from './modules/pi/pi.module';
 import { ProductsModule } from './modules/products/products.module';
 import { QuoteModule } from './modules/quote/quote.module';
@@ -51,7 +50,6 @@ import { UsersModule } from './modules/users/users.module';
     LeadsModule,
     AnalyticsModule,
     QuoteModule,
-    PdfModule,
     PiModule,
     JobsModule,
     AuditModule,

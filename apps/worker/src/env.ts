@@ -48,9 +48,6 @@ const schema = z.object({
     // local driver, and a union without a default fails validation outright.
     .default(true)
     .transform((value) => value === true || value === 'true'),
-  PDF_CONVERTER_PATH: z.string().default('soffice'),
-  PDF_CONVERTER_TIMEOUT_SECONDS: z.coerce.number().int().min(10).max(900).default(120),
-  PDF_MAX_OUTPUT_PAGES: z.coerce.number().int().min(1).max(2000).default(200),
   IMAGE_DERIVATIVE_WIDTHS: z.string().default('320,640,1280'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 });

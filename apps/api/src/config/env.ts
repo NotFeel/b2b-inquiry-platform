@@ -53,10 +53,6 @@ export const envSchema = z
     UPLOAD_MAX_PIXELS: z.coerce.number().int().min(1_000_000).max(500_000_000).default(50_000_000),
     IMAGE_DERIVATIVE_WIDTHS: z.string().trim().default('320,640,1280'),
 
-    PDF_CONVERTER_PATH: z.string().trim().default('soffice'),
-    PDF_CONVERTER_TIMEOUT_SECONDS: z.coerce.number().int().min(10).max(900).default(120),
-    PDF_MAX_OUTPUT_PAGES: z.coerce.number().int().min(1).max(2000).default(200),
-
     QUEUE_PREFIX: z.string().trim().default('b2b'),
     WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(50).default(4),
     JOB_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(3),

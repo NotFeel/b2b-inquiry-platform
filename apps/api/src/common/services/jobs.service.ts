@@ -8,7 +8,8 @@ import { JsonLogger } from '../logger.service';
 import { RedisService } from './redis.service';
 
 // The API only enqueues work; long-running processing happens in the worker so
-// no HTTP request blocks on Excel, PDF or image processing (docs/02 §3, docs/08).
+// no HTTP request blocks on Excel export, image processing or file cleanup
+// (docs/02 §3, docs/08).
 @Injectable()
 export class JobsService implements OnModuleDestroy {
   private readonly queues = new Map<QueueName, Queue>();

@@ -705,18 +705,6 @@ export interface QuoteExportJobSummary {
   updatedAt: string;
 }
 
-export interface PdfConversionJobSummary {
-  id: string;
-  sourceFileName: string;
-  status: JobStatus;
-  errorCode: string | null;
-  outputUrl: string | null;
-  pageCount: number | null;
-  outputSizeBytes: number | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface PiItemSummary {
   id: string;
   lineNo: number;

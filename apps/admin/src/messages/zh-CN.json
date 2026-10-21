@@ -560,8 +560,6 @@
     "quoteTemplatesDescription": "模板按版本管理：重新上传同名模板会生成新版本，历史导出仍指向当时的版本。",
     "quoteExports": "导出记录",
     "quoteExportsDescription": "导出在后台异步生成，可下载；删除会同时清理数据库记录与对象存储文件。",
-    "pdfConversions": "Excel 转 PDF",
-    "pdfConversionsDescription": "仅接受无宏的 .xlsx；转换在隔离 Worker 中执行，不在请求线程内转换。",
     "piDocuments": "形式发票 PI",
     "piDocumentsDescription": "行金额与总额由服务端使用 Decimal 重新计算；已发出的 PI 修改时创建修订版本。",
     "templateName": "模板名称",
@@ -576,9 +574,6 @@
     "deleteExport": "删除文件与记录",
     "deleteExportConfirm": "将同时删除数据库记录与对象存储文件，删除失败会保留任务并重试。确认继续？",
     "deletionPending": "删除已提交，文件将在后台清理。",
-    "convert": "转换为 PDF",
-    "output": "输出文件",
-    "pageCount": "页数",
     "piNo": "PI 编号",
     "revision": "修订版本",
     "currency": "币种",
@@ -1279,9 +1274,6 @@
       "export": "导出报价",
       "delete": "删除导出文件"
     },
-    "pdf": {
-      "convert": "Excel 转 PDF"
-    },
     "pi": {
       "read": "查看 PI",
       "create": "创建 PI",
@@ -1322,7 +1314,6 @@
     "content": "内容",
     "file": "文件",
     "quote": "报价",
-    "pdf": "PDF 转换",
     "pi": "PI 单据",
     "lead": "线索",
     "customer": "客户",

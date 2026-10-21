@@ -9,7 +9,6 @@ import { processAnalyticsRollup } from './jobs/analytics-rollup';
 import { processFileDeletion } from './jobs/file-delete';
 import { startFileDeletionSweeper } from './jobs/file-delete-sweeper';
 import { processImageDerivatives } from './jobs/image-derivatives';
-import { processPdfConversion } from './jobs/pdf-convert';
 import { processQuoteExport } from './jobs/quote-export';
 
 async function main(): Promise<void> {
@@ -63,11 +62,6 @@ async function main(): Promise<void> {
       QUEUE_NAMES.quoteExport,
       async (job) => processQuoteExport(job.data, { prisma, storage, env, logger }),
       { ...commonOptions, concurrency: 2 },
-    ),
-    new Worker(
-      QUEUE_NAMES.pdfConvert,
-      async (job) => processPdfConversion(job.data, { prisma, storage, env, logger }),
-      { ...commonOptions, concurrency: 1 },
     ),
     new Worker(
       QUEUE_NAMES.fileDelete,

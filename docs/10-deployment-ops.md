@@ -13,7 +13,7 @@
 
 - Web：Storefront、Admin 分开构建/部署，可共享 CDN 入口但路由隔离。
 - API：NestJS，至少一实例；扩容前确认 Session 与队列状态不依赖单实例内存。
-- Worker：独立部署，根据 Excel/PDF/图像队列负载扩容；PDF 转换 Worker 建议和 API 网络/权限隔离。
+- Worker：独立部署，根据商品报价/PI Excel、图像、清理和聚合队列负载扩容。
 - DB：PostgreSQL 私有网络、自动备份、连接池、监控慢查询与磁盘。
 - Redis：任务队列与必要缓存；设置认证、网络隔离、内存上限与持久性策略（根据任务风险选择）。
 - 对象存储：私有 Bucket、最小权限访问、版本/生命周期策略（结合业务删除要求谨慎配置）。
@@ -38,7 +38,8 @@
 4. 执行受控 bootstrap 命令创建初始管理员并强制首次改密。
 5. 启动 API、Worker、Admin、Storefront；验证 health/readiness。
 6. 配置域名、HTTPS、CDN 缓存规则、上传回调/签名 URL、备份与监控告警。
-7. 完成前台无价格泄漏、登录 RBAC、WhatsApp、文件上传、导出/PDF、备份恢复烟雾测试。
+7. 完成前台无价格泄漏、登录 RBAC、WhatsApp、文件上传、Excel 导出和备份恢复
+   烟雾测试。
 
 ## 4. 数据库迁移与回滚
 
@@ -57,14 +58,17 @@
 
 ## 6. 监控与告警
 
-最低监控：Web/API 可用性、5xx、P95 latency、数据库连接/CPU/磁盘、Redis 队列积压、导出/PDF 失败率、对象存储访问错误、磁盘临时目录、登录失败、文件删除任务积压和访问量采集异常。
+最低监控：Web/API 可用性、5xx、P95 latency、数据库连接/CPU/磁盘、Redis
+队列积压、Excel 导出失败率、对象存储访问错误、磁盘临时目录、登录失败、
+文件删除任务积压和访问量采集异常。
 
 日志字段推荐 `timestamp, level, service, environment, requestId, jobId, actorId(optional), action, durationMs, errorCode`。禁止记录密码、Token、完整 IP、客户完整电话和文件内容。
 
 ## 7. 故障处理手册
 
 - API 不可用：查看入口/TLS、容器状态、readiness、数据库/Redis连接、最近部署版本；必要时回滚应用。
-- Excel/PDF 队列积压：检查 worker 健康、LibreOffice 进程残留、临时磁盘、内存和失败任务；暂停新任务避免资源耗尽。
+- Excel 导出队列积压：检查 worker 健康、临时磁盘、内存和失败任务；暂停新任务
+  避免资源耗尽。
 - 上传失败：检查签名 URL、Bucket 权限、大小限制、MIME 验证、存储配额。
 - 文件删除失败：查看 `file_deletion_jobs` 与错误码，重试幂等删除；不要通过手动删数据库记录掩盖残留对象。
 - 删除任务长期 `QUEUED`：确认 worker 正在消费、API 与 worker 使用同一个 `REDIS_URL`，且两者 `STORAGE_DRIVER`/桶配置一致。worker 每 `FILE_DELETE_SWEEP_INTERVAL_SECONDS`（默认 30 秒）会从数据库 outbox 恢复超过 60 秒未被处理的任务；恢复成功前图片保持 `DELETE_PENDING`，不会假报已物理删除。

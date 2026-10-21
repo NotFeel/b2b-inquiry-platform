@@ -28,7 +28,7 @@ b2b-inquiry-platform/
 │   │   ├── src/modules/{auth,users,rbac,categories,products,...}/
 │   │   ├── src/common/{guards,filters,pipes,interceptors}/
 │   │   └── test/
-│   └── worker/                       # Excel/PDF/图片与清理任务
+│   └── worker/                       # Excel、图片、访问聚合与清理任务
 │       ├── src/jobs/
 │       └── test/
 ├── packages/
@@ -72,7 +72,8 @@ b2b-inquiry-platform/
 - 数据库模型和迁移：`database/prisma/`。迁移必须随代码入库，名称包含时间/业务目的。
 - 手工 SQL：只放 `database/sql/seeds`、`maintenance`、`reports`。线上变更默认走版本化迁移；任何手工生产 SQL 必须双人审核、备份并有回滚脚本。
 - 产品图片等运行时上传文件不得提交到 Git；对象存储保存真实文件，代码仓库只保留必要的占位示例图。
-- 生成的导出 Excel、PDF、临时文件和用户上传文件不得写入源码目录；本地开发可用 `./.data`（加入 `.gitignore`），生产使用对象存储/独立挂载盘。
+- 生成的导出 Excel、临时文件和用户上传文件不得写入源码目录；本地开发可用
+  `./.data`（加入 `.gitignore`），生产使用对象存储/独立挂载盘。
 - 测试数据与真实客户数据分离；fixture 使用虚构 SKU、虚构电话和虚构公司信息。
 - `.env` 文件只在本地/部署环境存在；提交 `.env.example` 中变量名、说明和安全默认值，不放真实密钥。
 
