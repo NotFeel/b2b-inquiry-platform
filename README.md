@@ -48,6 +48,7 @@
 | `docs/08-excel-pdf-pi.md` | 报价单 Excel、Excel 转 PDF、PI 制作规则 |
 | `docs/09-whatsapp-leads-analytics.md` | WhatsApp 客户、去重和访问看板规则 |
 | `docs/10-deployment-ops.md` | 部署、环境、备份、发布和故障处理 |
+| `docs/29-production-server-deployment-runbook.md` | 生产服务器规格、首次部署、运行时、发布回滚与上线验收 |
 | `docs/11-image-upload.md` | 图片上传、处理、存储和维护 |
 | `docs/12-test-acceptance.md` | 测试策略与验收清单 |
 | `docs/13-security-privacy.md` | 安全、隐私、价格隔离规则 |
