@@ -15,7 +15,7 @@
 | 询盘 | `POST /public/inquiry-intents` 仅记录意向，SKU 校验 + 批量上限 + 限流 | `apps/api/src/modules/inquiry` |
 | 客户去重 | E.164 规范化、国家码缺失需人工选择、唯一约束兜底、并发冲突转接待记录 | `apps/api/src/modules/leads` |
 | 访问分析 | 匿名会话哈希、国家聚合、实时（心跳窗口）、原始事件保留期清理任务 | `apps/api/src/modules/analytics`、`apps/worker/src/jobs/analytics-rollup.ts` |
-| 单据 | 报价模板版本化、异步导出、两步删除（记录+对象存储）、PI 服务端 Decimal 重算与修订版本 | `apps/api/src/modules/{quote,pdf,pi}`、`apps/worker/src/jobs` |
+| 单据 | 报价模板版本化、商品报价/PI Excel 异步导出、两步删除（记录+对象存储）、PI 服务端 Decimal 重算与修订版本 | `apps/api/src/modules/{quote,pi}`、`apps/worker/src/jobs` |
 | 前台 | 英文目录站：首页、目录/搜索/分类树/分页、详情、批量询盘清单、About/Contact/FAQ、sitemap/robots | `apps/storefront` |
 | 后台 | 中英双语：登录、总览、商品、品类、标签、广告、内容、WhatsApp 客户、访问分析、单据、用户/角色/菜单/字典/设置/审计 | `apps/admin` |
 | 设计系统 | 单一 Token 源 + 组件库 + 响应式/无障碍基线 | `packages/ui` |
@@ -28,10 +28,9 @@
 1. **端到端/E2E 测试**：Playwright 主流程（登录 → 维护商品 → 前台选品 → WhatsApp 跳转）尚未编写。
 2. **文件库 UI**：上传与文件资产管理 API 已实现（`/admin/files/*`），后台暂未提供独立管理页面；商品/广告表单通过 file asset id 关联。
 3. **S3 驱动**：`S3StorageDriver` 已实现 SigV4 签名逻辑，但未在真实 S3/MinIO 上验证。
-4. **PDF 转换**：Worker 已实现隔离调用 LibreOffice headless 与超时/错误码映射，本机未安装 `soffice`，因此未做真实转换验证。
-5. **GeoIP**：需要自行放置 `GeoLite2-Country.mmdb`；未放置时国家一律记为未知（合法分类）。
-6. **缓存失效**：前台采用 ISR（`revalidate` 60~300s），尚未接入按 tag 的主动失效。
-7. **CI**：`lint / typecheck / test / build` 已可本地执行，尚未配置流水线文件与迁移校验作业。
+4. **GeoIP**：需要自行放置 `GeoLite2-Country.mmdb`；未放置时国家一律记为未知（合法分类）。
+5. **缓存失效**：前台采用 ISR（`revalidate` 60~300s），尚未接入按 tag 的主动失效。
+6. **CI**：`lint / typecheck / test / build` 已可本地执行，尚未配置流水线文件与迁移校验作业。
 
 ## 3. 本地运行
 
@@ -898,3 +897,55 @@ useEffect(() => { /* 记录 previouslyFocused → 聚焦弹窗内第一个可聚
 - 部署时须设置 `STOREFRONT_API_PROXY_TARGET`，并验证 Storefront 服务端可访问
   API；若依赖真实 IP 的国家统计/限流，还需确认代理覆盖并转发可信
   `X-Forwarded-For`。本次无数据库迁移。
+
+## 22. 移除 Excel 转 PDF、保留商品报价与 PI Excel（2026-10-21）
+
+### 22.1 功能边界与共享链路
+
+- 完整移除 Excel 转 PDF 的后台页面、API module/controller/service、DTO、
+  `pdf-convert` 队列契约、Worker 注册与 LibreOffice 专属环境变量；功能不再只靠
+  隐藏菜单或按钮下线。
+- 保留 `quote-export` 队列、`JobsService`、BullMQ、Redis、对象存储与
+  `apps/worker/src/jobs/quote-export.ts`。商品报价和 PI 的 `.xlsx` 均通过该
+  Worker 使用 ExcelJS 生成。
+- 保留图片派生、物理文件删除、删除任务 sweeper 和访问聚合 Worker；未清理或
+  重建任何共享基础设施。
+- 保留 `PdfConversionJob` Prisma 模型、初始建表迁移、历史审计筛选标签，以及
+  文件删除/内容资产检查中对历史 `pdf_conversion_job` 的保护分支。本次不删除
+  历史 PDF 记录或对象存储文件。
+
+### 22.2 菜单与数据库迁移
+
+- 菜单 seed 不再声明 `pdf-conversions`，seed 自身的 orphan 规则会停用既有菜单
+  记录；新增非破坏性迁移
+  `20261021100000_disable_excel_to_pdf_menu` 仅将既有菜单设为
+  `enabled=false, visible=false`。
+- 迁移不删除 `Menu`、`MenuTranslation`、`Permission`、`RolePermission`、
+  `PdfConversionJob`、审计或文件。回滚 SQL 已附在迁移文件注释中，只在应用版本
+  回滚时恢复菜单可见性。
+
+### 22.3 自动化验证
+
+- API：21 个测试文件、181 项通过，包含 PDF module/route/schema/queue contract
+  负向接线检查及报价 Excel 接线保护。
+- Worker：4 个测试文件、10 项通过；真实生成并重新读取商品报价与 PI 工作簿，
+  覆盖 SKU 前导零、公式注入转义、内部报价列和 PI 总额。
+- Admin：14 个测试文件、148 项通过。
+- Storefront：6 个测试文件、19 项通过；Contracts 15 项通过。`pnpm run lint`、
+  `pnpm run typecheck` 与 `pnpm run build` 通过。
+- 本次变更文件通过 Prettier；全仓 `pnpm run format:check` 仍报告 124 个既有
+  未格式化文件，均不在本次功能改动范围，未做无关批量格式化。
+- 全仓库负向扫描确认业务代码、菜单、API、任务注册、配置和部署文件中不再存在
+  可执行的 Excel 转 PDF 实现；剩余 PDF 命中均为历史数据保护、历史审计和证书/
+  通用文档上传等有意保留能力。
+- 本地非破坏性迁移实测成功；只读核对显示 `pdf-conversions` 菜单为
+  `enabled=false, visible=false`，`pdf_conversion_jobs` 历史表仍存在。
+
+### 22.4 发布与回滚
+
+- 发布前暂停创建新的 PDF 转换任务并确认在途任务处理策略，保留并观察共享 Redis；
+  不得清空队列或生产数据。
+- 新版本 API 不再暴露 `/admin/pdf-conversions`，Worker 不再消费
+  `pdf-convert` 队列；旧版本遗留任务不会被识别为 `quote-export` 任务。
+- 回滚应用镜像时同步恢复旧 Worker；历史 PDF 表、文件和审计始终保留。若恢复旧
+  后台菜单，按迁移注释重新启用 `pdf-conversions` 菜单。

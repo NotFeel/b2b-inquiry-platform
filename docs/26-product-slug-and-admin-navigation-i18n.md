@@ -320,7 +320,6 @@ GET /api/admin/navigation?locale=en-US
 | 报价与文件 | Quotes & Files |
 | 报价模板 | Quote Templates |
 | 导出记录 | Export History |
-| Excel 转 PDF | Excel to PDF |
 | 形式发票 PI | Proforma Invoices (PI) |
 | 内容管理 | Content Management |
 | 广告管理 | Advertisement Management |

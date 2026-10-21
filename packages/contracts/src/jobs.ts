@@ -4,7 +4,6 @@
 export const QUEUE_NAMES = {
   imageDerivatives: 'image-derivatives',
   quoteExport: 'quote-export',
-  pdfConvert: 'pdf-convert',
   fileDelete: 'file-delete',
   analyticsRollup: 'analytics-rollup',
 } as const;
@@ -33,12 +32,6 @@ export interface QuoteExportJobPayload {
   };
 }
 
-export interface PdfConvertJobPayload {
-  jobId: string;
-  sourceStorageKey: string;
-  sheetName?: string | null;
-}
-
 export interface FileDeleteJobPayload {
   jobId?: string;
   /** Absent for aggregate tasks that only finalise database state. */
@@ -56,6 +49,5 @@ export interface AnalyticsRollupJobPayload {
 export type JobPayload =
   | ImageDerivativeJobPayload
   | QuoteExportJobPayload
-  | PdfConvertJobPayload
   | FileDeleteJobPayload
   | AnalyticsRollupJobPayload;

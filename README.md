@@ -15,9 +15,10 @@
 - 后台：独立 Next.js 应用 + TypeScript；中英 UI 翻译字典。
 - API：NestJS + TypeScript，REST API，统一 DTO、校验和异常响应。
 - 数据库：PostgreSQL；ORM：Prisma（锁定稳定版本，并在开始开发时依据官方迁移指南固定主版本）。
-- 缓存与异步任务：Redis + BullMQ；异步处理 Excel 导出、PDF 转换和图片处理。
+- 缓存与异步任务：Redis + BullMQ；异步处理商品报价/PI Excel 导出和图片处理。
 - 文件：开发环境可本地存储；生产环境优先 S3 兼容对象存储，数据库只保存文件元数据和 object key。
-- Excel：ExcelJS 或经过评估的同类库；PDF 转换由隔离的 LibreOffice headless worker 完成，不在 API 请求线程同步转换。
+- Excel：ExcelJS；商品报价单和 PI 的 `.xlsx` 由 Worker 异步生成。Excel 转
+  PDF 不属于目标功能。
 - 部署：Docker；反向代理 Nginx 或托管平台入口；TLS；CI 执行 lint、typecheck、test、build、migration check。
 
 具体版本必须在仓库 package.json / lockfile / Docker 镜像中固定；不得让 AI 根据“latest”临时升级核心依赖。
@@ -45,7 +46,7 @@
 | `docs/25-product-category-picker-selectability.md` | 商品品类选择器不可选故障排查、紧凑 Popover/树形选择器、受控 categoryId、编辑回填、列表筛选、国际化、响应式与端到端验收 |
 | `docs/26-product-slug-and-admin-navigation-i18n.md` | 商品 URL slug 名称/随机数字生成、唯一性冲突处理、后台 en-US 菜单/分组/面包屑翻译、MenuTranslation 数据补齐、locale 缓存与语言切换修复 |
 | `docs/07-backend-standard.md` | 后端开发规范 |
-| `docs/08-excel-pdf-pi.md` | 报价单 Excel 与 PI 制作规则（需按最新功能范围维护） |
+| `docs/08-excel-pdf-pi.md` | 商品报价单 Excel 与 PI 制作规则 |
 | `docs/30-remove-excel-to-pdf-keep-quote-excel.md` | 移除 Excel 转 PDF、保留商品报价单 Excel 导出的 AI 可执行实施、测试、部署与回滚方案 |
 | `docs/09-whatsapp-leads-analytics.md` | WhatsApp 客户、去重和访问看板规则 |
 | `docs/10-deployment-ops.md` | 部署、环境、备份、发布和故障处理 |
@@ -66,7 +67,7 @@
 2. 项目初始化时锁定运行时、包管理器、主要依赖版本并提交 lockfile。
 3. 按数据库模型创建正式迁移；所有迁移必须代码审查，禁止直接改线上表。
 4. 先完成登录/RBAC、字典、全局设置和品类；再做产品、前台目录/详情和 WhatsApp 询盘。
-5. 后续实现 Excel、PDF、PI、访问看板；每个功能同时交付测试与运维说明。
+5. 后续实现商品报价 Excel、PI、访问看板；每个功能同时交付测试与运维说明。
 6. 发布前执行安全、响应式、SEO、价格泄漏和文件上传专项验收。
 
 ## 5. 核心产品原则

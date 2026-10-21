@@ -90,7 +90,6 @@ const DEFAULT_STATUS: Record<string, number> = {
   [ERROR_CODES.userModified]: HttpStatus.CONFLICT,
   [ERROR_CODES.userNotFound]: HttpStatus.NOT_FOUND,
   [ERROR_CODES.storageError]: HttpStatus.BAD_GATEWAY,
-  [ERROR_CODES.pdfConverterUnavailable]: HttpStatus.SERVICE_UNAVAILABLE,
   [ERROR_CODES.internalError]: HttpStatus.INTERNAL_SERVER_ERROR,
 };
 

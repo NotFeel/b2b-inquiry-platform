@@ -38,7 +38,6 @@
 | Tags | `GET /admin/tags?q&status&usage&locale&page&pageSize`（分页列表，服务端搜索 code 与全部 locale 名称，返回 `label`/`labels`/`productCount`/`missingLocales`）、`GET /admin/tags/options`（仅启用标签，供商品表单选择）、`GET /admin/tags/:id`、`POST /admin/tags`（`tag.create`）、`PATCH /admin/tags/:id`（`tag.update`，支持 `expectedUpdatedAt` 乐观并发，`code` 不可改）、`PATCH /admin/tags/:id/status`（启停）、`DELETE /admin/tags/:id`（`tag.delete`，被商品引用时 409 `TAG_IN_USE`） |
 | Media | `/admin/files/upload-init` 或受控上传接口、`/admin/files/:id` |
 | Quote | `/admin/quote-templates`、`POST /admin/quote-exports`、`GET /admin/jobs/:jobId`、`GET /admin/quote-exports`、`DELETE /admin/quote-exports/:id` |
-| PDF | `POST /admin/pdf-conversions`、`GET /admin/pdf-conversions/:jobId` |
 | PI | `/admin/pi-documents`、`POST /admin/pi-documents/:id/export`、`POST /admin/pi-documents/:id/revisions` |
 | Leads | `GET /admin/customers?phone=...`、`POST /admin/customers/lookup`、`POST /admin/inquiry-activities`、`GET /admin/inquiry-activities` |
 | Analytics | `GET /admin/analytics/overview`、`GET /admin/analytics/timeseries`、`GET /admin/analytics/countries`、`GET /admin/analytics/realtime` |
@@ -52,7 +51,8 @@
 
 ## 5. 幂等与任务状态
 
-- 导出/PDF/图片处理任务接受 `Idempotency-Key` 或服务端防重复机制；重复提交不应生成多份重复任务。
+- 导出/图片处理任务接受 `Idempotency-Key` 或服务端防重复机制；重复提交不应
+  生成多份重复任务。
 - Job 状态标准化：`queued`、`processing`、`succeeded`、`failed`、`cancel_requested`、`cancelled`。
 - 每种失败返回稳定 `error.code`，UI 根据 code 显示中英文消息；详细异常留在内部日志并脱敏。
 

@@ -560,8 +560,6 @@
     "quoteTemplatesDescription": "Templates are versioned: re-uploading the same name creates a new version and historic exports keep pointing at the version they used.",
     "quoteExports": "Exports",
     "quoteExportsDescription": "Exports are produced asynchronously and can be downloaded; deleting removes the database record and the stored file together.",
-    "pdfConversions": "Excel to PDF",
-    "pdfConversionsDescription": "Macro-free .xlsx only; conversion runs in the isolated worker instead of the request thread.",
     "piDocuments": "Proforma invoices",
     "piDocumentsDescription": "Line amounts and totals are recomputed server-side with Decimal; issued PIs change through a new revision.",
     "templateName": "Template",
@@ -576,9 +574,6 @@
     "deleteExport": "Delete file and record",
     "deleteExportConfirm": "This removes the database record and the stored file. A failure keeps a retryable task. Continue?",
     "deletionPending": "Deletion submitted; the file is being removed in the background.",
-    "convert": "Convert to PDF",
-    "output": "Output",
-    "pageCount": "Pages",
     "piNo": "PI no.",
     "revision": "Revision",
     "currency": "Currency",
@@ -1279,9 +1274,6 @@
       "export": "Export quotes",
       "delete": "Delete exports"
     },
-    "pdf": {
-      "convert": "Convert spreadsheets to PDF"
-    },
     "pi": {
       "read": "View PIs",
       "create": "Create PIs",
@@ -1322,7 +1314,6 @@
     "content": "Content",
     "file": "Files",
     "quote": "Quotes",
-    "pdf": "PDF conversion",
     "pi": "PI documents",
     "lead": "Leads",
     "customer": "Customers",

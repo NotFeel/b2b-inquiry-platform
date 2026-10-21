@@ -54,6 +54,7 @@ const ACTION_OPTIONS = [
   'quote_template.status',
   'quote_export.create',
   'quote_export.delete_requested',
+  // Historical records stay filterable; the feature no longer creates this action.
   'pdf.convert_requested',
   'pi.create',
   'pi.update',
