@@ -252,3 +252,11 @@ export async function uploadProductImage(file: File): Promise<MediaStagingResult
   }
   return (payload as { data: MediaStagingResult }).data;
 }
+
+/** Re-reads the authoritative Sharp processing state after a staging upload. */
+export async function getProductImageStaging(fileAssetId: string): Promise<MediaStagingResult> {
+  const response = await adminApi.get<{ data: MediaStagingResult }>(
+    `/admin/media/staging/${fileAssetId}`,
+  );
+  return response.data;
+}

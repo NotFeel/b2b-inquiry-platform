@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { PURPOSE_RULES, detectKind, readImageDimensions } from './file-validation';
+import {
+  PURPOSE_RULES,
+  detectKind,
+  isPublicFileServable,
+  readImageDimensions,
+} from './file-validation';
 
 /** Minimal but structurally valid PNG header + IHDR chunk. */
 function pngBuffer(width: number, height: number): Buffer {
@@ -104,8 +109,38 @@ describe('content upload purposes', () => {
     expect(PURPOSE_RULES['factory-media-video']).toEqual({
       kind: 'video',
       extensions: ['.mp4', '.webm'],
+      isPublic: true,
     });
     expect(PURPOSE_RULES['credential-document']?.kind).toBe('document');
     expect(PURPOSE_RULES['credential-document']?.extensions).toContain('.pdf');
+  });
+
+  it('keeps quote workbooks private while public image purposes opt in explicitly', () => {
+    expect(PURPOSE_RULES['quote-template']?.isPublic).toBe(false);
+    expect(PURPOSE_RULES['product-image']?.isPublic).toBe(true);
+  });
+
+  it('never serves product sources or private workbooks through the generic public route', () => {
+    expect(
+      isPublicFileServable({
+        isPublic: true,
+        purpose: 'product-image',
+        status: 'ready',
+      }),
+    ).toBe(false);
+    expect(
+      isPublicFileServable({
+        isPublic: false,
+        purpose: 'quote-template',
+        status: 'ready',
+      }),
+    ).toBe(false);
+    expect(
+      isPublicFileServable({
+        isPublic: true,
+        purpose: 'category-cover',
+        status: 'ready',
+      }),
+    ).toBe(true);
   });
 });

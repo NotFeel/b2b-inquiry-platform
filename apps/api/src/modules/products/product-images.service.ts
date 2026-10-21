@@ -54,7 +54,9 @@ export class ProductImagesService {
     return {
       id: image.id,
       fileAssetId: image.fileAssetId,
-      url: this.storage.publicUrl(image.storageKey),
+      url: image.fileAssetId
+        ? this.storage.adminProductImageUrl(image.fileAssetId)
+        : this.storage.publicUrl(image.storageKey),
       originalName: image.asset?.originalName ?? null,
       alt: image.altText,
       sortOrder: image.sortOrder,

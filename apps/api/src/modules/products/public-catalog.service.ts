@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { PUBLIC_LOCALE } from '@b2b/contracts';
+import { PUBLIC_LOCALE, imageAssetVersion, imageVariantStorageKey } from '@b2b/contracts';
 import type {
   PublicCategoryRef,
+  PublicImageVariant,
   PublicProductCard,
   PublicProductDetail,
   PublicProductImage,
@@ -13,6 +14,7 @@ import { StorageService } from '../../common/services/storage.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CategoriesService } from '../categories/categories.service';
 import { allowedTagColorToken, publicTagLabel } from '../tags/tag-policy';
+import { readStoredImageVariants } from '../files/image-variant-policy';
 
 // Explicit field whitelist for the public catalogue.
 //
@@ -44,7 +46,10 @@ export const PUBLIC_PRODUCT_SELECT = {
     // CSS": it is filtered at the query, so no public DTO can mention it and the
     // storefront cannot render a URL whose object is about to disappear
     // (docs/24 §4.4, §10).
-    where: { deleteState: 'READY' },
+    where: {
+      deleteState: 'READY',
+      OR: [{ fileAssetId: null }, { asset: { is: { isPublic: true } } }],
+    },
     select: {
       storageKey: true,
       altText: true,
@@ -52,6 +57,14 @@ export const PUBLIC_PRODUCT_SELECT = {
       isCover: true,
       width: true,
       height: true,
+      asset: {
+        select: {
+          id: true,
+          sha256: true,
+          status: true,
+          derivatives: true,
+        },
+      },
     },
     orderBy: [{ isCover: 'desc' }, { sortOrder: 'asc' }],
   },
@@ -286,13 +299,36 @@ export class PublicCatalogService {
   }
 
   private toPublicImage(image: PublicImageRow): PublicProductImage {
+    const asset = image.asset;
+    const version = asset ? imageAssetVersion(asset.id, asset.sha256) : null;
+    const variants: PublicImageVariant[] =
+      asset && version && asset.status === 'ready'
+        ? readStoredImageVariants(asset.derivatives)
+            .filter(
+              (variant) =>
+                variant.format === 'webp' &&
+                variant.key === imageVariantStorageKey(asset.id, version, variant.width),
+            )
+            .sort((left, right) => left.width - right.width)
+            .map((variant) => ({
+              width: variant.width,
+              format: 'webp',
+              url: this.storage.publicProductImageUrl(asset.id, version, `${variant.width}.webp`),
+            }))
+        : [];
+    const canonicalUrl =
+      variants.at(-1)?.url ??
+      (asset && version
+        ? this.storage.publicProductImageUrl(asset.id, version, 'source')
+        : this.storage.publicUrl(image.storageKey));
     return {
-      url: this.storage.publicUrl(image.storageKey),
+      url: canonicalUrl,
       alt: image.altText ?? '',
       width: image.width,
       height: image.height,
       isCover: image.isCover,
       sortOrder: image.sortOrder,
+      variants,
     };
   }
 

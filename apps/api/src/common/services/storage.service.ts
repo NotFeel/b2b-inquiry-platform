@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { publicImageVariantPath } from '@b2b/contracts';
 import { randomUUID } from 'node:crypto';
 import { extname } from 'node:path';
 import type { Readable } from 'node:stream';
@@ -24,7 +25,9 @@ export class StorageService {
     if (this.driver) return this.driver;
     if (this.env.STORAGE_DRIVER === 's3') {
       if (!this.env.S3_BUCKET || !this.env.S3_ACCESS_KEY_ID || !this.env.S3_SECRET_ACCESS_KEY) {
-        throw new Error('STORAGE_DRIVER=s3 requires S3_BUCKET, S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY.');
+        throw new Error(
+          'STORAGE_DRIVER=s3 requires S3_BUCKET, S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY.',
+        );
       }
       this.driver = new S3StorageDriver({
         endpoint: this.env.S3_ENDPOINT || `https://s3.${this.env.S3_REGION}.amazonaws.com`,
@@ -44,7 +47,9 @@ export class StorageService {
     const now = new Date();
     const year = now.getUTCFullYear().toString();
     const month = (now.getUTCMonth() + 1).toString().padStart(2, '0');
-    const extension = (forcedExtension ?? extname(originalName)).toLowerCase().replace(/[^a-z0-9.]/g, '');
+    const extension = (forcedExtension ?? extname(originalName))
+      .toLowerCase()
+      .replace(/[^a-z0-9.]/g, '');
     return `${prefix}/${year}/${month}/${randomUUID()}${extension}`;
   }
 
@@ -85,5 +90,17 @@ export class StorageService {
       return `${base}/${key}`;
     }
     return `${this.env.API_BASE_URL.replace(/\/+$/, '')}/api/v1/files/${key}`;
+  }
+
+  /** Immutable, publication-gated public product-image URL. */
+  publicProductImageUrl(assetId: string, version: string, name: string): string {
+    return `${this.env.API_BASE_URL.replace(/\/+$/, '')}${publicImageVariantPath(assetId, version, name)}`;
+  }
+
+  /** Authenticated admin-only preview for a product-image source object. */
+  adminProductImageUrl(assetId: string): string {
+    // Relative to the Admin origin so the browser uses its authenticated
+    // same-origin proxy and the session cookie is never sent cross-site.
+    return `/api/v1/admin/media/assets/${assetId}/preview`;
   }
 }

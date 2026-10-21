@@ -949,3 +949,24 @@ useEffect(() => { /* 记录 previouslyFocused → 聚焦弹窗内第一个可聚
   `pdf-convert` 队列；旧版本遗留任务不会被识别为 `quote-export` 任务。
 - 回滚应用镜像时同步恢复旧 Worker；历史 PDF 表、文件和审计始终保留。若恢复旧
   后台菜单，按迁移注释重新启用 `pdf-conversions` 菜单。
+
+## 23. 轻量部署图片优化 Phase 1（2026-10-21）
+
+- 复用现有 Sharp Worker，不新增图片服务或重复资产表；上传后先处于
+  `processing`，只有真实解码并生成、复核 WebP variants 后才进入 `ready`。
+- 默认生成 320/640/1280 WebP，不放大原图；AVIF 因缺少目标服务器 CPU/内存实测
+  暂不启用。开发机 2400×1600 合成图缩至 1280 宽的对照中，WebP q82 约 98–99 ms、
+  565,716 bytes；AVIF q55 约 1,316–1,328 ms、404,201 bytes，进程 RSS 约
+  160 MB，因此当前不把 AVIF 放入默认上传链路。
+- 公共商品图使用 `assetId + SHA-256 内容版本` 不可变 URL，前台卡片、详情图库与
+  询价缩略图通过 `srcset/sizes` 加载；商品未发布、图片删除中或版本不匹配时返回
+  404。
+- 商品源图改为后台鉴权预览；通用 public file 路由不再暴露 `product-image`。
+  报价模板 `isPublic=false`，PI/报价导出继续使用鉴权或短时签名下载。
+- 物理删除会清理源文件和全部 WebP variants；任一派生对象删除失败都会保留任务、
+  失败状态和重试能力，不再吞掉失败后假报成功。
+- 新增 Worker 配置：`IMAGE_PROCESSING_TIMEOUT_SECONDS=20`、
+  `IMAGE_PROCESSING_CONCURRENCY=1`、`IMAGE_WEBP_QUALITY=82`。本轮无数据库迁移。
+- 本轮未切换 SQLite、未移除 Redis/BullMQ、未删除历史图片或队列数据。
+- 自动化结果：Contracts 17、Worker 14、API 187、Admin 148、Storefront 21，
+  共 387 项通过；文件删除真实数据库/本地存储验收 20/20 通过。

@@ -268,6 +268,7 @@
       "deleteRetried": "已重新排队删除。",
       "retry": "重试删除",
       "deleting": "删除中",
+      "processing": "正在校验与优化",
       "uploadDone": "已上传",
       "uploaded": "已向图库添加 {{count}} 张图片。",
       "staged": "已暂存 {{count}} 张图片，保存商品后自动关联。",

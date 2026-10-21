@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import type { PublicImageVariant } from '@b2b/contracts';
 import { Button, IconWhatsApp } from '@b2b/ui';
 import { getTranslator } from '../lib/i18n';
 import { SelectProductButton, submitInquiry, useInquiry } from './inquiry-list';
@@ -9,7 +10,13 @@ import { useSiteConfig } from './site-context';
 
 interface Props {
   locale: string;
-  item: { sku: string; name: string; slug: string; imageUrl?: string | null };
+  item: {
+    sku: string;
+    name: string;
+    slug: string;
+    imageUrl?: string | null;
+    imageVariants?: PublicImageVariant[];
+  };
   /** The mobile bar is suppressed while the multi-select bar is visible. */
   showMobileBar?: boolean;
 }
@@ -35,7 +42,9 @@ export function DetailActions({ locale, item, showMobileBar = true }: Props) {
       .then((result) => {
         if (!result.opened) setError(t('inquiry.error'));
       })
-      .catch((caught: unknown) => setError(caught instanceof Error ? caught.message : t('inquiry.error')))
+      .catch((caught: unknown) =>
+        setError(caught instanceof Error ? caught.message : t('inquiry.error')),
+      )
       .finally(() => setBusy(false));
   };
 

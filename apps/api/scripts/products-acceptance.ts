@@ -20,6 +20,7 @@
 import { existsSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { deflateSync } from 'node:zlib';
+import { imageVariantStorageKey } from '@b2b/contracts';
 
 const BASE_URL = process.env.API_BASE_URL ?? 'http://localhost:3002';
 const APP_BASE_URL = process.env.APP_BASE_URL ?? 'http://localhost:3000';
@@ -29,7 +30,8 @@ const ADMIN_PASSWORD = process.env.QA_ADMIN_PASSWORD ?? '';
 const VIEWER_USERNAME = 'qa.product.viewer';
 const VIEWER_PASSWORD = 'QaProductViewer!2026';
 const ADMIN_FINAL_PASSWORD = process.env.QA_ADMIN_PASSWORD_FINAL ?? `${ADMIN_PASSWORD}Qa1!`;
-const STORAGE_ROOT = process.env.QA_STORAGE_ROOT ?? process.env.STORAGE_LOCAL_ROOT ?? './.data/uploads';
+const STORAGE_ROOT =
+  process.env.QA_STORAGE_ROOT ?? process.env.STORAGE_LOCAL_ROOT ?? './.data/uploads';
 
 let failures = 0;
 let checks = 0;
@@ -46,7 +48,9 @@ function expectEq(name: string, actual: unknown, expected: unknown): void {
   record(
     name,
     ok,
-    ok ? `= ${JSON.stringify(actual)}` : `expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
+    ok
+      ? `= ${JSON.stringify(actual)}`
+      : `expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
   );
 }
 
@@ -147,7 +151,17 @@ async function uploadImage(
   buffer: Buffer,
   fileName: string,
   contentType = 'image/png',
-): Promise<ApiResponse<{ data: { fileAssetId: string; storageKey: string; url: string } }>> {
+): Promise<
+  ApiResponse<{
+    data: {
+      fileAssetId: string;
+      storageKey: string;
+      version: string;
+      url: string | null;
+      status: 'processing' | 'ready' | 'failed';
+    };
+  }>
+> {
   const form = new FormData();
   form.append('file', new Blob([new Uint8Array(buffer)], { type: contentType }), fileName);
   const response = await fetch(`${API}/admin/media/staging`, {
@@ -164,18 +178,42 @@ async function uploadImage(
 }
 
 function storagePath(storageKey: string): string {
-  const root = isAbsolute(STORAGE_ROOT) ? STORAGE_ROOT : resolve(process.cwd(), '..', '..', STORAGE_ROOT);
+  const root = isAbsolute(STORAGE_ROOT)
+    ? STORAGE_ROOT
+    : resolve(process.cwd(), '..', '..', STORAGE_ROOT);
   return join(root, storageKey);
 }
 
-/** Responsive variants follow `<key without extension>__w<width>.webp`. */
-function derivativePath(storageKey: string, width: number): string {
-  return storagePath(`${storageKey.replace(/\.[a-z0-9]+$/i, '')}__w${width}.webp`);
+function derivativePath(asset: { fileAssetId: string; version: string }, width: number): string {
+  return storagePath(imageVariantStorageKey(asset.fileAssetId, asset.version, width));
 }
 
 async function publicFileExists(storageKey: string): Promise<boolean> {
   const response = await fetch(`${API}/files/${storageKey}`, { method: 'GET' });
   return response.status === 200;
+}
+
+async function urlExists(url: string): Promise<boolean> {
+  const response = await fetch(url, { method: 'GET' });
+  return response.status === 200;
+}
+
+async function waitForStaging(
+  fileAssetId: string,
+  timeoutMs = 60_000,
+): Promise<{ status: string; version: string }> {
+  const deadline = Date.now() + timeoutMs;
+  let last: { status: string; version: string } = { status: 'UNKNOWN', version: '' };
+  while (Date.now() < deadline) {
+    const response = await call<{ data: { status: string; version: string } }>(
+      'GET',
+      `/admin/media/staging/${fileAssetId}`,
+    );
+    last = response.body.data ?? last;
+    if (last.status === 'ready' || last.status === 'failed') return last;
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
+  }
+  return last;
 }
 
 /** Recursively collects every object key, to prove no price field leaks out. */
@@ -239,7 +277,11 @@ async function main(): Promise<void> {
     const rotated = await call('POST', '/admin/auth/change-password', {
       body: { currentPassword: ADMIN_PASSWORD, newPassword: ADMIN_FINAL_PASSWORD },
     });
-    record('auth.passwordRotated', rotated.status === 200 || rotated.status === 201, `status=${rotated.status}`);
+    record(
+      'auth.passwordRotated',
+      rotated.status === 200 || rotated.status === 201,
+      `status=${rotated.status}`,
+    );
     const relogin = await call('POST', '/admin/auth/login', {
       body: { username: ADMIN_USERNAME, password: ADMIN_FINAL_PASSWORD },
       anonymous: true,
@@ -324,7 +366,12 @@ async function main(): Promise<void> {
     'create.unknownCategoryRejected',
     (
       await call('POST', '/admin/products', {
-        body: { ...basePayload, sku: `${sku}-3`, slug: `${slug}-3`, categoryId: '00000000-0000-0000-0000-000000000000' },
+        body: {
+          ...basePayload,
+          sku: `${sku}-3`,
+          slug: `${slug}-3`,
+          categoryId: '00000000-0000-0000-0000-000000000000',
+        },
       })
     ).status,
     400,
@@ -356,7 +403,11 @@ async function main(): Promise<void> {
   // --------------------------------------------------------- publish demands a usable image
   expectEq(
     'publish.withoutImageRejected',
-    codeOf(await call('POST', `/admin/products/${productId}/publish`, { body: { publishStatus: 'published' } })),
+    codeOf(
+      await call('POST', `/admin/products/${productId}/publish`, {
+        body: { publishStatus: 'published' },
+      }),
+    ),
     'PRODUCT_PUBLISH_REQUIRES_IMAGE',
   );
 
@@ -366,24 +417,36 @@ async function main(): Promise<void> {
     makePng(640, 480, [40, 160, 90]),
     makePng(800, 600, [50, 80, 200]),
   ];
-  const staged: { fileAssetId: string; storageKey: string }[] = [];
+  const staged: { fileAssetId: string; storageKey: string; version: string }[] = [];
   for (const [index, buffer] of imageBuffers.entries()) {
     const uploaded = await uploadImage(buffer, `qa-${stamp}-${index}.png`);
     expectEq(`upload.status#${index}`, uploaded.status, 201);
-    if (uploaded.body.data) staged.push(uploaded.body.data);
+    if (uploaded.body.data) {
+      const processed = await waitForStaging(uploaded.body.data.fileAssetId);
+      expectEq(`upload.sharpReady#${index}`, processed.status, 'ready');
+      staged.push({
+        fileAssetId: uploaded.body.data.fileAssetId,
+        storageKey: uploaded.body.data.storageKey,
+        version: processed.version,
+      });
+    }
   }
   expectEq('upload.stagedCount', staged.length, 3);
 
   // A fake image with a PNG name must be refused by the signature check.
-  const fake = await uploadImage(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>'), 'fake.png', 'image/png');
+  const fake = await uploadImage(
+    Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>'),
+    'fake.png',
+    'image/png',
+  );
   expectEq('upload.rejectsForgedSignature', fake.status, 400);
   expectEq('upload.forgedSignatureCode', codeOf(fake), 'UPLOAD_SIGNATURE_MISMATCH');
 
-  const attached = await call<{ data: { images: { id: string; isCover: boolean }[]; coverImageId: string } }>(
-    'POST',
-    `/admin/products/${productId}/images`,
-    { body: { assets: staged.map((asset) => ({ fileAssetId: asset.fileAssetId })) } },
-  );
+  const attached = await call<{
+    data: { images: { id: string; isCover: boolean }[]; coverImageId: string };
+  }>('POST', `/admin/products/${productId}/images`, {
+    body: { assets: staged.map((asset) => ({ fileAssetId: asset.fileAssetId })) },
+  });
   expectEq('gallery.attachStatus', attached.status, 201);
   const imageIds = (attached.body.data?.images ?? []).map((image) => image.id);
   expectEq('gallery.attachedThree', imageIds.length, 3);
@@ -410,10 +473,9 @@ async function main(): Promise<void> {
     (await call('PUT', `/admin/products/${productId}/images/${secondId}/cover`)).status,
     200,
   );
-  const afterCover = await call<{ data: { images: { id: string; isCover: boolean }[]; coverImageId: string } }>(
-    'GET',
-    `/admin/products/${productId}`,
-  );
+  const afterCover = await call<{
+    data: { images: { id: string; isCover: boolean }[]; coverImageId: string };
+  }>('GET', `/admin/products/${productId}`);
   expectEq('gallery.singleCover', afterCover.body.data?.coverImageId, secondId);
   expectEq(
     'gallery.onlyOneCoverFlag',
@@ -433,9 +495,13 @@ async function main(): Promise<void> {
   expectEq(
     'gallery.foreignImageRejected',
     (
-      await call('PATCH', `/admin/products/${productId}/images/00000000-0000-0000-0000-000000000000`, {
-        body: { altText: 'x' },
-      })
+      await call(
+        'PATCH',
+        `/admin/products/${productId}/images/00000000-0000-0000-0000-000000000000`,
+        {
+          body: { altText: 'x' },
+        },
+      )
     ).status,
     404,
   );
@@ -468,16 +534,35 @@ async function main(): Promise<void> {
     !publicKeys.some((key) => key.includes('price') || key.includes('cost')),
     publicKeys.filter((key) => key.includes('price') || key.includes('cost')).join(','),
   );
-  record(
-    'public.noStorageKeyLeaked',
-    !publicKeys.some((key) => key.includes('storagekey')),
-  );
-  const publicImages = (publicDetail.body.data?.images ?? []) as { url: string }[];
+  record('public.noStorageKeyLeaked', !publicKeys.some((key) => key.includes('storagekey')));
+  const publicImages = (publicDetail.body.data?.images ?? []) as {
+    url: string;
+    variants: { width: number; url: string; format: string }[];
+  }[];
   expectEq('public.imagesVisible', publicImages.length, 3);
   expectEq(
     'public.firstImageIsCover',
     (publicDetail.body.data?.images as { isCover: boolean }[] | undefined)?.[0]?.isCover,
     true,
+  );
+  record(
+    'public.imagesUseVersionedUrls',
+    publicImages.every(
+      (image) =>
+        image.url.includes('/api/v1/files/images/') &&
+        image.variants.length > 0 &&
+        image.variants.every(
+          (variant) => variant.format === 'webp' && variant.url.includes('/api/v1/files/images/'),
+        ),
+    ),
+  );
+  record(
+    'public.versionedImageServed',
+    publicImages[0]?.url ? await urlExists(publicImages[0].url) : false,
+  );
+  record(
+    'public.productSourceNotPublic',
+    staged[0]?.storageKey ? !(await publicFileExists(staged[0].storageKey)) : false,
   );
 
   // ------------------------------------------------- home pre-order curation
@@ -554,6 +639,10 @@ async function main(): Promise<void> {
     (await call('GET', `/public/products/${slug}`, { anonymous: true })).status,
     404,
   );
+  record(
+    'public.versionedImageHiddenAfterUnpublish',
+    publicImages[0]?.url ? !(await urlExists(publicImages[0].url)) : false,
+  );
 
   // -------------------------------------------------- permanent image delete
   const deleteTarget = imageIds[0] as string;
@@ -574,7 +663,8 @@ async function main(): Promise<void> {
   record('imageDelete.publicUrlGone', !(await publicFileExists(targetKey)));
   record(
     'imageDelete.derivativesGone',
-    !existsSync(derivativePath(targetKey, 320)) && !existsSync(derivativePath(targetKey, 640)),
+    !existsSync(derivativePath(staged[0] as { fileAssetId: string; version: string }, 320)) &&
+      !existsSync(derivativePath(staged[0] as { fileAssetId: string; version: string }, 640)),
   );
 
   const afterDelete = await call<{ data: { images: { id: string }[] } }>(
@@ -587,9 +677,7 @@ async function main(): Promise<void> {
   );
   expectEq(
     'imageDelete.repeatRejected',
-    (
-      await call('DELETE', `/admin/products/${productId}/images/${deleteTarget}`)
-    ).status,
+    (await call('DELETE', `/admin/products/${productId}/images/${deleteTarget}`)).status,
     404,
   );
   expectEq(
@@ -629,10 +717,14 @@ async function main(): Promise<void> {
         body: { password: VIEWER_PASSWORD },
       });
     }
-    let viewerLogin = await call<{ user?: { mustChangePassword?: boolean } }>('POST', '/admin/auth/login', {
-      body: { username: VIEWER_USERNAME, password: VIEWER_PASSWORD },
-      anonymous: true,
-    });
+    let viewerLogin = await call<{ user?: { mustChangePassword?: boolean } }>(
+      'POST',
+      '/admin/auth/login',
+      {
+        body: { username: VIEWER_USERNAME, password: VIEWER_PASSWORD },
+        anonymous: true,
+      },
+    );
     if (viewerLogin.status === 401) {
       viewerLogin = await call('POST', '/admin/auth/login', {
         body: { username: VIEWER_USERNAME, password: `${VIEWER_PASSWORD}-rotated` },
@@ -660,22 +752,27 @@ async function main(): Promise<void> {
     );
     expectEq(
       'auth.viewerCannotDeleteImage',
-      (await call('DELETE', `/admin/products/${productId}/images/${imageIds[2]}`, {
-        session: viewerSession,
-      })).status,
+      (
+        await call('DELETE', `/admin/products/${productId}/images/${imageIds[2]}`, {
+          session: viewerSession,
+        })
+      ).status,
       403,
     );
     expectEq(
       'auth.viewerCannotUpload',
-      (await uploadImageWithSession(makePng(80, 60, [10, 10, 10]), 'viewer.png', viewerSession)).status,
+      (await uploadImageWithSession(makePng(80, 60, [10, 10, 10]), 'viewer.png', viewerSession))
+        .status,
       403,
     );
     expectEq(
       'auth.viewerCannotUpdateProduct',
-      (await call('PATCH', `/admin/products/${productId}`, {
-        session: viewerSession,
-        body: { isFeatured: true },
-      })).status,
+      (
+        await call('PATCH', `/admin/products/${productId}`, {
+          session: viewerSession,
+          body: { isFeatured: true },
+        })
+      ).status,
       403,
     );
     const viewerDetail = await call<{ data: { priceVisible: boolean; priceCny: string | null } }>(
@@ -691,7 +788,11 @@ async function main(): Promise<void> {
   // after a network error cannot fail with a confusing conflict.
   expectEq(
     'publish.idempotentRepeat',
-    (await call('POST', `/admin/products/${productId}/publish`, { body: { publishStatus: 'published' } })).status,
+    (
+      await call('POST', `/admin/products/${productId}/publish`, {
+        body: { publishStatus: 'published' },
+      })
+    ).status,
     201,
   );
   await call('POST', `/admin/products/${productId}/unpublish`);
@@ -710,9 +811,13 @@ async function main(): Promise<void> {
     404,
   );
   const remainingKeys = staged.slice(1).map((asset) => asset.storageKey);
+  const remainingDerivatives = staged
+    .slice(1)
+    .flatMap((asset) => [320, 640, 800].map((width) => derivativePath(asset, width)));
   record(
     'productDelete.allImageObjectsGone',
-    remainingKeys.every((key) => !existsSync(storagePath(key))),
+    remainingKeys.every((key) => !existsSync(storagePath(key))) &&
+      remainingDerivatives.every((path) => !existsSync(path)),
     remainingKeys.join(','),
   );
 

@@ -27,6 +27,7 @@ describe('public product projection', () => {
     const keys = collectKeys(PUBLIC_PRODUCT_SELECT);
     expect(keys).toContain('sku');
     expect(keys).toContain('translations.select.name');
+    expect(keys).toContain('images.select.asset.select.derivatives');
     expect(keys).not.toContain('createdById');
     expect(keys).not.toContain('publishStatus');
   });
@@ -42,7 +43,9 @@ describe('storefront source', () => {
     ];
     for (const file of files) {
       const content = readFileSync(join(REPO_ROOT, file), 'utf8');
-      expect(content, `${file} must not mention priceCny/unitPrice`).not.toMatch(/priceCny|unitPrice|price_cny/);
+      expect(content, `${file} must not mention priceCny/unitPrice`).not.toMatch(
+        /priceCny|unitPrice|price_cny/,
+      );
     }
   });
 });

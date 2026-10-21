@@ -1,6 +1,11 @@
 'use client';
 
-import type { AuthenticatedAdminUser, MenuNode } from '@b2b/contracts';
+import type {
+  AuthenticatedAdminUser,
+  FileAssetProcessingStatus,
+  FileAssetStatusResult,
+  MenuNode,
+} from '@b2b/contracts';
 
 // Requests default to the admin origin and are forwarded by the Next proxy.
 // This keeps the HttpOnly session cookie first-party and avoids browser CORS.
@@ -123,6 +128,7 @@ export async function uploadFile(
   url: string | null;
   originalName: string;
   storageKey: string;
+  status: FileAssetProcessingStatus;
 }> {
   const form = new FormData();
   form.append('file', file);
@@ -142,5 +148,41 @@ export async function uploadFile(
       payload.error?.requestId,
     );
   }
-  return payload as { id: string; url: string | null; originalName: string; storageKey: string };
+  let uploaded = payload as {
+    id: string;
+    url: string | null;
+    originalName: string;
+    storageKey: string;
+    status: FileAssetProcessingStatus;
+  };
+  if (uploaded.status === 'processing') {
+    const processed = await waitForFileAsset(uploaded.id);
+    uploaded = {
+      ...uploaded,
+      status: processed.status,
+      url: processed.url ?? uploaded.url,
+    };
+  }
+  if (uploaded.status !== 'ready') {
+    throw new AdminApiError(
+      422,
+      'UPLOAD_PROCESSING_FAILED',
+      'The image could not be safely decoded or optimized.',
+    );
+  }
+  return uploaded;
+}
+
+async function waitForFileAsset(id: string, timeoutMs = 60_000): Promise<FileAssetStatusResult> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const response = await adminApi.get<{ data: FileAssetStatusResult }>(
+      `/admin/files/${id}/status`,
+    );
+    if (response.data.status !== 'processing') {
+      return response.data;
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
+  }
+  throw new AdminApiError(504, 'UPLOAD_PROCESSING_FAILED', 'The image processing timed out.');
 }

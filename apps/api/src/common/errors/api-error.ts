@@ -73,6 +73,7 @@ const DEFAULT_STATUS: Record<string, number> = {
   [ERROR_CODES.fileOperationNotFound]: HttpStatus.NOT_FOUND,
   [ERROR_CODES.fileOperationNotRetryable]: HttpStatus.CONFLICT,
   [ERROR_CODES.fileNotFound]: HttpStatus.NOT_FOUND,
+  [ERROR_CODES.uploadProcessingFailed]: HttpStatus.UNPROCESSABLE_ENTITY,
   [ERROR_CODES.storageUnavailable]: HttpStatus.SERVICE_UNAVAILABLE,
   [ERROR_CODES.tagCodeConflict]: HttpStatus.CONFLICT,
   [ERROR_CODES.tagInUse]: HttpStatus.CONFLICT,

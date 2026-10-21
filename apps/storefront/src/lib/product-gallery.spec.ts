@@ -13,5 +13,7 @@ describe('product gallery image preview', () => {
     expect(source).toContain('setLightboxOpen(true)');
     expect(source).toContain('<Modal');
     expect(source).toContain('aria-haspopup="dialog"');
+    expect(source).toContain('srcSet={variantSrcSet(active.variants)}');
+    expect(source).toContain('sizes="(max-width: 1023px) 100vw, 50vw"');
   });
 });

@@ -55,6 +55,7 @@ interface CategoryLabel {
 
 interface SummaryImageRow {
   id: string;
+  fileAssetId: string | null;
   storageKey: string;
   altText: string | null;
   sortOrder: number;
@@ -143,6 +144,7 @@ export class ProductsService {
           images: {
             select: {
               id: true,
+              fileAssetId: true,
               storageKey: true,
               altText: true,
               sortOrder: true,
@@ -188,6 +190,7 @@ export class ProductsService {
         images: {
           select: {
             id: true,
+            fileAssetId: true,
             storageKey: true,
             altText: true,
             sortOrder: true,
@@ -895,7 +898,11 @@ export class ProductsService {
       sortOrder: product.sortOrder,
       imageCount: usableImages.length,
       hasCover: cover !== null,
-      coverImageUrl: cover ? this.storage.publicUrl(cover.storageKey) : null,
+      coverImageUrl: cover
+        ? cover.fileAssetId
+          ? this.storage.adminProductImageUrl(cover.fileAssetId)
+          : this.storage.publicUrl(cover.storageKey)
+        : null,
       coverImageAlt: cover?.altText ?? null,
       pendingImageDeletes: product.images.filter((image) => image.deleteState !== 'READY').length,
       tagCodes: product.tags.map((productTag) => productTag.tag.code),

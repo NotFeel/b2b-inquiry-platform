@@ -10,11 +10,12 @@ import {
   type ReactNode,
 } from 'react';
 import Link from 'next/link';
-import { buildInquiryMessage, buildWhatsAppUrl } from '@b2b/contracts';
+import { buildInquiryMessage, buildWhatsAppUrl, type PublicImageVariant } from '@b2b/contracts';
 import { Button, IconClipboardList, IconWhatsApp, MediaFrame } from '@b2b/ui';
 import { createInquiryIntent, sendAnalyticsEvent } from '../lib/api';
 import { getTranslator, localeHref } from '../lib/i18n';
 import { normalizeQuantity } from '../lib/inquiry';
+import { INQUIRY_THUMB_IMAGE_SIZES, imageSrcSet } from '../lib/image-srcset';
 import { QuantityControl } from './quantity-control';
 import { useSiteConfig } from './site-context';
 
@@ -23,6 +24,7 @@ export interface InquiryItem {
   name: string;
   slug: string;
   imageUrl?: string | null;
+  imageVariants?: PublicImageVariant[];
   quantity: number;
 }
 
@@ -82,6 +84,14 @@ export function InquiryProvider({ limit, children }: { limit: number; children: 
                 name: String(item.name ?? item.sku),
                 slug: item.slug,
                 imageUrl: typeof item.imageUrl === 'string' ? item.imageUrl : null,
+                imageVariants: Array.isArray(item.imageVariants)
+                  ? item.imageVariants.filter(
+                      (variant) =>
+                        typeof variant?.url === 'string' &&
+                        Number.isInteger(variant?.width) &&
+                        variant.width > 0,
+                    )
+                  : [],
                 quantity: normalizeQuantity(Number(item.quantity ?? 1)),
               })),
           );
@@ -99,7 +109,10 @@ export function InquiryProvider({ limit, children }: { limit: number; children: 
   }, [items, ready]);
 
   const add = useCallback(
-    (item: Omit<InquiryItem, 'quantity'> & { quantity?: number }, quantity = item.quantity ?? 1) => {
+    (
+      item: Omit<InquiryItem, 'quantity'> & { quantity?: number },
+      quantity = item.quantity ?? 1,
+    ) => {
       setItems((current) => {
         const existing = current.find((candidate) => candidate.sku === item.sku);
         if (existing) {
@@ -172,7 +185,11 @@ export function useInquiry(): InquiryContextValue {
   return context;
 }
 
-function productUrlFor(item: InquiryItem, locale: string, sourceUrl: string | null): string | undefined {
+function productUrlFor(
+  item: InquiryItem,
+  locale: string,
+  sourceUrl: string | null,
+): string | undefined {
   if (!sourceUrl) return undefined;
   try {
     return `${new URL(sourceUrl).origin}/${locale}/products/${item.slug}`;
@@ -332,7 +349,12 @@ export function InquiryBar({ whatsappNumber, locale }: InquiryBarProps) {
             onClick={() => {
               setError(null);
               setBusy(true);
-              void submitInquiry(items, sessionId, { locale, sourceUrl, whatsappNumber, onMessage: setMessage })
+              void submitInquiry(items, sessionId, {
+                locale,
+                sourceUrl,
+                whatsappNumber,
+                onMessage: setMessage,
+              })
                 .catch((caught: unknown) => {
                   setError(caught instanceof Error ? caught.message : t('inquiry.error'));
                 })
@@ -382,7 +404,8 @@ export function InquiryPanel({ locale, whatsappNumber }: InquiryPanelProps) {
     setSourceUrl(window.location.href);
   }, []);
 
-  const preview = message ?? (items.length > 0 ? previewMessage(items, sourceUrl, locale, limit) : '');
+  const preview =
+    message ?? (items.length > 0 ? previewMessage(items, sourceUrl, locale, limit) : '');
 
   return (
     <div className="stack">
@@ -422,6 +445,8 @@ export function InquiryPanel({ locale, whatsappNumber }: InquiryPanelProps) {
                 <span className="inquiry-thumb">
                   <MediaFrame
                     src={item.imageUrl ?? null}
+                    srcSet={imageSrcSet(item.imageVariants)}
+                    sizes={INQUIRY_THUMB_IMAGE_SIZES}
                     alt={item.name}
                     ratio="1 / 1"
                     loading="lazy"
@@ -454,7 +479,9 @@ export function InquiryPanel({ locale, whatsappNumber }: InquiryPanelProps) {
         )}
       </div>
 
-      {limitReached ? <div className="notice notice-warning">{t('inquiry.limitReached', { limit })}</div> : null}
+      {limitReached ? (
+        <div className="notice notice-warning">{t('inquiry.limitReached', { limit })}</div>
+      ) : null}
       {error ? (
         <div className="notice notice-danger" role="alert">
           {error}

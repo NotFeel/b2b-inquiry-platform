@@ -112,7 +112,7 @@ async function resumeProductPurge(productId: string | null | undefined, deps: De
  * another entity still points at would corrupt that entity (docs/24 §4.2).
  */
 async function finaliseImageDeletion(payload: Payload, deps: Deps): Promise<void> {
-  const { prisma, storage, logger } = deps;
+  const { prisma, storage } = deps;
   const imageId = payload.entityId;
   if (!imageId) return;
 
@@ -126,14 +126,10 @@ async function finaliseImageDeletion(payload: Payload, deps: Deps): Promise<void
   // reachable through its thumbnail URL (docs/24 §4.1 step 3).
   const derivativeKeys = derivativeKeysOf(image?.asset?.derivatives);
   for (const key of derivativeKeys) {
-    try {
-      await storage.delete(key);
-    } catch (error) {
-      logger.warn('file.delete_derivative_failed', {
-        key: key.split('/').pop() ?? key,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+    // A derivative is still publicly addressable until its object is gone.
+    // Let the outer failure path retain the task/key and retry the whole
+    // idempotent delete; reporting success here would silently leak a file.
+    await storage.delete(key);
   }
 
   await prisma.$transaction(async (transaction) => {

@@ -113,6 +113,7 @@ export default async function ProductDetailPage({ params }: Props) {
             alt: image.alt || product.name,
             width: image.width,
             height: image.height,
+            variants: image.variants,
           }))}
           labels={{
             empty: t('product.imageUnavailable'),
@@ -164,6 +165,7 @@ export default async function ProductDetailPage({ params }: Props) {
               name: product.name,
               slug: product.slug,
               imageUrl: product.images[0]?.url ?? product.coverImage?.url ?? null,
+              imageVariants: product.images[0]?.variants ?? product.coverImage?.variants ?? [],
             }}
           />
         </div>

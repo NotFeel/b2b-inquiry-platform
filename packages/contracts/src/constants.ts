@@ -291,6 +291,7 @@ export const ERROR_CODES = {
   uploadSignatureMismatch: 'UPLOAD_SIGNATURE_MISMATCH',
   uploadTooLarge: 'UPLOAD_TOO_LARGE',
   uploadPixelLimitExceeded: 'UPLOAD_PIXEL_LIMIT_EXCEEDED',
+  uploadProcessingFailed: 'UPLOAD_PROCESSING_FAILED',
   fileNotFound: 'FILE_NOT_FOUND',
   jobFailed: 'JOB_FAILED',
   jobNotFound: 'JOB_NOT_FOUND',

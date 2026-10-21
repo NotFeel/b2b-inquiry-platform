@@ -49,6 +49,10 @@ const schema = z.object({
     .default(true)
     .transform((value) => value === true || value === 'true'),
   IMAGE_DERIVATIVE_WIDTHS: z.string().default('320,640,1280'),
+  UPLOAD_MAX_PIXELS: z.coerce.number().int().min(1_000_000).max(500_000_000).default(50_000_000),
+  IMAGE_PROCESSING_TIMEOUT_SECONDS: z.coerce.number().int().min(1).max(120).default(20),
+  IMAGE_PROCESSING_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(1),
+  IMAGE_WEBP_QUALITY: z.coerce.number().int().min(40).max(100).default(82),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 });
 
@@ -62,10 +66,13 @@ export function loadWorkerEnv(): WorkerEnv {
       .join('; ');
     throw new Error(`Invalid worker environment: ${issues}`);
   }
+  const imageWidths = parsed.data.IMAGE_DERIVATIVE_WIDTHS.split(',')
+    .map((value) => Number.parseInt(value.trim(), 10))
+    .filter((value) => Number.isFinite(value) && value > 0 && value <= 4096)
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .sort((left, right) => left - right);
   return {
     ...parsed.data,
-    imageWidths: parsed.data.IMAGE_DERIVATIVE_WIDTHS.split(',')
-      .map((value) => Number.parseInt(value.trim(), 10))
-      .filter((value) => Number.isFinite(value) && value > 0),
+    imageWidths: imageWidths.length > 0 ? imageWidths : [320, 640, 1280],
   };
 }

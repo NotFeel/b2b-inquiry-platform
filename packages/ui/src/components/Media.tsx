@@ -10,6 +10,7 @@ export interface GalleryImage {
   alt: string;
   width?: number | null;
   height?: number | null;
+  variants?: { width: number; url: string; format: string }[];
 }
 
 export interface ImageGalleryProps {
@@ -45,6 +46,8 @@ export function ImageGallery({ images, labels }: ImageGalleryProps) {
           >
             <img
               src={active.url}
+              srcSet={variantSrcSet(active.variants)}
+              sizes="(max-width: 1023px) 100vw, 50vw"
               alt={active.alt}
               width={active.width ?? undefined}
               height={active.height ?? undefined}
@@ -74,6 +77,8 @@ export function ImageGallery({ images, labels }: ImageGalleryProps) {
               ) : (
                 <img
                   src={image.url}
+                  srcSet={variantSrcSet(image.variants)}
+                  sizes="96px"
                   alt=""
                   loading="lazy"
                   onError={() => setFailed((current) => ({ ...current, [image.url]: true }))}
@@ -120,6 +125,8 @@ export function ImageGallery({ images, labels }: ImageGalleryProps) {
           <figure className="gallery-lightbox">
             <img
               src={active.url}
+              srcSet={variantSrcSet(active.variants)}
+              sizes="(max-width: 1023px) 100vw, 70vw"
               alt={active.alt}
               width={active.width ?? undefined}
               height={active.height ?? undefined}
@@ -153,6 +160,8 @@ function ImageFallback({ label, seed, small }: ImageFallbackProps) {
 
 export interface MediaFrameProps {
   src: string | null;
+  srcSet?: string;
+  sizes?: string;
   alt: string;
   /** CSS aspect-ratio, e.g. `1 / 1` for catalogue cards. */
   ratio?: string;
@@ -171,6 +180,8 @@ export interface MediaFrameProps {
  */
 export function MediaFrame({
   src,
+  srcSet,
+  sizes,
   alt,
   ratio = '1 / 1',
   fit = 'cover',
@@ -192,6 +203,8 @@ export function MediaFrame({
       {showImage ? (
         <img
           src={src as string}
+          srcSet={srcSet}
+          sizes={sizes}
           alt={alt}
           loading={loading}
           decoding="async"
@@ -202,4 +215,9 @@ export function MediaFrame({
       )}
     </div>
   );
+}
+
+function variantSrcSet(variants?: GalleryImage['variants']): string | undefined {
+  if (!variants || variants.length === 0) return undefined;
+  return variants.map((variant) => `${variant.url} ${variant.width}w`).join(', ');
 }

@@ -7,6 +7,7 @@ import { WhatsAppCta } from '../../components/whatsapp-cta';
 import { storefrontApi } from '../../lib/api';
 import { htmlToPlainText } from '../../lib/content';
 import { getTranslator, localeHref } from '../../lib/i18n';
+import { HOME_HERO_IMAGE_SIZES, imageSrcSet } from '../../lib/image-srcset';
 
 interface Props {
   params: Promise<{ locale: string }>;
@@ -157,13 +158,15 @@ export default async function HomePage({ params }: Props) {
           <div className="hero-visual">
             <div className="hero-visual-grid">
               {heroProducts.length > 0 ? (
-                heroProducts.map((product) => (
+                heroProducts.map((product, index) => (
                   <div className="hero-tile" key={product.sku}>
                     <MediaFrame
                       src={product.coverImage?.url ?? null}
+                      srcSet={imageSrcSet(product.coverImage?.variants)}
+                      sizes={HOME_HERO_IMAGE_SIZES}
                       alt={product.coverImage?.alt || product.name}
                       ratio="4 / 3"
-                      loading="eager"
+                      loading={index === 0 ? 'eager' : 'lazy'}
                       fallbackLabel={t('product.imageUnavailable')}
                       fallbackSeed={`${product.sku} ${product.name}`}
                     />

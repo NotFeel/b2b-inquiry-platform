@@ -1,6 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { ERROR_CODES, QUEUE_NAMES } from '@b2b/contracts';
-import type { FileAssetSummary } from '@b2b/contracts';
+import {
+  ERROR_CODES,
+  QUEUE_NAMES,
+  imageAssetVersion,
+  imageVariantStorageKey,
+} from '@b2b/contracts';
+import type { FileAssetStatusResult, FileAssetSummary, MediaStagingResult } from '@b2b/contracts';
 import { APP_ENV, type AppEnv } from '../../config/config.module';
 import { ApiError } from '../../common/errors/api-error';
 import { AuditService } from '../../common/services/audit.service';
@@ -18,8 +23,10 @@ import {
   PDF_MIME,
   VIDEO_MIME_BY_KIND,
   looksLikeXlsx,
+  isPublicFileServable,
   readImageDimensions,
 } from './file-validation';
+import { readStoredImageVariants } from './image-variant-policy';
 
 export interface UploadInput {
   purpose: string;
@@ -182,14 +189,27 @@ export class FilesService {
         purpose: input.purpose,
         // The original is validated and stored; derivative generation is a
         // follow-up job and does not block using the asset.
-        status: 'ready',
-        isPublic: rules.kind !== 'excel',
+        // Sharp owns the real decode. The asset cannot be attached or served
+        // as ready until the worker has produced at least one safe variant.
+        status: hasImageDimensions ? 'processing' : 'ready',
+        isPublic: rules.isPublic,
         uploadedById: actorId,
       },
     });
 
     if (hasImageDimensions) {
-      await this.enqueueDerivatives(asset.id, storageKey);
+      try {
+        await this.enqueueDerivatives(asset.id, storageKey);
+      } catch {
+        await this.prisma.fileAsset.update({
+          where: { id: asset.id },
+          data: { status: 'failed' },
+        });
+        throw new ApiError(
+          ERROR_CODES.uploadProcessingFailed,
+          'The image could not be queued for safe processing.',
+        );
+      }
     }
 
     await this.audit.record({
@@ -204,13 +224,19 @@ export class FilesService {
     return {
       id: asset.id,
       storageKey: asset.storageKey,
+      version: imageAssetVersion(asset.id, asset.sha256),
       originalName: asset.originalName,
       mimeType: asset.mimeType,
       sizeBytes: stored.sizeBytes,
       width: asset.width,
       height: asset.height,
       status: asset.status,
-      url: this.storage.publicUrl(asset.storageKey),
+      url:
+        asset.purpose === 'product-image'
+          ? this.storage.adminProductImageUrl(asset.id)
+          : asset.isPublic
+            ? this.storage.publicUrl(asset.storageKey)
+            : null,
     };
   }
 
@@ -238,7 +264,12 @@ export class FilesService {
         width: asset.width,
         height: asset.height,
         status: asset.status,
-        url: this.storage.publicUrl(asset.storageKey),
+        url:
+          asset.purpose === 'product-image'
+            ? this.storage.adminProductImageUrl(asset.id)
+            : asset.isPublic
+              ? this.storage.publicUrl(asset.storageKey)
+              : null,
         createdAt: asset.createdAt.toISOString(),
       })),
       pagination: {
@@ -252,7 +283,11 @@ export class FilesService {
 
   async getPublicAsset(storageKey: string) {
     const asset = await this.prisma.fileAsset.findUnique({ where: { storageKey } });
-    if (!asset || !asset.isPublic || asset.status !== 'ready') return null;
+    // Product sources are intentionally excluded: public access must go through
+    // the publication-gated, content-versioned image route below.
+    if (!asset || !isPublicFileServable(asset)) {
+      return null;
+    }
     return asset;
   }
 
@@ -283,6 +318,99 @@ export class FilesService {
 
   async getAnyAssetByKey(storageKey: string) {
     return this.prisma.fileAsset.findUnique({ where: { storageKey } });
+  }
+
+  async getStagingAsset(id: string): Promise<MediaStagingResult> {
+    const asset = await this.getAssetOrThrow(id);
+    if (asset.purpose !== 'product-image') {
+      throw ApiError.validation('The file is not a product image.', {
+        fileAssetId: 'product.image.invalidPurpose',
+      });
+    }
+    return {
+      fileAssetId: asset.id,
+      storageKey: asset.storageKey,
+      version: imageAssetVersion(asset.id, asset.sha256),
+      originalName: asset.originalName,
+      mimeType: asset.mimeType,
+      sizeBytes: Number(asset.sizeBytes),
+      width: asset.width,
+      height: asset.height,
+      status: asset.status === 'ready' || asset.status === 'failed' ? asset.status : 'processing',
+      url: asset.isPublic ? this.storage.adminProductImageUrl(asset.id) : null,
+    };
+  }
+
+  async getAssetStatus(id: string): Promise<FileAssetStatusResult> {
+    const asset = await this.getAssetOrThrow(id);
+    return {
+      fileAssetId: asset.id,
+      status: asset.status === 'ready' || asset.status === 'failed' ? asset.status : 'processing',
+      url:
+        asset.purpose === 'product-image'
+          ? this.storage.adminProductImageUrl(asset.id)
+          : asset.isPublic
+            ? this.storage.publicUrl(asset.storageKey)
+            : null,
+      width: asset.width,
+      height: asset.height,
+    };
+  }
+
+  /**
+   * Resolves an immutable product-image URL to a stored object.
+   *
+   * The database remains the access-control source: the asset must be a ready
+   * product image and still be attached to a published product. A guessed asset
+   * id, stale content version, detached image or unpublished product yields 404.
+   */
+  async resolvePublicProductImage(
+    assetId: string,
+    version: string,
+    name: string,
+  ): Promise<{ key: string; contentType: string } | null> {
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(assetId)
+    ) {
+      return null;
+    }
+    const asset = await this.prisma.fileAsset.findUnique({ where: { id: assetId } });
+    if (
+      !asset ||
+      !asset.isPublic ||
+      asset.purpose !== 'product-image' ||
+      asset.status !== 'ready' ||
+      imageAssetVersion(asset.id, asset.sha256) !== version
+    ) {
+      return null;
+    }
+
+    const usage = await this.prisma.productImage.findFirst({
+      where: {
+        fileAssetId: asset.id,
+        deleteState: 'READY',
+        product: {
+          publishStatus: 'PUBLISHED',
+          lifecycleStatus: { not: 'DISCONTINUED' },
+        },
+      },
+      select: { id: true },
+    });
+    if (!usage) return null;
+
+    if (name === 'source') {
+      return { key: asset.storageKey, contentType: asset.mimeType };
+    }
+    const match = /^(\d{1,5})\.webp$/.exec(name);
+    if (!match) return null;
+    const width = Number.parseInt(match[1] as string, 10);
+    const variant = readStoredImageVariants(asset.derivatives).find(
+      (candidate) => candidate.width === width && candidate.format === 'webp',
+    );
+    if (!variant) return null;
+    const expectedKey = imageVariantStorageKey(asset.id, version, width);
+    if (variant.key !== expectedKey) return null;
+    return { key: variant.key, contentType: 'image/webp' };
   }
 
   /**
@@ -347,18 +475,10 @@ export class FilesService {
   }
 
   async enqueueDerivatives(fileAssetId: string, storageKey: string): Promise<void> {
-    try {
-      await this.jobs.enqueue(QUEUE_NAMES.imageDerivatives, {
-        fileAssetId,
-        storageKey,
-        widths: this.env.imageDerivativeWidths,
-      });
-    } catch (error) {
-      this.logger.warn(
-        'file.derivative_enqueue_failed',
-        { fileAssetId, message: error instanceof Error ? error.message : String(error) },
-        'FilesService',
-      );
-    }
+    await this.jobs.enqueue(QUEUE_NAMES.imageDerivatives, {
+      fileAssetId,
+      storageKey,
+      widths: this.env.imageDerivativeWidths,
+    });
   }
 }

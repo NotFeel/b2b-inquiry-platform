@@ -1,4 +1,5 @@
 import type { AdPlacement, ProductLifecycleStatus, SupportedLocale } from './constants';
+import type { PublicImageVariant } from './images';
 
 /**
  * Public (storefront) DTOs.
@@ -19,12 +20,15 @@ export interface PublicTagFilter extends PublicProductTag {
 }
 
 export interface PublicProductImage {
+  /** Canonical largest immutable URL, used for metadata and image fallback. */
   url: string;
   alt: string;
   width: number | null;
   height: number | null;
   isCover: boolean;
   sortOrder: number;
+  /** Responsive WebP variants; empty only for legacy assets awaiting reprocessing. */
+  variants: PublicImageVariant[];
 }
 
 export interface PublicCategoryRef {

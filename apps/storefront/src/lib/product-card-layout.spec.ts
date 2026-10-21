@@ -23,6 +23,8 @@ describe('product card layout contract', () => {
   it('uses a contain-fit square image without clipping the card shell', () => {
     expect(component).toContain('ratio="1 / 1"');
     expect(component).toContain('fit="contain"');
+    expect(component).toContain('srcSet={imageSrcSet(product.coverImage?.variants)}');
+    expect(component).toContain('sizes={PRODUCT_GRID_IMAGE_SIZES}');
     expect(styles).toMatch(/\.product-card\s*\{[^}]*overflow:\s*visible/s);
   });
 

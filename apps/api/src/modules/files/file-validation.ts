@@ -60,27 +60,67 @@ export function isAllowedImageMime(mime: string): boolean {
   return (ALLOWED_IMAGE_MIME_TYPES as readonly string[]).includes(mime);
 }
 
+/**
+ * Generic public-file route policy.
+ *
+ * Product sources are excluded even when their asset row says public; they are
+ * only served through the publication-gated versioned route. Private workbooks
+ * and future attachment purposes also stay inaccessible.
+ */
+export function isPublicFileServable(asset: {
+  isPublic: boolean;
+  purpose: string;
+  status: string;
+}): boolean {
+  return asset.isPublic && asset.purpose !== 'product-image' && asset.status === 'ready';
+}
+
 export const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 export interface UploadPurposeRules {
   kind: 'image' | 'excel' | 'video' | 'document';
   extensions: string[];
+  /** Explicit allowlist: a new purpose must opt in before any public URL is issued. */
+  isPublic: boolean;
 }
 
 export const PURPOSE_RULES: Record<string, UploadPurposeRules> = {
-  'product-image': { kind: 'image', extensions: ['.jpg', '.jpeg', '.png', '.webp'] },
-  'category-cover': { kind: 'image', extensions: ['.jpg', '.jpeg', '.png', '.webp'] },
-  'ad-image': { kind: 'image', extensions: ['.jpg', '.jpeg', '.png', '.webp'] },
-  logo: { kind: 'image', extensions: ['.jpg', '.jpeg', '.png', '.webp'] },
-  content: { kind: 'image', extensions: ['.jpg', '.jpeg', '.png', '.webp'] },
-  'factory-media-image': { kind: 'image', extensions: ['.jpg', '.jpeg', '.png', '.webp'] },
-  'factory-media-video': { kind: 'video', extensions: ['.mp4', '.webm'] },
-  'factory-process-image': { kind: 'image', extensions: ['.jpg', '.jpeg', '.png', '.webp'] },
+  'product-image': {
+    kind: 'image',
+    extensions: ['.jpg', '.jpeg', '.png', '.webp'],
+    isPublic: true,
+  },
+  'category-cover': {
+    kind: 'image',
+    extensions: ['.jpg', '.jpeg', '.png', '.webp'],
+    isPublic: true,
+  },
+  'ad-image': {
+    kind: 'image',
+    extensions: ['.jpg', '.jpeg', '.png', '.webp'],
+    isPublic: true,
+  },
+  logo: { kind: 'image', extensions: ['.jpg', '.jpeg', '.png', '.webp'], isPublic: true },
+  content: { kind: 'image', extensions: ['.jpg', '.jpeg', '.png', '.webp'], isPublic: true },
+  'factory-media-image': {
+    kind: 'image',
+    extensions: ['.jpg', '.jpeg', '.png', '.webp'],
+    isPublic: true,
+  },
+  'factory-media-video': { kind: 'video', extensions: ['.mp4', '.webm'], isPublic: true },
+  'factory-process-image': {
+    kind: 'image',
+    extensions: ['.jpg', '.jpeg', '.png', '.webp'],
+    isPublic: true,
+  },
   'credential-document': {
     kind: 'document',
     extensions: ['.pdf', '.jpg', '.jpeg', '.png', '.webp'],
+    isPublic: true,
   },
-  'quote-template': { kind: 'excel', extensions: ['.xlsx'] },
+  // Workbooks, PI exports and future private attachments must not inherit a
+  // public URL merely because they share the file service (docs/31 §5.4).
+  'quote-template': { kind: 'excel', extensions: ['.xlsx'], isPublic: false },
 };
 
 export function extensionOf(fileName: string): string {

@@ -67,10 +67,7 @@ export class FilesController {
 
   @RequirePermissions(Permission.fileRead)
   @Get(':id/download')
-  async download(
-    @Param('id') id: string,
-    @Res() response: Response,
-  ): Promise<void> {
+  async download(@Param('id') id: string, @Res() response: Response): Promise<void> {
     const asset = await this.files.getAssetOrThrow(id);
     response.setHeader('Content-Type', asset.mimeType);
     response.setHeader(
@@ -81,12 +78,24 @@ export class FilesController {
     const stream = this.storage.createReadStream(asset.storageKey);
     stream.on('error', () => {
       if (!response.headersSent) {
-        response.status(404).json({ error: { code: ERROR_CODES.fileNotFound, message: 'File not found.', requestId: 'stream' } });
+        response.status(404).json({
+          error: {
+            code: ERROR_CODES.fileNotFound,
+            message: 'File not found.',
+            requestId: 'stream',
+          },
+        });
       } else {
         response.destroy();
       }
     });
     stream.pipe(response);
+  }
+
+  @RequirePermissions(Permission.fileUpload)
+  @Get(':id/status')
+  async status(@Param('id') id: string) {
+    return { data: await this.files.getAssetStatus(id) };
   }
 
   @RequirePermissions(Permission.fileRead)

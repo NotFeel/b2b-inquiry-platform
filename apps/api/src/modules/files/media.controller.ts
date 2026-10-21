@@ -1,9 +1,11 @@
-import { Controller, Post, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { Controller, Get, Param, Post, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { PRODUCT_IMAGE_LIMITS, ERROR_CODES, type MediaStagingResult } from '@b2b/contracts';
+import type { Response } from 'express';
 import { ApiError } from '../../common/errors/api-error';
 import { CurrentActor, Permission, RequestId, RequirePermissions } from '../../common/decorators';
 import type { AuthenticatedActor } from '../../common/request-context';
+import { StorageService } from '../../common/services/storage.service';
 import { FilesService } from './files.service';
 
 interface MulterFile {
@@ -25,13 +27,14 @@ interface MulterFile {
  */
 @Controller('admin/media')
 export class MediaController {
-  constructor(private readonly files: FilesService) {}
+  constructor(
+    private readonly files: FilesService,
+    private readonly storage: StorageService,
+  ) {}
 
   @RequirePermissions(Permission.productImageUpload)
   @Post('staging')
-  @UseInterceptors(
-    FileInterceptor('file', { limits: { fileSize: PRODUCT_IMAGE_LIMITS.maxBytes } }),
-  )
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: PRODUCT_IMAGE_LIMITS.maxBytes } }))
   async staging(
     @UploadedFile() file: MulterFile | undefined,
     @CurrentActor() actor: AuthenticatedActor,
@@ -59,14 +62,44 @@ export class MediaController {
       data: {
         fileAssetId: uploaded.id,
         storageKey: uploaded.storageKey,
+        version: uploaded.version,
         originalName: uploaded.originalName,
         mimeType: uploaded.mimeType,
         sizeBytes: uploaded.sizeBytes,
         width: uploaded.width,
         height: uploaded.height,
-        status: 'ready',
+        status: uploaded.status as MediaStagingResult['status'],
         url: uploaded.url,
       },
     };
+  }
+
+  @RequirePermissions(Permission.productImageUpload)
+  @Get('staging/:id')
+  async stagingStatus(@Param('id') id: string): Promise<{ data: MediaStagingResult }> {
+    return { data: await this.files.getStagingAsset(id) };
+  }
+
+  @RequirePermissions(Permission.productRead)
+  @Get('assets/:id/preview')
+  async preview(@Param('id') id: string, @Res() response: Response): Promise<void> {
+    const asset = await this.files.getAssetOrThrow(id);
+    if (asset.purpose !== 'product-image' || asset.status !== 'ready') {
+      response.status(404).json({
+        error: {
+          code: ERROR_CODES.fileNotFound,
+          message: 'File not found.',
+          requestId: 'media-preview',
+        },
+      });
+      return;
+    }
+    response.setHeader('Content-Type', asset.mimeType);
+    response.setHeader('Content-Disposition', 'inline');
+    response.setHeader('Cache-Control', 'private, no-store');
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    const stream = this.storage.createReadStream(asset.storageKey);
+    stream.on('error', () => response.destroy());
+    stream.pipe(response);
   }
 }

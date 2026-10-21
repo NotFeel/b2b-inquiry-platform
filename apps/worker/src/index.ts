@@ -55,8 +55,18 @@ async function main(): Promise<void> {
   const workers: Worker[] = [
     new Worker(
       QUEUE_NAMES.imageDerivatives,
-      async (job) => processImageDerivatives(job.data, { prisma, storage, env, logger }),
-      commonOptions,
+      async (job) =>
+        processImageDerivatives(
+          {
+            ...job.data,
+            attemptsMade: job.attemptsMade,
+            maxAttempts: job.opts.attempts ?? 1,
+          },
+          { prisma, storage, env, logger },
+        ),
+      // Image encoding is CPU-bound. Keep this at one unless a measured host
+      // has enough headroom for parallel Sharp jobs (docs/31 §2.2).
+      { ...commonOptions, concurrency: env.IMAGE_PROCESSING_CONCURRENCY },
     ),
     new Worker(
       QUEUE_NAMES.quoteExport,

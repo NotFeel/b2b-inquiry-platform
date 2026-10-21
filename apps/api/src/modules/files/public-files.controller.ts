@@ -14,6 +14,41 @@ export class PublicFilesController {
     private readonly storage: StorageService,
   ) {}
 
+  /**
+   * Immutable public product-image URL.
+   *
+   * `assetId + content version` prevents in-place overwrite ambiguity and lets
+   * Next/CDN cache aggressively. Publication and delete state are re-checked on
+   * every origin request, so an unpublished or deleted product cannot gain a
+   * new public URL merely because its old object still exists.
+   */
+  @Public()
+  @Get('images/:assetId/:version/:name')
+  async serveProductImage(@Req() request: Request, @Res() response: Response): Promise<void> {
+    const params = request.params as Record<string, unknown>;
+    const assetId = typeof params.assetId === 'string' ? params.assetId : '';
+    const version = typeof params.version === 'string' ? params.version : '';
+    const name = typeof params.name === 'string' ? params.name : '';
+    const resolved =
+      assetId && version && name
+        ? await this.files.resolvePublicProductImage(assetId, version, name)
+        : null;
+    if (!resolved || !(await this.storage.exists(resolved.key))) {
+      response.status(404).json({
+        error: { code: 'FILE_NOT_FOUND', message: 'File not found.', requestId: 'public-image' },
+      });
+      return;
+    }
+    response.setHeader('Content-Type', resolved.contentType);
+    response.setHeader('Content-Disposition', 'inline');
+    response.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    response.setHeader('Cache-Tag', `product-images,image-${assetId}`);
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    const stream = this.storage.createReadStream(resolved.key);
+    stream.on('error', () => response.destroy());
+    stream.pipe(response);
+  }
+
   @Public()
   @Get('signed/*key')
   async serveSigned(@Req() request: Request, @Res() response: Response): Promise<void> {
@@ -23,7 +58,11 @@ export class PublicFilesController {
     const token = typeof request.query.token === 'string' ? request.query.token : '';
     if (storageKey.length === 0 || storageKey.includes('..') || token.length === 0) {
       response.status(400).json({
-        error: { code: 'VALIDATION_FAILED', message: 'Invalid request.', requestId: 'signed-files' },
+        error: {
+          code: 'VALIDATION_FAILED',
+          message: 'Invalid request.',
+          requestId: 'signed-files',
+        },
       });
       return;
     }
@@ -62,12 +101,16 @@ export class PublicFilesController {
     const segments = Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : [];
     const storageKey = segments.join('/');
     if (storageKey.length === 0 || storageKey.includes('..')) {
-      response.status(400).json({ error: { code: 'VALIDATION_FAILED', message: 'Invalid path.', requestId: 'public-files' } });
+      response.status(400).json({
+        error: { code: 'VALIDATION_FAILED', message: 'Invalid path.', requestId: 'public-files' },
+      });
       return;
     }
     const asset = await this.files.getPublicAsset(storageKey);
     if (!asset) {
-      response.status(404).json({ error: { code: 'FILE_NOT_FOUND', message: 'File not found.', requestId: 'public-files' } });
+      response.status(404).json({
+        error: { code: 'FILE_NOT_FOUND', message: 'File not found.', requestId: 'public-files' },
+      });
       return;
     }
     // The database row can outlive the object (manual cleanup, restored volume,

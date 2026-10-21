@@ -583,18 +583,30 @@ export interface HomeSectionAdminDetail {
   updatedAt: string;
 }
 
+export type FileAssetProcessingStatus = 'processing' | 'ready' | 'failed';
+
 /** Result of a validated staging upload (docs/24 §6.2). */
 export interface MediaStagingResult {
   fileAssetId: string;
   storageKey: string;
+  /** Immutable content version used by the versioned public-image route. */
+  version: string;
   originalName: string;
   mimeType: string;
   sizeBytes: number;
   width: number | null;
   height: number | null;
-  status: 'ready';
+  status: FileAssetProcessingStatus;
   /** Preview URL for the gallery before the asset is attached to a product. */
-  url: string;
+  url: string | null;
+}
+
+export interface FileAssetStatusResult {
+  fileAssetId: string;
+  status: FileAssetProcessingStatus;
+  url: string | null;
+  width: number | null;
+  height: number | null;
 }
 
 export interface ProductImageAttachResult {

@@ -11,7 +11,7 @@ import { Badge, Button, Card, ConfirmDialog, Input, useToast } from '@b2b/ui';
 import { AdminApiError } from '../lib/admin-api';
 import { translateError } from '../lib/i18n';
 import { formatBytes } from '../lib/product-form';
-import { productsApi, uploadProductImage } from '../lib/products-api';
+import { getProductImageStaging, productsApi, uploadProductImage } from '../lib/products-api';
 import { useSession } from './session-provider';
 
 interface UploadEntry {
@@ -19,7 +19,7 @@ interface UploadEntry {
   name: string;
   sizeBytes: number;
   progress: number;
-  status: 'uploading' | 'failed' | 'done';
+  status: 'uploading' | 'processing' | 'failed' | 'done';
   errorKey?: string;
 }
 
@@ -144,7 +144,13 @@ export function ProductImageManager({
         current.map((item) => (item.id === entry.id ? { ...item, progress: 50 } : item)),
       );
       try {
-        const staged = await uploadProductImage(file);
+        const uploaded = await uploadProductImage(file);
+        setUploads((current) =>
+          current.map((item) =>
+            item.id === entry.id ? { ...item, progress: 75, status: 'processing' } : item,
+          ),
+        );
+        const staged = await waitForStaging(uploaded);
         stagedResults.push(staged);
         setUploads((current) =>
           current.map((item) =>
@@ -372,6 +378,8 @@ export function ProductImageManager({
                 </span>
               ) : entry.status === 'done' ? (
                 <Badge tone="success">{t('products.images.uploadDone')}</Badge>
+              ) : entry.status === 'processing' ? (
+                <Badge tone="info">{t('products.images.processing')}</Badge>
               ) : (
                 <span className="field-error" role="alert">
                   {translateError(locale, entry.errorKey ?? 'INTERNAL_ERROR')}
@@ -392,7 +400,7 @@ export function ProductImageManager({
                 <li key={asset.fileAssetId} className="image-tile" data-state="STAGED">
                   <div className="image-tile-media">
                     <img
-                      src={asset.url}
+                      src={asset.url ?? undefined}
                       alt={t('products.images.stagedAlt')}
                       width={asset.width ?? undefined}
                       height={asset.height ?? undefined}
@@ -556,5 +564,30 @@ export function ProductImageManager({
         onCancel={() => setDeleteTarget(null)}
       />
     </Card>
+  );
+}
+
+/**
+ * Waits for the real Sharp decode and WebP derivative commit.
+ *
+ * Browser-side checks and a plausible file header are not proof that the image
+ * can be decoded safely. The server only exposes the asset as ready after the
+ * worker has produced and verified its WebP variants.
+ */
+async function waitForStaging(
+  initial: MediaStagingResult,
+  timeoutMs = 60_000,
+): Promise<MediaStagingResult> {
+  let current = initial;
+  const deadline = Date.now() + timeoutMs;
+  while (current.status === 'processing' && Date.now() < deadline) {
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
+    current = await getProductImageStaging(current.fileAssetId);
+  }
+  if (current.status === 'ready') return current;
+  throw new AdminApiError(
+    current.status === 'failed' ? 422 : 504,
+    'UPLOAD_PROCESSING_FAILED',
+    'The image could not be safely decoded or optimized.',
   );
 }

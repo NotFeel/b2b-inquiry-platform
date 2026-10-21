@@ -4,6 +4,7 @@ import Link from 'next/link';
 import type { PublicProductCard } from '@b2b/contracts';
 import { CopyButton, IconArrowRight, MediaFrame } from '@b2b/ui';
 import { getTranslator, localeHref } from '../lib/i18n';
+import { PRODUCT_GRID_IMAGE_SIZES, imageSrcSet } from '../lib/image-srcset';
 import { SelectProductButton, useInquiry } from './inquiry-list';
 
 interface Props {
@@ -49,6 +50,7 @@ export function ProductCard({ product, locale }: Props) {
     name: product.name,
     slug: product.slug,
     imageUrl: product.coverImage?.url ?? null,
+    imageVariants: product.coverImage?.variants ?? [],
   };
 
   return (
@@ -56,6 +58,8 @@ export function ProductCard({ product, locale }: Props) {
       <div className="product-card-media">
         <MediaFrame
           src={product.coverImage?.url ?? null}
+          srcSet={imageSrcSet(product.coverImage?.variants)}
+          sizes={PRODUCT_GRID_IMAGE_SIZES}
           alt={product.coverImage?.alt || product.name}
           ratio="1 / 1"
           fit="contain"

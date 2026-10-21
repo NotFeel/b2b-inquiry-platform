@@ -8,3 +8,4 @@ export * from './money';
 export * from './whatsapp';
 export * from './jobs';
 export * from './slug';
+export * from './images';

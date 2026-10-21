@@ -6,6 +6,11 @@
       "static/css/app/layout.css",
       "static/chunks/app/layout.js"
     ],
+    "/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/page.js"
+    ],
     "/[locale]/layout": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
@@ -21,30 +26,20 @@
       "static/chunks/main-app.js",
       "static/chunks/app/[locale]/(admin)/error.js"
     ],
+    "/[locale]/(admin)/dashboard/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/[locale]/(admin)/dashboard/page.js"
+    ],
     "/[locale]/(admin)/products/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/[locale]/(admin)/products/page.js"
     ],
-    "/[locale]/(admin)/quote-templates/page": [
+    "/[locale]/(admin)/products/[id]/edit/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/[locale]/(admin)/quote-templates/page.js"
-    ],
-    "/[locale]/(admin)/quote-exports/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/[locale]/(admin)/quote-exports/page.js"
-    ],
-    "/[locale]/(admin)/pi-documents/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/[locale]/(admin)/pi-documents/page.js"
-    ],
-    "/[locale]/(admin)/ads/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/[locale]/(admin)/ads/page.js"
+      "static/chunks/app/[locale]/(admin)/products/[id]/edit/page.js"
     ],
     "/[locale]/(admin)/categories/page": [
       "static/chunks/webpack.js",
@@ -65,6 +60,36 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/[locale]/(admin)/analytics/page.js"
+    ],
+    "/[locale]/(admin)/quote-templates/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/[locale]/(admin)/quote-templates/page.js"
+    ],
+    "/[locale]/(admin)/quote-exports/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/[locale]/(admin)/quote-exports/page.js"
+    ],
+    "/[locale]/(admin)/pi-documents/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/[locale]/(admin)/pi-documents/page.js"
+    ],
+    "/[locale]/(admin)/content/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/[locale]/(admin)/content/page.js"
+    ],
+    "/[locale]/(admin)/content/factory-media/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/[locale]/(admin)/content/factory-media/page.js"
+    ],
+    "/[locale]/(admin)/ads/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/[locale]/(admin)/ads/page.js"
     ]
   }
 }
