@@ -326,7 +326,48 @@ Cloudflare POC 还需补：
 - [ ] build/lint/typecheck/test 已报告真实结果。
 - [ ] DNS 切换、回滚和源站故障恢复步骤已演练。
 
-## 10. AI 执行指令
+
+## 11. 2026-10-21 官方兼容性复核补充
+
+本节用于补充上文，不改变“先预览、后切域名”的总原则。
+
+### 11.1 Cloudflare 官方当前推荐路线与本仓库的关系
+
+截至 2026-10-21，Cloudflare 官方 Next.js Workers 指南将 **vinext** 作为新应用/迁移尝试的推荐路径，并要求在现有应用中先执行兼容性检查。官方同时提供 OpenNext 适配器文档作为既有应用的备选。由于本仓库使用 Next.js 15.5.27，而当前 vinext 指南的示例主要面向 Next.js 16 迁移路径，**不能直接把官方示例中的命令复制到本仓库后就视为兼容**。
+
+推荐顺序：
+1. 保留现有生产构建方式与 lockfile；
+2. 在独立分支和独立 Cloudflare preview 环境执行 `vinext check`（仅作为检查，不立即将其设为生产构建）；
+3. 核对实际输出、vinext 兼容矩阵和依赖限制；
+4. 若不兼容，按固定版本验证 `@opennextjs/cloudflare`；
+5. 如果两种 SSR 路径都不适合当前版本，优先采用“Cloudflare CDN/WAF + 原 Node SSR”或局部静态化，而不是强迫迁移。
+
+官方依据：
+- [Cloudflare Next.js / vinext](https://developers.cloudflare.com/workers/framework-guides/web-apps/nextjs/)
+- [Cloudflare OpenNext adapter](https://developers.cloudflare.com/workers/framework-guides/web-apps/opennext/)
+- [Workers limits](https://developers.cloudflare.com/workers/platform/limits/)
+
+### 11.2 两个应用的具体判断
+
+**Storefront：建议先迁移验证。** 首页当前为 async Server Component，服务端会取站点配置、分类、广告、商品、内容页和首页分区，metadata 也会访问 API。因此当前应用不能假定为纯静态导出。先试 SSR adapter，再判断是否值得重构成构建时生成的静态站。
+
+**Admin：可以运行在 Cloudflare，但暂时不建议优先切生产。** Admin 的 rewrite 负责同源 API 代理，后台依赖登录 Session、RBAC、商品 CRUD、图片上传/物理删除和报价单 Excel 下载。任何 adapter/静态化变更都必须先验证这些服务端和 Cookie 行为。若要快速得到 Cloudflare 的域名、TLS、WAF 收益，可先用 Cloudflare 代理原 Node Admin，待兼容测试通过再迁移 Worker SSR。
+
+### 11.3 不应忽略的 Workers 限制
+
+Workers 的执行运行时与服务器 Node 不同。Cloudflare 当前限制文档列出 128 MB Worker 内存；CPU 上限根据 Free/Paid 方案不同，请求体上限也依账户计划。后台页面渲染通常比大文件处理更容易适配，但上传代理、请求体缓冲、大型响应、Node 兼容模块必须逐项测试。不要把 Sharp 图片转码或 ExcelJS 大工作簿生成迁移进页面 Worker；这些仍让服务器 Worker 执行。
+
+### 11.4 当前建议架构
+
+第一阶段：
+- Cloudflare：DNS、TLS、CDN、WAF；公开商品图片/CDN；Storefront Worker/Pages 预览环境。
+- 服务器：NestJS API、PostgreSQL、当前 Redis/BullMQ、任务 Worker。
+- Admin：预览环境先做 Workers SSR 测试；生产暂留 Node 直到登录、代理、上传、下载和 RBAC 全部通过。
+
+若 Storefront 的动态 SEO 与当前服务端数据加载无法在静态导出方案中保留，选 Workers SSR POC；若 SSR adapter 不兼容，就让 Node SSR 继续工作。不能为了避免服务器进程而删掉必要的 metadata、locale middleware、询盘代理或授权检查。
+
+
+## 12. AI 执行指令
 
 严格遵循根目录 `AGENTS.md`。
 
