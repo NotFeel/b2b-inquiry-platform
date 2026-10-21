@@ -149,7 +149,7 @@ chmod 750 /opt/b2b-inquiry-platform/shared
 
 ## 5. 拉取代码并确认运行环境
 
-仓库 `package.json` 要求 Node `>=20.11.0`，声明的 package manager 为 `pnpm@11.25.0`。使用兼容版本的 Node.js 和 pnpm，不要随意升级 lockfile 或核心依赖。
+仓库 `package.json` 的 `engines.node` 目前写为 `>=20.11.0`，但 `packageManager` 锁定 `pnpm@11.25.0`；pnpm 11 官方要求 Node.js 22 或更高版本。因此部署建议固定 Node.js 24 LTS（或先在 staging 验证过的 Node.js 22/24），不要在生产使用 Node 20。该仓库的 `engines.node` 声明比 pnpm 实际要求宽松，后续应同步修订并通过 CI 验证。参考：[pnpm 11 安装要求](https://github.com/pnpm/pnpm/blob/main/pnpm11/docs/installation.md)、[Node.js 发布计划](https://github.com/nodejs/Release)。
 
 安装 Node.js 时应选官方发行版本或节点管理工具并固定版本；确保 systemd 服务使用的 PATH 能找到相同的 `node` / `corepack`。验证：
 
@@ -268,12 +268,12 @@ stat -c '%a %U:%G %n' /opt/b2b-inquiry-platform/shared/.env
 下面是首发单机示例，密码必须先替换为新生成的强密码。生产数据重要时优先使用托管 PostgreSQL + 私网 Redis。
 
 ```bash
-sudo mkdir -p /opt/b2b-inquiry-platform/shared/postgres
-sudo chown -R 999:999 /opt/b2b-inquiry-platform/shared/postgres
 docker network create b2b-private 2>/dev/null || true
 nano /opt/b2b-inquiry-platform/shared/compose.data.yml
 chmod 600 /opt/b2b-inquiry-platform/shared/compose.data.yml
 ```
+
+下面使用 Docker 命名 volume 保存 PostgreSQL 数据，避免把特定镜像版本的容器 UID 写死到宿主机目录权限中。若你坚持使用宿主机 bind mount，必须先核实所用镜像内 PostgreSQL 用户的实际 UID/GID，再设置目录权限。
 
 将以下内容写入 `compose.data.yml`：
 
@@ -289,7 +289,7 @@ services:
       POSTGRES_PASSWORD: REPLACE_WITH_STRONG_DATABASE_PASSWORD
     command: ["postgres", "-c", "max_connections=100"]
     volumes:
-      - /opt/b2b-inquiry-platform/shared/postgres:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     ports:
       - "127.0.0.1:5432:5432"
     networks: [b2b-private]
@@ -320,6 +320,7 @@ networks:
     external: true
 
 volumes:
+  postgres_data:
   redis_data:
 ```
 
@@ -427,7 +428,8 @@ corepack pnpm run bootstrap:admin
 ```bash
 sudo useradd --system --create-home --shell /usr/sbin/nologin b2b || true
 sudo chown -R b2b:b2b /opt/b2b-inquiry-platform/releases
-sudo chmod 600 /opt/b2b-inquiry-platform/shared/.env
+sudo chown root:b2b /opt/b2b-inquiry-platform/shared/.env
+sudo chmod 640 /opt/b2b-inquiry-platform/shared/.env
 ```
 
 先确认 Node 路径：
