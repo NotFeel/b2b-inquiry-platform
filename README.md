@@ -6,7 +6,7 @@
 
 ## 1. 项目目标
 
-建设一个面向海外客户的响应式 B2B 产品展示网站。访客可以浏览、搜索、按多级品类筛选产品、查看产品和包装信息、批量选择产品，并通过 WhatsApp 发起询盘。**前台任何页面、接口、SEO 数据、结构化数据和前端资源都不得泄漏产品价格。** 后台负责品类、产品、广告、系统设置、Excel 报价单、Excel 转 PDF、PI（Proforma Invoice，形式发票）、询盘客户记录与访问分析。
+建设一个面向海外客户的响应式 B2B 产品展示网站。访客可以浏览、搜索、按多级品类筛选产品、查看产品和包装信息、批量选择产品，并通过 WhatsApp 发起询盘。**前台任何页面、接口、SEO 数据、结构化数据和前端资源都不得泄漏产品价格。** 后台负责品类、产品、广告、系统设置、商品报价单 Excel 导出、PI（Proforma Invoice，形式发票）、询盘客户记录与访问分析；Excel 转 PDF 不属于目标功能范围。
 
 ## 2. 推荐默认技术方案
 
@@ -45,7 +45,8 @@
 | `docs/25-product-category-picker-selectability.md` | 商品品类选择器不可选故障排查、紧凑 Popover/树形选择器、受控 categoryId、编辑回填、列表筛选、国际化、响应式与端到端验收 |
 | `docs/26-product-slug-and-admin-navigation-i18n.md` | 商品 URL slug 名称/随机数字生成、唯一性冲突处理、后台 en-US 菜单/分组/面包屑翻译、MenuTranslation 数据补齐、locale 缓存与语言切换修复 |
 | `docs/07-backend-standard.md` | 后端开发规范 |
-| `docs/08-excel-pdf-pi.md` | 报价单 Excel、Excel 转 PDF、PI 制作规则 |
+| `docs/08-excel-pdf-pi.md` | 报价单 Excel 与 PI 制作规则（需按最新功能范围维护） |
+| `docs/30-remove-excel-to-pdf-keep-quote-excel.md` | 移除 Excel 转 PDF、保留商品报价单 Excel 导出的 AI 可执行实施、测试、部署与回滚方案 |
 | `docs/09-whatsapp-leads-analytics.md` | WhatsApp 客户、去重和访问看板规则 |
 | `docs/10-deployment-ops.md` | 部署、环境、备份、发布和故障处理 |
 | `docs/29-production-server-deployment-runbook.md` | 生产服务器规格、首次部署、运行时、发布回滚与上线验收 |
