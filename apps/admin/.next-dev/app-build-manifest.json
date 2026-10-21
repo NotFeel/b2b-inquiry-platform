@@ -26,20 +26,45 @@
       "static/chunks/main-app.js",
       "static/chunks/app/[locale]/(admin)/products/page.js"
     ],
-    "/[locale]/(auth)/login/page": [
+    "/[locale]/(admin)/quote-templates/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/[locale]/(auth)/login/page.js"
+      "static/chunks/app/[locale]/(admin)/quote-templates/page.js"
     ],
-    "/[locale]/(admin)/products/[id]/edit/page": [
+    "/[locale]/(admin)/quote-exports/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/[locale]/(admin)/products/[id]/edit/page.js"
+      "static/chunks/app/[locale]/(admin)/quote-exports/page.js"
     ],
-    "/[locale]/(admin)/products/new/page": [
+    "/[locale]/(admin)/pi-documents/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/[locale]/(admin)/products/new/page.js"
+      "static/chunks/app/[locale]/(admin)/pi-documents/page.js"
+    ],
+    "/[locale]/(admin)/ads/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/[locale]/(admin)/ads/page.js"
+    ],
+    "/[locale]/(admin)/categories/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/[locale]/(admin)/categories/page.js"
+    ],
+    "/[locale]/(admin)/tags/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/[locale]/(admin)/tags/page.js"
+    ],
+    "/[locale]/(admin)/leads/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/[locale]/(admin)/leads/page.js"
+    ],
+    "/[locale]/(admin)/analytics/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/[locale]/(admin)/analytics/page.js"
     ]
   }
 }
