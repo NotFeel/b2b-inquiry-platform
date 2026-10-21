@@ -1,0 +1,36 @@
+{
+  "name": "b2b-inquiry-platform",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "dev": "pnpm run db:generate && pnpm -r --filter \"./packages/**\" build && pnpm -r --parallel --filter \"./apps/**\" dev",
+    "build": "pnpm run db:generate && pnpm -r --filter \"./packages/**\" build && pnpm -r --filter \"./apps/**\" build",
+    "lint": "eslint .",
+    "typecheck": "pnpm run db:generate && pnpm -r --filter \"./packages/**\" build && pnpm -r typecheck",
+    "test": "pnpm run db:generate && pnpm -r --filter \"./packages/**\" build && pnpm -r test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:generate": "pnpm --filter @b2b/database run generate",
+    "db:migrate": "pnpm --filter @b2b/database run migrate:dev",
+    "db:deploy": "pnpm --filter @b2b/database run migrate:deploy",
+    "db:seed": "pnpm --filter @b2b/database run seed",
+    "check:menu-translations": "pnpm --filter @b2b/database run check:menu-translations",
+    "bootstrap:admin": "pnpm --filter @b2b/database run bootstrap"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@types/node": "24.19.2",
+    "@vitest/coverage-v8": "3.2.7",
+    "eslint": "9.39.5",
+    "globals": "15.15.0",
+    "prettier": "3.9.10",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.71.2",
+    "vitest": "3.2.7"
+  }
+}

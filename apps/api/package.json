@@ -1,0 +1,50 @@
+{
+  "name": "@b2b/api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "nest build",
+    "dev": "nest start --watch",
+    "start": "node dist/main.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "acceptance:categories": "tsx scripts/categories-acceptance.ts",
+    "acceptance:tags": "tsx scripts/tags-acceptance.ts",
+    "acceptance:products": "tsx scripts/products-acceptance.ts",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@b2b/contracts": "workspace:*",
+    "@b2b/database": "workspace:*",
+    "@b2b/i18n": "workspace:*",
+    "@b2b/validation": "workspace:*",
+    "@nestjs/common": "11.2.7",
+    "@nestjs/core": "11.2.7",
+    "@nestjs/platform-express": "11.2.7",
+    "@node-rs/argon2": "2.2.2",
+    "bullmq": "5.81.5",
+    "cookie-parser": "1.4.7",
+    "decimal.js": "10.6.0",
+    "dotenv": "18.0.8",
+    "express": "5.3.0",
+    "ioredis": "5.11.1",
+    "libphonenumber-js": "1.13.15",
+    "maxmind": "5.0.7",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2",
+    "sanitize-html": "2.18.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@b2b/tsconfig": "workspace:*",
+    "@nestjs/cli": "11.0.24",
+    "@types/cookie-parser": "1.4.10",
+    "@types/express": "5.0.6",
+    "@types/multer": "1.4.13",
+    "@types/node": "24.19.2",
+    "@types/sanitize-html": "2.16.2",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  }
+}

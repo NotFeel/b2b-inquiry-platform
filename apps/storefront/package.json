@@ -1,0 +1,29 @@
+{
+  "name": "@b2b/storefront",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --port 3000",
+    "build": "next build",
+    "start": "next start --port 3000",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "clean": "rm -rf .next"
+  },
+  "dependencies": {
+    "@b2b/contracts": "workspace:*",
+    "@b2b/i18n": "workspace:*",
+    "@b2b/ui": "workspace:*",
+    "next": "15.5.27",
+    "react": "19.1.9",
+    "react-dom": "19.1.9"
+  },
+  "devDependencies": {
+    "@b2b/tsconfig": "workspace:*",
+    "@types/node": "24.19.2",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  }
+}

@@ -1,0 +1,9 @@
+node_modules
+dist
+.next
+coverage
+pnpm-lock.yaml
+database/prisma/migrations
+database/generated
+.data
+*.md

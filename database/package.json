@@ -1,0 +1,41 @@
+{
+  "name": "@b2b/database",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./generated/client/index.js",
+  "types": "./generated/client/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./generated/client/index.d.ts",
+      "default": "./generated/client/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "generate": "node scripts/exec.mjs prisma generate",
+    "validate": "node scripts/exec.mjs prisma validate",
+    "migrate:dev": "node scripts/exec.mjs prisma migrate dev",
+    "migrate:deploy": "node scripts/exec.mjs prisma migrate deploy",
+    "migrate:diff": "node scripts/exec.mjs prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script",
+    "migrate:status": "node scripts/exec.mjs prisma migrate status",
+    "studio": "node scripts/exec.mjs prisma studio",
+    "seed": "node scripts/exec.mjs tsx prisma/seed.ts",
+    "check:menu-translations": "node scripts/exec.mjs tsx scripts/check-menu-translations.ts",
+    "bootstrap": "node scripts/exec.mjs tsx scripts/bootstrap-admin.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf generated"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.3"
+  },
+  "devDependencies": {
+    "@b2b/contracts": "workspace:*",
+    "@b2b/tsconfig": "workspace:*",
+    "@types/node": "24.19.2",
+    "@node-rs/argon2": "2.2.2",
+    "dotenv": "18.0.8",
+    "prisma": "6.19.3",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  }
+}

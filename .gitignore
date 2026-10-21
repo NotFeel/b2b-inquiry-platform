@@ -1,0 +1,21 @@
+node_modules/
+.next/
+dist/
+build/
+coverage/
+.env
+.env.*
+!.env.example
+.data/
+*.log
+.DS_Store
+.tmp/
+*.tsbuildinfo
+.turbo/
+
+# Prisma generated client (produced by `pnpm db:generate`).
+database/generated/
+
+# Local-only convert/upload scratch space.
+.data/uploads/
+.data/tmp/
