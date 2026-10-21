@@ -13,7 +13,7 @@ flowchart LR
   API --> DB[(PostgreSQL)]
   API --> REDIS[(Redis / Queue)]
   API --> OBJ[(S3 兼容对象存储)]
-  REDIS --> WORKER[Worker: Excel / PDF / Image]
+  REDIS --> WORKER[Worker: Excel / Image / File Cleanup]
   WORKER --> DB
   WORKER --> OBJ
   API --> GEO[GeoIP 数据库/服务]
@@ -24,7 +24,7 @@ flowchart LR
 - `storefront`：公开英文页面、SEO、产品筛选和批量 SKU 清单；禁止拥有后台数据库直连权限。
 - `admin`：中英双语后台 UI；通过 API 访问受保护资源；角色控制菜单与按钮可见性。
 - `api`：唯一业务规则与授权边界；负责校验、权限、品类树、商品公开投影、客户重复检查、文件任务和分析采集。
-- `worker`：执行长耗时/高风险任务，包含 Excel 生成、PDF 转换、图片缩略图、物理文件清理、统计聚合。Worker 不应直接对外开放端口。
+- `worker`：执行长耗时/高风险任务，包含 Excel 报价单生成、图片缩略图、物理文件清理、统计聚合；不再承载 Excel 转 PDF 任务。Worker 不应直接对外开放端口。
 - `database`：持久化业务数据；迁移版本化；生产应用用户遵循最小权限原则。
 - `object storage`：原始图片、派生图、Excel 模板、导出文件、PDF 和 PI 文件；数据库保存 key、MIME、大小、哈希与业务引用。
 
@@ -45,11 +45,10 @@ flowchart LR
 3. Categories / Products / Tags / Product Media
 4. Ads / Content Pages / SEO
 5. Quote Templates / Quote Exports / File Assets
-6. Excel-to-PDF Jobs
-7. PI Documents / PI Lines / PI Templates
-8. Customers / Inquiry Activities / Salespeople
-9. Analytics Events / Visitor Sessions / Country Aggregates
-10. Audit Logs / Background Jobs / Health & Metrics
+6. PI Documents / PI Lines / PI Templates
+7. Customers / Inquiry Activities / Salespeople
+8. Analytics Events / Visitor Sessions / Country Aggregates
+9. Audit Logs / Background Jobs / Health & Metrics
 
 ## 5. 非功能性目标（第一阶段建议）
 
