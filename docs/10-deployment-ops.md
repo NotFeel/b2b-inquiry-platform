@@ -2,6 +2,8 @@
 
 ## 1. 环境划分
 
+轻量化部署、移除 Redis 与 SQLite 的评估另见 `docs/31-lightweight-deployment-sqlite-redis-image-optimization.md`。本文件中的 PostgreSQL/Redis 步骤描述的是当前标准部署基线，不代表已完成去 Redis 或 SQLite 迁移；未完成相应代码与数据验证前，不得直接移除生产服务。
+
 - `local`：开发电脑，Docker Compose 启动 PostgreSQL / Redis；上传可使用 `.data/` 本地目录。
 - `test`：自动化测试环境，使用独立数据库、对象存储桶和虚构测试数据。
 - `staging`：尽量匹配生产配置，验证迁移、文件处理、权限、备份恢复和容量。
