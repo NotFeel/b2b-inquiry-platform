@@ -49,6 +49,7 @@
 | `docs/08-excel-pdf-pi.md` | 商品报价单 Excel 与 PI 制作规则 |
 | `docs/30-remove-excel-to-pdf-keep-quote-excel.md` | 移除 Excel 转 PDF、保留商品报价单 Excel 导出的 AI 可执行实施、测试、部署与回滚方案 |
 | `docs/31-lightweight-deployment-sqlite-redis-image-optimization.md` | 轻量化双服务器部署评估、SQLite/Redis 取舍、数据库任务队列替代方案和图片/CDN 优化实施方案 |
+| `docs/32-cloudflare-frontend-server-api-deployment.md` | Cloudflare 承载前台/后台界面、服务器运行 API 的 Next.js 兼容性审计、部署路线、认证/跨域安全、发布与回滚方案 |
 | `docs/09-whatsapp-leads-analytics.md` | WhatsApp 客户、去重和访问看板规则 |
 | `docs/10-deployment-ops.md` | 部署、环境、备份、发布和故障处理 |
 | `docs/29-production-server-deployment-runbook.md` | 生产服务器规格、首次部署、运行时、发布回滚与上线验收 |
