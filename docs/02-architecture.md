@@ -11,7 +11,7 @@ flowchart LR
   WEB --> API[NestJS API]
   ADM --> API
   API --> DB[(PostgreSQL)]
-  API --> REDIS[(Redis / Queue)]
+  API --> REDIS[(Redis / Queue, current implementation)]
   API --> OBJ[(S3 兼容对象存储)]
   REDIS --> WORKER[Worker: Excel / Image / File Cleanup]
   WORKER --> DB
@@ -51,7 +51,11 @@ flowchart LR
 8. Analytics Events / Visitor Sessions / Country Aggregates
 9. Audit Logs / Background Jobs / Health & Metrics
 
-## 5. 非功能性目标（第一阶段建议）
+## 5. 轻量化部署评估
+
+双服务器 1 vCPU / 1 GB RAM 方案、SQLite 可行性、移除 Redis 并以数据库任务表替代队列、图片派生与 CDN 优化，均以 `docs/31-lightweight-deployment-sqlite-redis-image-optimization.md` 为专项实施基线。本文架构图仍表示当前 Redis/PostgreSQL 形态，在替代队列或数据库方案通过测试并实际改造后才更新为目标架构。
+
+## 6. 非功能性目标（第一阶段建议）
 
 - 页面首屏以 SEO 和移动端体验优先；关键 Web Vitals 持续监控，不在本阶段承诺未经测试的绝对数值。
 - 公共产品列表支持服务端分页和索引；不得一次性加载全量产品。
