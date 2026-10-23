@@ -15,11 +15,11 @@
 - 后台：独立 Next.js 应用 + TypeScript；中英 UI 翻译字典。
 - API：NestJS + TypeScript，REST API，统一 DTO、校验和异常响应。
 - 数据库：PostgreSQL；ORM：Prisma（锁定稳定版本，并在开始开发时依据官方迁移指南固定主版本）。
-- 缓存与异步任务：Redis + BullMQ；异步处理商品报价/PI Excel 导出和图片处理。
+- 异步任务：当前代码仍使用 Redis + BullMQ；目标轻量生产架构评估以 PostgreSQL 持久化任务表替代 Redis，需完成任务迁移、幂等/重试/租约与验收后才可移除。
 - 文件：开发环境可本地存储；生产环境优先 S3 兼容对象存储，数据库只保存文件元数据和 object key。
 - Excel：ExcelJS；商品报价单和 PI 的 `.xlsx` 由 Worker 异步生成。Excel 转
   PDF 不属于目标功能。
-- 部署：Docker；反向代理 Nginx 或托管平台入口；TLS；CI 执行 lint、typecheck、test、build、migration check。
+- 目标生产部署：Cloudflare Workers（前后台 UI，先做兼容性 POC）+ Neon PostgreSQL + Cloudflare R2 + 单台 2C/1G NestJS API；完整执行方案见 `docs/33-lightweight-cloudflare-neon-r2-implementation.md`。旧服务器全栈方案仅作为迁移期间/回滚路径。
 
 具体版本必须在仓库 package.json / lockfile / Docker 镜像中固定；不得让 AI 根据“latest”临时升级核心依赖。
 
@@ -64,7 +64,7 @@
 | `.env.example` | 环境变量名称示例，不包含任何真实密钥 |
 | `infra/docker-compose.dev.yml` | 本地 PostgreSQL / Redis 开发依赖 |
 
-## 4. 阅读与执行顺序
+## 当前目标生产架构（2026-10-23）\n\n正式架构实施前，AI/开发者必须优先阅读 `docs/33-lightweight-cloudflare-neon-r2-implementation.md`，以该文件确定目标拓扑与分阶段迁移顺序。`docs/31` 是轻量化/队列迁移的补充评估，`docs/32` 是 Cloudflare 兼容性与路由安全专题，`docs/29` 的原全栈服务器部署步骤不能视为最终目标部署拓扑。文档是计划，并不表示迁移已经实现或验收通过。\n\n## 4. 阅读与执行顺序
 
 1. 先阅读 `AGENTS.md`、产品需求、架构和未决事项。
 2. 项目初始化时锁定运行时、包管理器、主要依赖版本并提交 lockfile。
