@@ -367,6 +367,19 @@ Workers 的执行运行时与服务器 Node 不同。Cloudflare 当前限制文�
 若 Storefront 的动态 SEO 与当前服务端数据加载无法在静态导出方案中保留，选 Workers SSR POC；若 SSR adapter 不兼容，就让 Node SSR 继续工作。不能为了避免服务器进程而删掉必要的 metadata、locale middleware、询盘代理或授权检查。
 
 
+## 11.5 目标架构对齐（2026-10-23）
+
+完整实施主文档：`docs/33-lightweight-cloudflare-neon-r2-implementation.md`。目前采用的目标为 Cloudflare Workers 承载 Storefront/Admin、Neon PostgreSQL、Cloudflare R2、单台 2C/1G NestJS API；目标在经过可靠性验收后移除生产 Redis/BullMQ。
+
+注意以下顺序：
+1. 先做当前 Next.js 15.5.27 兼容性 POC；不得直接复制官方示例或立刻切换主分支生产构建。
+2. Workers 只运行兼容的页面/请求代理逻辑。Sharp 图片转码与 ExcelJS 大文件生成留在后端 task runner。
+3. Neon + R2 接通后，验证数据库恢复、文件上传确认、公开/私有 bucket 和历史 object key。
+4. Redis/BullMQ 只有在文件删除、图片处理、Excel 导出全部迁移到 PostgreSQL durable task runner 且旧队列安全排空后才可移除。
+5. 如果前端 Workers 兼容性或 Cookie/下载链路未通过，先保留现有 Node SSR 并让 Cloudflare 做入口/CDN；不要以删减 SEO、RBAC、CSRF 或任务可靠性来换取部署成功。
+
+此补充让本文与新的目标架构文档一致；未完成的适配和迁移仍是计划，不表示已经部署完成。
+
 ## 12. AI 执行指令
 
 严格遵循根目录 `AGENTS.md`。
