@@ -48,9 +48,9 @@
 | `docs/07-backend-standard.md` | 后端开发规范 |
 | `docs/08-excel-pdf-pi.md` | 商品报价单 Excel 与 PI 制作规则 |
 | `docs/30-remove-excel-to-pdf-keep-quote-excel.md` | 移除 Excel 转 PDF、保留商品报价单 Excel 导出的 AI 可执行实施、测试、部署与回滚方案 |
-| `docs/31-lightweight-deployment-sqlite-redis-image-optimization.md` | 轻量化双服务器部署评估、SQLite/Redis 取舍、数据库任务队列替代方案和图片/CDN 优化实施方案 |
-| `docs/32-cloudflare-frontend-server-api-deployment.md` | Cloudflare 承载前台/后台 UI、Next.js 兼容性、API 服务器边界、认证/缓存安全、分阶段发布和回滚方案 |
-| `docs/32-cloudflare-frontend-server-api-deployment.md` | Cloudflare 承载前台/后台界面、服务器运行 API 的 Next.js 兼容性审计、部署路线、认证/跨域安全、发布与回滚方案 |
+| `docs/31-lightweight-deployment-sqlite-redis-image-optimization.md` | 轻量化部署、SQLite/Redis 取舍、数据库任务表、图片优化与旧架构评估（补充文档） |
+| `docs/32-cloudflare-frontend-server-api-deployment.md` | Cloudflare 前后台、Next.js 兼容性、认证/缓存安全与迁移路线（专题文档） |
+| `docs/33-lightweight-cloudflare-neon-r2-implementation.md` | **当前目标架构实施基线**：Cloudflare Workers + Neon PostgreSQL + R2 + 单台 2C/1G NestJS、PG 任务队列替代 Redis、部署、测试、验收和回滚 |
 | `docs/09-whatsapp-leads-analytics.md` | WhatsApp 客户、去重和访问看板规则 |
 | `docs/10-deployment-ops.md` | 部署、环境、备份、发布和故障处理 |
 | `docs/29-production-server-deployment-runbook.md` | 生产服务器规格、首次部署、运行时、发布回滚与上线验收 |
