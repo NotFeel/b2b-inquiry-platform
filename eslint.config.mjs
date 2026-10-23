@@ -9,6 +9,8 @@ export default tseslint.config(
       '**/dist/**',
       '**/.next/**',
       '**/.next-dev/**',
+      '**/.open-next/**',
+      '**/.wrangler/**',
       '**/coverage/**',
       'database/generated/**',
       'database/prisma/migrations/**',

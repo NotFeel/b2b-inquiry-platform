@@ -1,11 +1,17 @@
 node_modules/
+.pnpm-store/
 .next/
+.open-next/
+.wrangler/
 .next-dev/
 dist/
 build/
 coverage/
 .env
 .env.*
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
 !.env.example
 .data/
 *.log

@@ -12,7 +12,7 @@ function deps(prisma: Record<string, unknown>) {
     deps: {
       prisma: prisma as unknown as PrismaClient,
       storage: { put } as unknown as ObjectStorage,
-      env: {} as WorkerEnv,
+      env: { QUOTE_EXPORT_MAX_PRODUCTS: 5_000 } as WorkerEnv,
       logger: {
         info: vi.fn(),
         debug: vi.fn(),

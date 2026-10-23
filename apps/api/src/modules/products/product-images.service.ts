@@ -1,9 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
 import {
   ERROR_CODES,
   PRODUCT_IMAGE_LIMITS,
-  QUEUE_NAMES,
   type FileOperationSummary,
   type ProductImageAttachResult,
   type ProductImageSummary,
@@ -12,7 +10,6 @@ import type { ProductImage, FileAsset, Prisma } from '@b2b/database';
 import { APP_ENV, type AppEnv } from '../../config/config.module';
 import { ApiError } from '../../common/errors/api-error';
 import { AuditService } from '../../common/services/audit.service';
-import { JobsService } from '../../common/services/jobs.service';
 import { JsonLogger } from '../../common/logger.service';
 import { StorageService } from '../../common/services/storage.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -44,7 +41,6 @@ export class ProductImagesService {
     @Inject(APP_ENV) private readonly env: AppEnv,
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
-    private readonly jobs: JobsService,
     private readonly audit: AuditService,
     private readonly logger: JsonLogger,
   ) {}
@@ -356,13 +352,6 @@ export class ProductImagesService {
       return record;
     });
 
-    await this.enqueueDeletion(job.id, {
-      storageKey: image.storageKey,
-      entityType: 'product_image',
-      entityId: image.id,
-      productId,
-    });
-
     await this.audit.record({
       actorId,
       action: 'product.image.permanent_delete_requested',
@@ -387,9 +376,8 @@ export class ProductImagesService {
   async retryOperation(operationId: string, actorId: string, requestId: string) {
     const job = await this.prisma.fileDeletionJob.findUnique({ where: { id: operationId } });
     if (!job) throw new ApiError(ERROR_CODES.fileOperationNotFound, 'The delete task is unknown.');
-    // A queued task past its own retry time may have lost its queue message (a
-    // Redis restart, for example); its row is the source of truth, so an
-    // operator can restart it instead of waiting for a task nobody holds.
+    // A queued row past its retry time can be reclaimed by the PostgreSQL task
+    // runner. The row is the source of truth, so an operator may also restart it.
     const isOverdue = job.status === 'QUEUED' && job.runAfter.getTime() <= Date.now();
     if (job.status !== 'FAILED' && !isOverdue) {
       throw new ApiError(
@@ -399,10 +387,18 @@ export class ProductImagesService {
       );
     }
 
-    const { retried, imageJobs } = await this.prisma.$transaction(async (transaction) => {
+    const retried = await this.prisma.$transaction(async (transaction) => {
       const updated = await transaction.fileDeletionJob.update({
         where: { id: job.id },
-        data: { status: 'QUEUED', attempts: 0, runAfter: new Date(), lastErrorCode: null },
+        data: {
+          status: 'QUEUED',
+          attempts: 0,
+          runAfter: new Date(),
+          lockedBy: null,
+          lockedUntil: null,
+          heartbeatAt: null,
+          lastErrorCode: null,
+        },
       });
       if (job.entityType === 'product_image' && job.entityId) {
         await transaction.productImage.updateMany({
@@ -426,7 +422,15 @@ export class ProductImagesService {
       for (const imageJob of relatedImages) {
         await transaction.fileDeletionJob.update({
           where: { id: imageJob.id },
-          data: { status: 'QUEUED', attempts: 0, runAfter: new Date(), lastErrorCode: null },
+          data: {
+            status: 'QUEUED',
+            attempts: 0,
+            runAfter: new Date(),
+            lockedBy: null,
+            lockedUntil: null,
+            heartbeatAt: null,
+            lastErrorCode: null,
+          },
         });
         if (imageJob.entityId) {
           await transaction.productImage.updateMany({
@@ -435,23 +439,9 @@ export class ProductImagesService {
           });
         }
       }
-      return { retried: updated, imageJobs: relatedImages };
+      return updated;
     });
 
-    for (const imageJob of imageJobs) {
-      await this.enqueueDeletion(imageJob.id, {
-        storageKey: imageJob.storageKey,
-        entityType: imageJob.entityType,
-        entityId: imageJob.entityId,
-        productId: imageJob.productId,
-      });
-    }
-    await this.enqueueDeletion(retried.id, {
-      storageKey: retried.storageKey,
-      entityType: retried.entityType,
-      entityId: retried.entityId,
-      productId: retried.productId,
-    });
     await this.audit.record({
       actorId,
       action: 'product.image.permanent_delete_retried',
@@ -542,26 +532,6 @@ export class ProductImagesService {
           lastErrorCode: null,
         },
       });
-    });
-
-    for (const image of pendingImages) {
-      const job = await this.prisma.fileDeletionJob.findUnique({
-        where: { idempotencyKey: this.imageIdempotencyKey(image.id) },
-      });
-      if (job) {
-        await this.enqueueDeletion(job.id, {
-          storageKey: image.storageKey,
-          entityType: 'product_image',
-          entityId: image.id,
-          productId,
-        });
-      }
-    }
-    await this.enqueueDeletion(productJob.id, {
-      storageKey: null,
-      entityType: 'product',
-      entityId: productId,
-      productId,
     });
 
     await this.audit.record({
@@ -720,36 +690,6 @@ export class ProductImagesService {
 
   private productIdempotencyKey(productId: string): string {
     return `product:${productId}`;
-  }
-
-  private async enqueueDeletion(
-    jobId: string,
-    payload: {
-      storageKey: string | null;
-      entityType: string | null;
-      entityId: string | null;
-      productId: string | null;
-    },
-  ): Promise<void> {
-    try {
-      await this.jobs.enqueue(
-        QUEUE_NAMES.fileDelete,
-        { jobId, ...payload },
-        // A stable BullMQ id would make a retry a silent no-op: BullMQ ignores
-        // `add()` when a job with that id already exists. The database row is
-        // the deduplication point; each attempt needs its own queue id.
-        { jobId: `file-delete-${jobId}-${randomUUID().slice(0, 8)}` },
-      );
-    } catch (error) {
-      // The outbox row stays QUEUED: an unreachable queue must not turn into a
-      // reported success, and the scheduler/operator retry path still sees it.
-      this.logger.error(
-        'products.file_delete_enqueue_failed',
-        error instanceof Error ? error.message : String(error),
-        'ProductImagesService',
-        { jobId },
-      );
-    }
   }
 
   private toOperationSummary(job: {

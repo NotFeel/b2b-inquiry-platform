@@ -31,6 +31,10 @@
   版本不匹配的图片返回 404。商品源图、报价模板、PI 与报价导出不可从公共图片路由读取。
 - 商品图物理删除必须同时删除源对象和所有 WebP variants；任一派生对象删除失败时
   任务保持 FAILED/可重试且写失败审计，不能假报成功。
+- R2 presigned PUT 必须使用服务端生成的随机 key；确认完成后 API 通过 HEAD 复核对象
+  大小和 Content-Type，再写入持久化 Sharp 任务。私有 bucket 不得匿名读取。
+- 多个 PostgreSQL runner 并发 claim 不得重复领取；执行中持续 heartbeat，崩溃后租约
+  过期可恢复；达到最大次数后进入 FAILED 并保留人工重试能力。
 
 ### Excel/PI
 - 模板字段缺失会阻止启用或导出并显示错误位置。

@@ -74,13 +74,17 @@ flowchart TB
 
 已审阅的仓库内容显示：
 
-- 根目录使用 pnpm workspace，packageManager 为 `pnpm@11.25.0`；根 engines 写的是 Node `>=20.11.0`，实施前应核对 pnpm 11 的实际 Node 要求并统一 CI/runtime 版本。
-- `apps/storefront` 与 `apps/admin` 当前都是 Next.js 15.5.27。
+- 根目录使用 pnpm workspace，packageManager 为 `pnpm@11.25.0`；该版本要求 Node
+  `>=22.13`，根 engines 已同步为 `>=22.13.0`。
+- `apps/storefront` 与 `apps/admin` 基线是 Next.js 15.5.27；POC 已升级到同 minor
+  安全补丁 15.5.28，以匹配 OpenNext 1.20.13 的支持窗口。
 - Storefront 当前有服务端数据获取、动态 metadata、locale middleware/rewrite 相关依赖，不能直接假设为 Pages 静态导出。
 - Admin 使用 Next rewrite 做 API 同源代理，并依赖后台登录、Session、RBAC、动态 CRUD。
-- `apps/api` 与 `apps/worker` 当前都依赖 `bullmq`、`ioredis`。
-- `.env.example` 当前有 `DATABASE_URL`、`REDIS_URL` 和 `STORAGE_DRIVER=local` 及 S3 配置，需要为生产 Neon/R2 与迁移连接规范作同步。
-- `infra/docker-compose.dev.yml` 是本地开发 PostgreSQL/Redis，不应直接当生产编排。
+- 基线曾依赖 `bullmq`、`ioredis`；本次迁移后已从 API/Worker 和开发 Compose 移除，
+  任务统一由 PostgreSQL runner 执行。
+- `.env.example` 已改为 pooled `DATABASE_URL` + `DIRECT_DATABASE_URL`、R2
+  public/private bucket 和 PG runner 配置；不再包含 Redis runtime 变量。
+- `infra/docker-compose.dev.yml` 本地只需要 PostgreSQL。
 - 现有模型包含 `FileDeletionJob`、`OutboxEvent` 和 `QuoteExportJob`。实施前需逐字段对照，避免重复建任务表或让任务状态出现多个真相源。
 - `docs/29-production-server-deployment-runbook.md` 现有默认步骤仍按服务器运行 Storefront/Admin/API/Worker、Docker PG/Redis、Nginx 的架构编写，需要明确目标架构取代路径。
 - 仓库 README 中 `docs/32-cloudflare-frontend-server-api-deployment.md` 链接重复，应顺便去重。
@@ -105,6 +109,20 @@ flowchart TB
 2. 在隔离分支固定版本验证 OpenNext Cloudflare adapter。
 3. 若当前版本/依赖不能可靠运行，暂停 UI runtime 迁移；先用 Cloudflare 代理现有 Node SSR，或单独评估局部静态化。
 4. 只有有真实兼容报告后才更新生产部署配置。
+
+仓库已固定 Next.js 15.5.28、`@opennextjs/cloudflare@1.20.13`、`wrangler@4.152.0`。
+本地兼容命令：
+
+```bash
+pnpm --filter @b2b/storefront run build:worker
+pnpm --filter @b2b/admin run build:worker
+pnpm --filter @b2b/storefront exec wrangler dev --port 8787
+pnpm --filter @b2b/admin exec wrangler dev --port 8788
+```
+
+生产部署前必须把 API 源站地址配置为 Cloudflare server-side secret/binding，并创建
+Wrangler 中声明的两个 OpenNext R2 incremental-cache bucket；不得把内部 API URL 放进
+`NEXT_PUBLIC_*`。
 
 不能因为“可在 Cloudflare 部署 Next.js”就假定仓库现有每项 Server Component、middleware、rewrite 和原生包都会工作。
 
@@ -167,6 +185,10 @@ DIRECT_DATABASE_URL=postgresql://<migration-user>:<password>@<direct-host>/<db>?
 
 每个 bucket 使用最小权限凭据。若代码需要同一 R2 endpoint，可通过业务层 StorageAdapter 选择 bucket；不要把访问密钥交给客户端。
 
+当前实现将**所有源文件前缀**默认路由到 private bucket，仅 `public/` 下的已生成变体
+进入 public bucket。品类、广告、logo 等经审核公开的源图仍由 API 根据数据库
+`isPublic/status` 鉴权后流式提供，不能因为位于 object storage 就匿名直读。
+
 ### 6.2 上传流程
 
 1. Admin 调用 API 申请上传授权，服务端验证管理员权限、文件用途、大小上限和 MIME allowlist。
@@ -179,6 +201,13 @@ DIRECT_DATABASE_URL=postgresql://<migration-user>:<password>@<direct-host>/<db>?
 8. 未绑定临时对象按保留策略生成删除任务。
 
 若现有 StorageAdapter 尚不支持 presigned PUT，不可只改前端。需要添加接口、权限、上传确认、失败清理和测试。
+
+当前实现已提供 `presign-upload` / `confirm-upload` 与 product-media 对应端点。
+当前直传范围限定为经过服务端用途 allowlist 的图片；Excel/PDF 等需要专用内容校验的
+文件继续使用受控 multipart 上传，避免把未验证文档直接标记 ready。
+R2 bucket CORS 至少允许实际 Admin/Storefront origin 的 `PUT`，以及应用需要的 `GET` /
+`HEAD`；允许 `Content-Type` 请求头，预检缓存时间应短于上传授权有效期。`PUT` 成功后
+必须调用 confirm，不能仅凭浏览器返回成功就标记资产可用。
 
 ### 6.3 R2 对象 key 约定
 
@@ -319,13 +348,15 @@ COMMIT;
 | `SESSION_SECRET` | API secret | 随机高熵秘密，分环境配置 |
 | `S3_ENDPOINT` | API/Runner secret | R2 S3 endpoint |
 | `S3_REGION` | API/Runner | 一般使用 R2 要求的 region 值并实际验证 |
-| `S3_BUCKET` | API/Runner | bucket 名必须与 public/private 策略一致 |
+| `S3_PUBLIC_BUCKET` / `S3_PRIVATE_BUCKET` | API/Runner | R2 公开/私有 bucket；`S3_BUCKET` 仅保留为单 bucket 兼容 fallback |
 | `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | API/Runner secret | 仅服务器侧读取 |
 | `S3_PUBLIC_BASE_URL` | API/前台配置 | 公开图片 URL base，不是密钥 |
 | `ADMIN_API_PROXY_TARGET` | Worker secret/config | 仅服务端使用 |
 | `STOREFRONT_API_PROXY_TARGET` | Worker secret/config | 仅服务端使用 |
 | `REVALIDATE_SECRET` | 对应应用 secret | 用于受保护的缓存失效端点；若无此需求可不配 |
-| `REDIS_URL` | 目标完成态 | 所有消费者切 PG runner 后移除；迁移期间不能提前删除 |
+| `TASK_LEASE_SECONDS` / `TASK_POLL_INTERVAL_MS` | Runner | PG 任务租约与轮询间隔 |
+| `TASK_RETRY_BASE_DELAY_MS` / `JOB_MAX_ATTEMPTS` | Runner | 指数退避基数与最大尝试次数 |
+| `QUOTE_EXPORT_MAX_PRODUCTS` | API/Runner | Excel 导出商品硬上限，默认 5000 |
 
 实施完才清理不再使用的环境变量；模板与运行代码必须一起改。密钥不提交到 GitHub。
 
@@ -378,35 +409,35 @@ pnpm format:check
 ## 12. 实施 checklist
 
 ### Phase 0 - 基线（不改变生产）
-- [ ] 新建独立分支并记录 commit SHA。
-- [ ] 全仓搜索 Redis/BullMQ/ioredis 所有用途。
-- [ ] 映射 Worker task producers/consumers 和任务模型读写方。
-- [ ] 列出所有 Storefront/Admin route 与 Node API 兼容点。
-- [ ] 对照 Prisma datasource 和实际 env 变量读取。
-- [ ] 对照 StorageAdapter 能力，记录 presigned URL 缺口。
-- [ ] 保存 lint/typecheck/test/build 的真实基线结果。
+- [x] 新建独立分支并记录 commit SHA。
+- [x] 全仓搜索 Redis/BullMQ/ioredis 所有用途。
+- [x] 映射 Worker task producers/consumers 和任务模型读写方。
+- [x] 列出所有 Storefront/Admin route 与 Node API 兼容点。
+- [x] 对照 Prisma datasource 和实际 env 变量读取。
+- [x] 对照 StorageAdapter 能力，记录 presigned URL 缺口。
+- [x] 保存 lint/typecheck/test/build 的真实基线结果。
 
 ### Phase 1 - Cloudflare POC
-- [ ] 使用固定 adapter/Wrangler 版本部署 Storefront preview。
-- [ ] 验证动态产品 SEO、locale、rewrite、错误页、图片和缓存。
-- [ ] 部署 Admin preview，验收 Cookie、Session、CRUD、R2 upload、Excel download。
+- [x] 固定 `@opennextjs/cloudflare@1.20.13` / `wrangler@4.152.0`，完成本地 Worker bundle。
+- [x] 本地 Wrangler 验证 Storefront locale redirect、动态产品 SEO、列表和首页。
+- [x] 本地 Wrangler 验证 Admin 登录页、同源 API rewrite 和健康检查。
+- [ ] 使用真实 Cloudflare preview 验收完整 Cookie/Session/CRUD/R2 upload/Excel download。
 - [ ] 未通过则保持 Node SSR，不切正式 DNS。
 
 ### Phase 2 - Neon + R2
-- [ ] 创建 Neon project/branch 与低权限运行时 DB 用户（如方案支持）。
-- [ ] 配置 pooler、direct migration URL、访问控制与备份策略。
-- [ ] 建立 R2 public/private buckets 与最小权限 key。
-- [ ] 配置自定义公开图片域名与缓存规则。
-- [ ] 实现 presigned PUT/confirm 和孤立文件清理，验证旧 key 兼容。
+- [ ] 创建真实 Neon project/branch 与低权限运行时 DB 用户（外部账号阻塞）。
+- [x] 代码支持 pooled `DATABASE_URL` + `DIRECT_DATABASE_URL` migration 分离。
+- [x] 代码支持 R2 public/private bucket 路由与未知前缀 fail-closed。
+- [x] 代码支持 presigned PUT、HEAD confirm、private presigned GET 和前端 fallback。
+- [ ] 创建真实 R2 buckets、CORS、自定义图片域名并验证旧 key 兼容（外部账号阻塞）。
 - [ ] 验证 DB 备份恢复以及 R2 资产清点/保留策略。
 
 ### Phase 3 - PG task runner
-- [ ] 先实现原子 claim、lease、heartbeat、retry、idempotency 和任务可观测性。
-- [ ] 迁移 file deletion 并稳定运行。
-- [ ] 迁移 image processing 并做内存基准。
-- [ ] 迁移 Excel export 并完成业务验收。
-- [ ] 证明无 BullMQ 队列 backlog 和生产 consumers。
-- [ ] 再移除生产 Redis/BullMQ/ioredis 和相关 env。
+- [x] 实现 `FOR UPDATE SKIP LOCKED` 原子 claim、lease、heartbeat、有限重试、幂等键与结构化日志。
+- [x] file deletion 已切换到 PG runner；本地真实存储删除/失败重试验收通过。
+- [x] image processing 与 Excel/PI 已写入/复用持久化任务并由 runner 分发。
+- [x] API/Worker 已移除 `bullmq` / `ioredis` runtime 依赖。
+- [ ] 在生产观察完整运维周期并确认旧 BullMQ backlog/consumer 全部结束。
 
 ### Phase 4 - 单后端服务与上线
 - [ ] API/Runner 发布包在 CI 构建，不在服务器 build。

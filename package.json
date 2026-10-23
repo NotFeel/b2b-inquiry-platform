@@ -4,11 +4,12 @@
   "private": true,
   "packageManager": "pnpm@11.25.0",
   "engines": {
-    "node": ">=20.11.0"
+    "node": ">=22.13.0"
   },
   "scripts": {
     "dev": "pnpm run db:generate && pnpm -r --filter \"./packages/**\" build && pnpm -r --parallel --filter \"./apps/**\" dev",
     "build": "pnpm run db:generate && pnpm -r --filter \"./packages/**\" build && pnpm -r --filter \"./apps/**\" build",
+    "build:workers": "pnpm -r --filter \"./packages/**\" build && pnpm --filter @b2b/storefront run build:worker && pnpm --filter @b2b/admin run build:worker",
     "lint": "eslint .",
     "typecheck": "pnpm run db:generate && pnpm -r --filter \"./packages/**\" build && pnpm -r typecheck",
     "test": "pnpm run db:generate && pnpm -r --filter \"./packages/**\" build && pnpm -r test",

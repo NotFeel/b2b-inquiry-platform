@@ -58,9 +58,8 @@
   当前流水线中启用。
 - Sharp 处理并发默认 1，单图处理超时默认 20 秒；可使用
   `IMAGE_PROCESSING_CONCURRENCY`、`IMAGE_PROCESSING_TIMEOUT_SECONDS` 调整。
-- 不新增常驻图片服务，不删除现有 BullMQ、Redis、对象存储、Worker、`sharp` 或
-  物理删除 outbox。
-- SQLite 与移除 Redis 仍属于后续独立阶段，本次未切换数据库或清空队列。
+- 不新增常驻图片服务；图片任务写入 `OutboxEvent`，由 PostgreSQL task runner 消费。
+- Redis/BullMQ 已从 runtime 依赖移除；SQLite 不在目标范围。
 
 ## 6. 备份与维护
 

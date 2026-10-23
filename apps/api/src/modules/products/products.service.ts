@@ -550,14 +550,17 @@ export class ProductsService {
   }
 
   /** Used by quote exports; the caller decides whether prices may appear. */
-  async resolveExportScope(filter: {
-    categoryId?: string | null;
-    includeDescendants?: boolean;
-    publishStatus?: string;
-    lifecycleStatus?: string;
-    tag?: string;
-    search?: string;
-  }): Promise<string[]> {
+  async resolveExportScope(
+    filter: {
+      categoryId?: string | null;
+      includeDescendants?: boolean;
+      publishStatus?: string;
+      lifecycleStatus?: string;
+      tag?: string;
+      search?: string;
+    },
+    maxProducts = 5_000,
+  ): Promise<string[]> {
     let categoryIds: string[] | null = null;
     if (filter.categoryId) {
       categoryIds =
@@ -592,8 +595,16 @@ export class ProductsService {
           : {}),
       },
       orderBy: [{ sortOrder: 'asc' }, { sku: 'asc' }],
+      take: maxProducts + 1,
       select: { id: true },
     });
+    if (products.length > maxProducts) {
+      throw new ApiError(
+        ERROR_CODES.quoteExportTooLarge,
+        `An export can contain at most ${maxProducts} products.`,
+        { details: { maxProducts } },
+      );
+    }
     return products.map((product) => product.id);
   }
 

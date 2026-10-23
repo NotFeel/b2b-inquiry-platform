@@ -21,7 +21,6 @@ export const envSchema = z
     ADMIN_ALLOWED_ORIGINS: z.string().trim().default('http://localhost:3001'),
 
     DATABASE_URL: z.string().trim().min(1),
-    REDIS_URL: z.string().trim().default(''),
 
     SESSION_SECRET: z.string().min(24, 'SESSION_SECRET must be at least 24 characters.'),
     SESSION_COOKIE_NAME: z.string().trim().default('b2b_admin_session'),
@@ -34,10 +33,13 @@ export const envSchema = z
     S3_ENDPOINT: z.string().trim().default(''),
     S3_REGION: z.string().trim().default(''),
     S3_BUCKET: z.string().trim().default(''),
+    S3_PUBLIC_BUCKET: z.string().trim().default(''),
+    S3_PRIVATE_BUCKET: z.string().trim().default(''),
     S3_ACCESS_KEY_ID: z.string().trim().default(''),
     S3_SECRET_ACCESS_KEY: z.string().trim().default(''),
     S3_PUBLIC_BASE_URL: z.string().trim().default(''),
     S3_FORCE_PATH_STYLE: booleanish.default(true),
+    UPLOAD_URL_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(900),
 
     WHATSAPP_BUSINESS_NUMBER: z.string().trim().default(''),
     WHATSAPP_MAX_SELECTED_SKUS: z.coerce.number().int().min(1).max(100).default(20),
@@ -52,9 +54,8 @@ export const envSchema = z
     UPLOAD_MAX_BYTES: z.coerce.number().int().min(1024).max(104_857_600).default(10_485_760),
     UPLOAD_MAX_PIXELS: z.coerce.number().int().min(1_000_000).max(500_000_000).default(50_000_000),
     IMAGE_DERIVATIVE_WIDTHS: z.string().trim().default('320,640,1280'),
+    QUOTE_EXPORT_MAX_PRODUCTS: z.coerce.number().int().min(1).max(100_000).default(5_000),
 
-    QUEUE_PREFIX: z.string().trim().default('b2b'),
-    WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(50).default(4),
     JOB_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(3),
     JOB_RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(30),
     DOWNLOAD_URL_TTL_SECONDS: z.coerce.number().int().min(30).max(3600).default(300),

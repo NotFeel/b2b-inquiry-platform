@@ -9,3 +9,4 @@ export * from './whatsapp';
 export * from './jobs';
 export * from './slug';
 export * from './images';
+export * from './storage';

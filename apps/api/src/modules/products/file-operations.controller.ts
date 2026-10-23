@@ -6,9 +6,9 @@ import { ProductImagesService } from './product-images.service';
 /**
  * Physical-delete task inspection and manual retry (docs/24 §6.2, §12).
  *
- * The task row - not the queue - is the source of truth, so an operator can tell
- * a queued delete from a failed one even while Redis is unreachable. Retrying is
- * a privileged operation: it re-attempts the removal of a real stored object.
+ * The PostgreSQL task row is the source of truth, so an operator can tell a
+ * queued delete from a failed one without consulting a transport. Retrying is a
+ * privileged operation: it re-attempts removal of a real stored object.
  */
 @Controller('admin/file-operations')
 export class FileOperationsController {
