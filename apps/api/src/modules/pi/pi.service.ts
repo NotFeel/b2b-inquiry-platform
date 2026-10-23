@@ -1,9 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { ERROR_CODES, QUEUE_NAMES } from '@b2b/contracts';
+import { ERROR_CODES } from '@b2b/contracts';
 import type { CreatePiDocumentInput, UpdatePiDocumentInput } from '@b2b/validation';
 import { ApiError } from '../../common/errors/api-error';
 import { AuditService } from '../../common/services/audit.service';
-import { JobsService } from '../../common/services/jobs.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { calculatePiTotals, currencyScale } from './pi-calculator';
 
@@ -16,7 +15,6 @@ export class PiService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
-    private readonly jobs: JobsService,
   ) {}
 
   async list(query: { page: number; pageSize: number; status?: string; q?: string }) {
@@ -406,17 +404,6 @@ export class PiService {
         expiresAt: new Date(Date.now() + 30 * 86_400_000),
       },
     });
-    await this.jobs.enqueue(
-      QUEUE_NAMES.quoteExport,
-      {
-        jobId: job.id,
-        templateId: template.id,
-        templateVersion: template.version,
-        locale: 'en-US',
-        filter: { piDocumentId: id },
-      },
-      { jobId: `pi-export-${job.id}` },
-    );
     await this.audit.record({
       actorId,
       action: 'pi.export',
@@ -439,6 +426,9 @@ export class PiService {
       const existing = await this.prisma.piDocument.findFirst({ where: { piNo: candidate } });
       if (!existing) return candidate;
     }
-    throw new ApiError(ERROR_CODES.conflict, 'Could not allocate a unique PI number. Please retry.');
+    throw new ApiError(
+      ERROR_CODES.conflict,
+      'Could not allocate a unique PI number. Please retry.',
+    );
   }
 }

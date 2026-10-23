@@ -36,8 +36,9 @@
 | Product media | `POST /admin/media/staging`（固定 purpose，签名/大小/像素校验，返回 `fileAssetId` 与真实宽高）、`POST /admin/products/:id/images`、`PATCH /admin/products/:id/images/order`、`PUT /admin/products/:id/images/:imageId/cover`、`PATCH /admin/products/:id/images/:imageId`、`DELETE /admin/products/:id/images/:imageId`（202 + `operationId`，共享对象返回 409 `ASSET_IN_USE`） |
 | File operations | `GET /admin/file-operations/:operationId`（物理删除任务状态，以数据库为准）、`POST /admin/file-operations/:operationId/retry`（仅 FAILED 或已过期未执行的 QUEUED 可重试） |
 | Tags | `GET /admin/tags?q&status&usage&locale&page&pageSize`（分页列表，服务端搜索 code 与全部 locale 名称，返回 `label`/`labels`/`productCount`/`missingLocales`）、`GET /admin/tags/options`（仅启用标签，供商品表单选择）、`GET /admin/tags/:id`、`POST /admin/tags`（`tag.create`）、`PATCH /admin/tags/:id`（`tag.update`，支持 `expectedUpdatedAt` 乐观并发，`code` 不可改）、`PATCH /admin/tags/:id/status`（启停）、`DELETE /admin/tags/:id`（`tag.delete`，被商品引用时 409 `TAG_IN_USE`） |
-| Media | `/admin/files/upload-init` 或受控上传接口、`/admin/files/:id` |
-| Quote | `/admin/quote-templates`、`POST /admin/quote-exports`、`GET /admin/jobs/:jobId`、`GET /admin/quote-exports`、`DELETE /admin/quote-exports/:id` |
+| Media | `/admin/files/upload`、`POST /admin/files/presign-upload`、`POST /admin/files/:id/confirm-upload`、`GET /admin/files/:id/status` |
+| Product media | `POST /admin/media/staging`、`POST /admin/media/staging/presign`、`POST /admin/media/staging/:id/confirm`、`GET /admin/media/staging/:id` |
+| Quote | `/admin/quote-templates`、`POST /admin/quote-exports`、`GET /admin/jobs/:jobId`、`GET /admin/jobs/summary`、`GET /admin/quote-exports`、`DELETE /admin/quote-exports/:id` |
 | PI | `/admin/pi-documents`、`POST /admin/pi-documents/:id/export`、`POST /admin/pi-documents/:id/revisions` |
 | Leads | `GET /admin/customers?phone=...`、`POST /admin/customers/lookup`、`POST /admin/inquiry-activities`、`GET /admin/inquiry-activities` |
 | Analytics | `GET /admin/analytics/overview`、`GET /admin/analytics/timeseries`、`GET /admin/analytics/countries`、`GET /admin/analytics/realtime` |

@@ -17,15 +17,6 @@ interface Deps {
   storage: ObjectStorage;
   logger: WorkerLogger;
   env?: WorkerEnv | null;
-  /**
-   * Re-queues this task with a delay.
-   *
-   * Waiting for another task is not a failure: consuming BullMQ attempts for it
-   * would exhaust the retry budget of a healthy delete and surface a "failed"
-   * task that is really just pending, so the wait path re-enqueues itself
-   * instead. The database row stays the source of truth.
-   */
-  enqueue?: (payload: Record<string, unknown>, delayMs: number) => Promise<void>;
 }
 
 /**
@@ -57,8 +48,8 @@ export async function processFileDeletion(
     }
   } catch (error) {
     await recordFailure(payload, deps, error);
-    // Rethrow so BullMQ applies its own backoff/attempt policy; the outbox row
-    // stays FAILED and can also be retried manually by an operator.
+    // Rethrow so the PostgreSQL runner records the failed attempt and schedules
+    // the next lease-backed retry.
     throw error;
   }
 
@@ -89,18 +80,15 @@ async function resumeProductPurge(productId: string | null | undefined, deps: De
 
   await deps.prisma.fileDeletionJob.updateMany({
     where: { id: productJob.id, status: { in: ['QUEUED', 'FAILED'] } },
-    data: { status: 'QUEUED', runAfter: new Date(), lastErrorCode: null },
-  });
-  await deps.enqueue?.(
-    {
-      jobId: productJob.id,
-      storageKey: null,
-      entityType: 'product',
-      entityId: productId,
-      productId,
+    data: {
+      status: 'QUEUED',
+      runAfter: new Date(),
+      lockedBy: null,
+      lockedUntil: null,
+      heartbeatAt: null,
+      lastErrorCode: null,
     },
-    0,
-  );
+  });
 }
 
 /**
@@ -134,8 +122,8 @@ async function finaliseImageDeletion(payload: Payload, deps: Deps): Promise<void
 
   await prisma.$transaction(async (transaction) => {
     if (image) {
-      // Two queue attempts can race (for example a recovered message next to
-      // the original one). `deleteMany` makes the second attempt a no-op instead
+      // A lease can expire while the original processor is still finishing.
+      // `deleteMany` makes a late second attempt a no-op instead
       // of failing with P2025 after the object is already gone.
       await transaction.productImage.deleteMany({ where: { id: image.id } });
       if (image.fileAssetId) {
@@ -171,7 +159,9 @@ async function finaliseImageDeletion(payload: Payload, deps: Deps): Promise<void
         where: { id: payload.jobId },
         data: {
           status: 'SUCCEEDED',
-          attempts: { increment: 1 },
+          lockedBy: null,
+          lockedUntil: null,
+          heartbeatAt: null,
           lastErrorCode: null,
           completedAt: new Date(),
         },
@@ -228,7 +218,9 @@ async function finaliseProductPurge(payload: Payload, deps: Deps): Promise<void>
         where: { id: payload.jobId },
         data: {
           status: 'FAILED',
-          attempts: { increment: 1 },
+          lockedBy: null,
+          lockedUntil: null,
+          heartbeatAt: null,
           lastErrorCode: 'IMAGE_DELETE_FAILED',
           runAfter: new Date(Date.now() + 300_000),
         },
@@ -236,24 +228,17 @@ async function finaliseProductPurge(payload: Payload, deps: Deps): Promise<void>
       logger.warn('product.purge_blocked', { productId, failed });
       return;
     }
-    // Wait for the image tasks; the queue retry is what brings us back.
+    // Wait for the image tasks; the runner will claim this queued row after the delay.
     await prisma.fileDeletionJob.updateMany({
       where: { id: payload.jobId },
       data: {
         status: 'QUEUED',
         runAfter: new Date(Date.now() + 30_000),
+        lockedBy: null,
+        lockedUntil: null,
+        heartbeatAt: null,
       },
     });
-    await deps.enqueue?.(
-      {
-        jobId: payload.jobId,
-        storageKey: null,
-        entityType: 'product',
-        entityId: productId,
-        productId,
-      },
-      15_000,
-    );
     logger.info('product.purge_waiting', { productId, outstandingImages });
     return;
   }
@@ -273,7 +258,9 @@ async function finaliseProductPurge(payload: Payload, deps: Deps): Promise<void>
         where: { id: payload.jobId },
         data: {
           status: 'SUCCEEDED',
-          attempts: { increment: 1 },
+          lockedBy: null,
+          lockedUntil: null,
+          heartbeatAt: null,
           lastErrorCode: null,
           completedAt: new Date(),
         },
@@ -292,7 +279,7 @@ async function finaliseProductPurge(payload: Payload, deps: Deps): Promise<void>
   await revalidateCatalogue(deps);
 }
 
-/** Existing queue consumers: quote exports and PDF conversions. */
+/** Legacy durable file tasks that are not product-image rows. */
 async function finaliseLegacyJob(payload: Payload, deps: Deps): Promise<void> {
   const { prisma } = deps;
   if (payload.entityType === 'product') {
@@ -305,7 +292,9 @@ async function finaliseLegacyJob(payload: Payload, deps: Deps): Promise<void> {
       where: { id: payload.jobId },
       data: {
         status: 'SUCCEEDED',
-        attempts: { increment: 1 },
+        lockedBy: null,
+        lockedUntil: null,
+        heartbeatAt: null,
         lastErrorCode: null,
         completedAt: new Date(),
       },
@@ -344,7 +333,9 @@ async function recordFailure(payload: Payload, deps: Deps, error: unknown): Prom
           where: { id: payload.jobId },
           data: {
             status: 'FAILED',
-            attempts: { increment: 1 },
+            lockedBy: null,
+            lockedUntil: null,
+            heartbeatAt: null,
             lastErrorCode: code,
             runAfter: new Date(Date.now() + 60_000),
           },

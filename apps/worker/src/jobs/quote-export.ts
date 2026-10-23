@@ -45,7 +45,7 @@ export async function processQuoteExport(
 
   await prisma.quoteExportJob.update({
     where: { id: payload.jobId },
-    data: { status: 'PROCESSING', attempts: { increment: 1 } },
+    data: { status: 'PROCESSING' },
   });
 
   try {
@@ -67,13 +67,28 @@ export async function processQuoteExport(
 
       worksheet.addRow(['Proforma Invoice', document.piNo]).font = { bold: true };
       worksheet.addRow(['Revision', document.revisionNo]);
-      worksheet.addRow(['Date', document.issuedAt ? document.issuedAt.toISOString().slice(0, 10) : '']);
-      worksheet.addRow(['Valid until', document.validUntil ? document.validUntil.toISOString().slice(0, 10) : '']);
+      worksheet.addRow([
+        'Date',
+        document.issuedAt ? document.issuedAt.toISOString().slice(0, 10) : '',
+      ]);
+      worksheet.addRow([
+        'Valid until',
+        document.validUntil ? document.validUntil.toISOString().slice(0, 10) : '',
+      ]);
       worksheet.addRow(['Currency', document.currency]);
       worksheet.addRow(['Seller', seller.companyName ?? '']);
       worksheet.addRow(['Buyer', buyer.companyName ?? '']);
       worksheet.addRow([]);
-      worksheet.addRow(['#', 'SKU', 'Description', 'Qty', 'Unit', 'Unit price', 'Discount', 'Amount']);
+      worksheet.addRow([
+        '#',
+        'SKU',
+        'Description',
+        'Qty',
+        'Unit',
+        'Unit price',
+        'Discount',
+        'Amount',
+      ]);
       for (const item of document.items) {
         worksheet.addRow([
           item.lineNo,
@@ -91,10 +106,16 @@ export async function processQuoteExport(
       worksheet.addRow(['', '', '', '', '', '', 'Freight', document.freightAmount.toString()]);
       worksheet.addRow(['', '', '', '', '', '', 'Insurance', document.insuranceAmount.toString()]);
       worksheet.addRow(['', '', '', '', '', '', 'Other charges', document.otherCharges.toString()]);
-      worksheet.addRow(['', '', '', '', '', '', 'Total', document.totalAmount.toString()]).font = { bold: true };
+      worksheet.addRow(['', '', '', '', '', '', 'Total', document.totalAmount.toString()]).font = {
+        bold: true,
+      };
     } else {
       const categoryIds = payload.filter.categoryId
-        ? await resolveCategoryIds(prisma, payload.filter.categoryId, payload.filter.includeDescendants ?? true)
+        ? await resolveCategoryIds(
+            prisma,
+            payload.filter.categoryId,
+            payload.filter.includeDescendants ?? true,
+          )
         : null;
 
       const products = await prisma.product.findMany({
@@ -111,21 +132,43 @@ export async function processQuoteExport(
             ? {
                 OR: [
                   { sku: { contains: payload.filter.search, mode: 'insensitive' as const } },
-                  { translations: { some: { name: { contains: payload.filter.search, mode: 'insensitive' as const } } } },
+                  {
+                    translations: {
+                      some: {
+                        name: { contains: payload.filter.search, mode: 'insensitive' as const },
+                      },
+                    },
+                  },
                 ],
               }
             : {}),
         },
         orderBy: [{ sortOrder: 'asc' }, { sku: 'asc' }],
+        take: deps.env.QUOTE_EXPORT_MAX_PRODUCTS + 1,
         include: {
           translations: true,
           category: { include: { translations: true } },
           tags: { include: { tag: true } },
         },
       });
+      if (products.length > deps.env.QUOTE_EXPORT_MAX_PRODUCTS) {
+        throw new Error(`export.too_large:${deps.env.QUOTE_EXPORT_MAX_PRODUCTS}`);
+      }
       if (products.length === 0) throw new Error('export.empty');
 
-      const headers = ['SKU', 'Name', 'Size (mm)', 'Weight (g)', 'Packaging', 'Carton (cm)', 'Carton weight (kg)', 'Carton qty', 'Category', 'Lifecycle', 'Internal price (CNY)'];
+      const headers = [
+        'SKU',
+        'Name',
+        'Size (mm)',
+        'Weight (g)',
+        'Packaging',
+        'Carton (cm)',
+        'Carton weight (kg)',
+        'Carton qty',
+        'Category',
+        'Lifecycle',
+        'Internal price (CNY)',
+      ];
       worksheet.addRow(headers).font = { bold: true };
       void fieldMapping;
 
@@ -143,7 +186,9 @@ export async function processQuoteExport(
           [product.lengthMm, product.widthMm, product.heightMm].filter(Boolean).join(' x '),
           product.weightGrams ?? '',
           escapeCell(product.packaging ?? ''),
-          [product.cartonLengthCm, product.cartonWidthCm, product.cartonHeightCm].filter(Boolean).join(' x '),
+          [product.cartonLengthCm, product.cartonWidthCm, product.cartonHeightCm]
+            .filter(Boolean)
+            .join(' x '),
           product.cartonWeightKg?.toString() ?? '',
           product.cartonQuantity ?? '',
           escapeCell(categoryName),
@@ -161,7 +206,11 @@ export async function processQuoteExport(
 
     const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
     const fileKey = `quote-exports/${new Date().toISOString().slice(0, 7)}/${payload.jobId}.xlsx`;
-    await storage.put(fileKey, buffer, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    await storage.put(
+      fileKey,
+      buffer,
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
 
     await prisma.quoteExportJob.update({
       where: { id: payload.jobId },
@@ -172,7 +221,11 @@ export async function processQuoteExport(
         errorCode: null,
       },
     });
-    logger.info('quote_export.done', { jobId: payload.jobId, fileKey, sizeBytes: buffer.byteLength });
+    logger.info('quote_export.done', {
+      jobId: payload.jobId,
+      fileKey,
+      sizeBytes: buffer.byteLength,
+    });
     return { fileKey, productCount: job.productCount };
   } catch (error) {
     await prisma.quoteExportJob.update({

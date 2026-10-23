@@ -1,15 +1,6 @@
 // Queue names and payload contracts shared by the API (producer) and the worker
 // (consumer). Keeping them in one place stops the two apps drifting apart.
 
-export const QUEUE_NAMES = {
-  imageDerivatives: 'image-derivatives',
-  quoteExport: 'quote-export',
-  fileDelete: 'file-delete',
-  analyticsRollup: 'analytics-rollup',
-} as const;
-
-export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
-
 export interface ImageDerivativeJobPayload {
   fileAssetId: string;
   storageKey: string;
@@ -29,6 +20,7 @@ export interface QuoteExportJobPayload {
     lifecycleStatus?: string;
     tag?: string;
     search?: string;
+    piDocumentId?: string;
   };
 }
 

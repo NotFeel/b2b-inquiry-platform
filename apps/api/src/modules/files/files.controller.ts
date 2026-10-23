@@ -12,7 +12,12 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ERROR_CODES } from '@b2b/contracts';
-import { fileListQuerySchema, fileUploadQuerySchema } from '@b2b/validation';
+import {
+  directUploadInitSchema,
+  fileListQuerySchema,
+  fileUploadQuerySchema,
+  type DirectUploadInitInput,
+} from '@b2b/validation';
 import type { Response } from 'express';
 import { ApiError } from '../../common/errors/api-error';
 import { CurrentActor, Permission, RequestId, RequirePermissions } from '../../common/decorators';
@@ -59,6 +64,18 @@ export class FilesController {
     );
   }
 
+  @RequirePermissions(Permission.fileUpload)
+  @Post('presign-upload')
+  async presignUpload(
+    @Body(zodPipe(directUploadInitSchema)) body: DirectUploadInitInput,
+    @CurrentActor() actor: AuthenticatedActor,
+    @RequestId() requestId: string,
+  ) {
+    return {
+      data: await this.files.initiateDirectUpload(body, actor.id, requestId),
+    };
+  }
+
   @RequirePermissions(Permission.fileRead)
   @Get()
   async list(@Query(zodPipe(fileListQuerySchema)) query: Parameters<FilesService['list']>[0]) {
@@ -96,6 +113,16 @@ export class FilesController {
   @Get(':id/status')
   async status(@Param('id') id: string) {
     return { data: await this.files.getAssetStatus(id) };
+  }
+
+  @RequirePermissions(Permission.fileUpload)
+  @Post(':id/confirm-upload')
+  async confirmUpload(
+    @Param('id') id: string,
+    @CurrentActor() actor: AuthenticatedActor,
+    @RequestId() requestId: string,
+  ) {
+    return { data: await this.files.confirmDirectUpload(id, actor.id, requestId) };
   }
 
   @RequirePermissions(Permission.fileRead)

@@ -1,7 +1,12 @@
 import { createHash, createHmac } from 'node:crypto';
 import type { Readable } from 'node:stream';
 import { Readable as NodeReadable } from 'node:stream';
-import type { S3DriverOptions, StorageDriver, StoredObject } from './storage.types';
+import type {
+  S3DriverOptions,
+  StorageDriver,
+  StoredObject,
+  StoredObjectMetadata,
+} from './storage.types';
 
 function sha256Hex(payload: Buffer | string): string {
   return createHash('sha256').update(payload).digest('hex');
@@ -64,12 +69,9 @@ export class S3StorageDriver implements StorageDriver {
       payloadHash,
     ].join('\n');
     const scope = `${shortDate}/${this.options.region}/s3/aws4_request`;
-    const stringToSign = [
-      'AWS4-HMAC-SHA256',
-      timestamp,
-      scope,
-      sha256Hex(canonicalRequest),
-    ].join('\n');
+    const stringToSign = ['AWS4-HMAC-SHA256', timestamp, scope, sha256Hex(canonicalRequest)].join(
+      '\n',
+    );
     const signingKey = ['AWS4', this.options.secretAccessKey].reduce<Buffer | string>(
       (previous, current) =>
         typeof previous === 'string'
@@ -142,10 +144,70 @@ export class S3StorageDriver implements StorageDriver {
     return response.ok;
   }
 
+  async stat(key: string): Promise<StoredObjectMetadata | null> {
+    const response = await this.request('HEAD', key);
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      throw new Error(`storage.s3_head_failed:${response.status}`);
+    }
+    return {
+      sizeBytes: Number.parseInt(response.headers.get('content-length') ?? '0', 10),
+      contentType: response.headers.get('content-type'),
+      etag: response.headers.get('etag'),
+    };
+  }
+
   async delete(key: string): Promise<void> {
     const response = await this.request('DELETE', key);
     if (!response.ok && response.status !== 404) {
       throw new Error(`storage.s3_delete_failed:${response.status}`);
     }
+  }
+
+  async presignPut(key: string, _contentType: string, expiresSeconds: number): Promise<string> {
+    return this.presign('PUT', key, expiresSeconds);
+  }
+
+  async presignGet(key: string, expiresSeconds: number): Promise<string> {
+    return this.presign('GET', key, expiresSeconds);
+  }
+
+  private presign(method: 'PUT' | 'GET', key: string, expiresSeconds: number): string {
+    const url = this.objectUrl(key);
+    const { timestamp, shortDate } = amzDate(new Date());
+    const scope = `${shortDate}/${this.options.region}/s3/aws4_request`;
+    const credential = `${this.options.accessKeyId}/${scope}`;
+    url.searchParams.set('X-Amz-Algorithm', 'AWS4-HMAC-SHA256');
+    url.searchParams.set('X-Amz-Credential', credential);
+    url.searchParams.set('X-Amz-Date', timestamp);
+    url.searchParams.set('X-Amz-Expires', String(expiresSeconds));
+    url.searchParams.set('X-Amz-SignedHeaders', 'host');
+    url.searchParams.set('X-Amz-Content-Sha256', 'UNSIGNED-PAYLOAD');
+
+    const canonicalQuery = [...url.searchParams.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([name, value]) => `${encodeURIComponent(name)}=${encodeURIComponent(value)}`)
+      .join('&');
+    const canonicalRequest = [
+      method,
+      url.pathname,
+      canonicalQuery,
+      `host:${url.host}\n`,
+      'host',
+      'UNSIGNED-PAYLOAD',
+    ].join('\n');
+    const stringToSign = ['AWS4-HMAC-SHA256', timestamp, scope, sha256Hex(canonicalRequest)].join(
+      '\n',
+    );
+    const signingKey = ['AWS4', this.options.secretAccessKey].reduce<Buffer | string>(
+      (previous, current) =>
+        typeof previous === 'string'
+          ? createHmac('sha256', `AWS4${current}`).update(shortDate).digest()
+          : createHmac('sha256', previous).update(current).digest(),
+      '',
+    ) as Buffer;
+    const signature = createHmac('sha256', signingKey).update(stringToSign).digest('hex');
+    url.searchParams.set('X-Amz-Signature', signature);
+    return url.toString();
   }
 }

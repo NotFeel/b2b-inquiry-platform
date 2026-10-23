@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { RedisService } from './redis.service';
 
 export interface RateLimitResult {
   allowed: boolean;
@@ -12,33 +11,15 @@ interface WindowEntry {
   resetAt: number;
 }
 
-// Fixed-window limiter. Redis is used when configured so limits hold across API
-// instances; the in-memory fallback only protects a single process.
+// Fixed-window limiter for the target single-API-process deployment. If the API
+// is scaled horizontally later, replace this with a PostgreSQL-backed limiter
+// or an edge limiter; silently sharing one process map across instances would
+// weaken abuse protection.
 @Injectable()
 export class RateLimitService {
   private readonly windows = new Map<string, WindowEntry>();
 
-  constructor(private readonly redis: RedisService) {}
-
   async consume(key: string, limit: number, windowSeconds: number): Promise<RateLimitResult> {
-    const client = this.redis.getClient();
-    if (client) {
-      try {
-        const namespaced = `ratelimit:${key}`;
-        const count = await client.incr(namespaced);
-        if (count === 1) {
-          await client.expire(namespaced, windowSeconds);
-        }
-        const ttl = await client.ttl(namespaced);
-        return {
-          allowed: count <= limit,
-          remaining: Math.max(0, limit - count),
-          retryAfterSeconds: ttl > 0 ? ttl : windowSeconds,
-        };
-      } catch {
-        // Fall through to the in-process counter.
-      }
-    }
     return this.consumeInMemory(key, limit, windowSeconds);
   }
 

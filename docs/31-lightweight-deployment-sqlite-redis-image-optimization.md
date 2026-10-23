@@ -4,6 +4,10 @@
 > 适用场景：小团队运营的 B2B 产品目录 + WhatsApp 询盘网站
 > 目标基础设施：2 台 1 vCPU / 1 GB RAM 服务器
 > 当前建议：**先维持 PostgreSQL 兼容性，先移除运行时 Redis 依赖的可选方案评估；图片走对象存储 + CDN；不要在生产上直接将当前 PostgreSQL schema 改为 SQLite。**
+
+> 2026-10-23 更新：目标架构已由 `docs/33-lightweight-cloudflare-neon-r2-implementation.md`
+> 确定。代码已完成 PostgreSQL task runner、R2 双 bucket/presign 和 Neon 连接分离；
+> 本文保留为取舍分析与旧架构迁移参考。
 > 执行方式：AI 先审计真实调用链，按阶段实施、测试和文档同步，不得只改配置。
 
 ---

@@ -1031,6 +1031,21 @@ export const fileUploadQuerySchema = z.object({
 });
 export type FileUploadPurpose = z.infer<typeof fileUploadQuerySchema>['purpose'];
 
+export const directUploadInitSchema = z.object({
+  purpose: z.enum(FILE_UPLOAD_PURPOSES),
+  originalName: z.string().trim().min(1).max(255),
+  declaredMime: z.string().trim().min(1).max(120),
+  sizeBytes: z.coerce.number().int().min(1).max(104_857_600),
+});
+export type DirectUploadInitInput = z.infer<typeof directUploadInitSchema>;
+
+export const productImageDirectUploadInitSchema = directUploadInitSchema.pick({
+  originalName: true,
+  declaredMime: true,
+  sizeBytes: true,
+});
+export type ProductImageDirectUploadInitInput = z.infer<typeof productImageDirectUploadInitSchema>;
+
 export const fileUploadMetaSchema = z.object({
   purpose: z.enum(FILE_UPLOAD_PURPOSES),
   altText: optionalText(240),

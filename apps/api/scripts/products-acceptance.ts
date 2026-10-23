@@ -8,7 +8,7 @@
  * the permanent delete, which is only accepted once the file is verifiably gone
  * from storage.
  *
- * Usage (API + DB + Redis + worker running locally):
+ * Usage (API + DB + PostgreSQL task runner running locally):
  *   QA_ADMIN_USERNAME=<super admin> QA_ADMIN_PASSWORD=<password> \
  *   pnpm --filter @b2b/api run acceptance:products
  *

@@ -1,10 +1,24 @@
-import { Controller, Get, Param, Post, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Res,
+  UploadedFile,
+  UseInterceptors,
+} from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { PRODUCT_IMAGE_LIMITS, ERROR_CODES, type MediaStagingResult } from '@b2b/contracts';
+import {
+  productImageDirectUploadInitSchema,
+  type ProductImageDirectUploadInitInput,
+} from '@b2b/validation';
 import type { Response } from 'express';
 import { ApiError } from '../../common/errors/api-error';
 import { CurrentActor, Permission, RequestId, RequirePermissions } from '../../common/decorators';
 import type { AuthenticatedActor } from '../../common/request-context';
+import { zodPipe } from '../../common/pipes/zod.pipe';
 import { StorageService } from '../../common/services/storage.service';
 import { FilesService } from './files.service';
 
@@ -75,8 +89,36 @@ export class MediaController {
   }
 
   @RequirePermissions(Permission.productImageUpload)
+  @Post('staging/presign')
+  async presignStaging(
+    @Body(zodPipe(productImageDirectUploadInitSchema))
+    body: ProductImageDirectUploadInitInput,
+    @CurrentActor() actor: AuthenticatedActor,
+    @RequestId() requestId: string,
+  ) {
+    return {
+      data: await this.files.initiateDirectUpload(
+        { ...body, purpose: 'product-image' },
+        actor.id,
+        requestId,
+      ),
+    };
+  }
+
+  @RequirePermissions(Permission.productImageUpload)
   @Get('staging/:id')
   async stagingStatus(@Param('id') id: string): Promise<{ data: MediaStagingResult }> {
+    return { data: await this.files.getStagingAsset(id) };
+  }
+
+  @RequirePermissions(Permission.productImageUpload)
+  @Post('staging/:id/confirm')
+  async confirmStaging(
+    @Param('id') id: string,
+    @CurrentActor() actor: AuthenticatedActor,
+    @RequestId() requestId: string,
+  ): Promise<{ data: MediaStagingResult }> {
+    await this.files.confirmDirectUpload(id, actor.id, requestId);
     return { data: await this.files.getStagingAsset(id) };
   }
 

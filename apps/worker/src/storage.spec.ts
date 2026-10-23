@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { WorkerEnv } from './env';
-import { createStorage, LocalObjectStorage, S3ObjectStorage } from './storage';
+import { createStorage, RoutedObjectStorage } from './storage';
 
 function env(overrides: Record<string, unknown>): WorkerEnv {
   return {
@@ -18,7 +18,7 @@ function env(overrides: Record<string, unknown>): WorkerEnv {
 
 describe('createStorage', () => {
   it('uses the local driver for local development', () => {
-    expect(createStorage(env({}))).toBeInstanceOf(LocalObjectStorage);
+    expect(createStorage(env({}))).toBeInstanceOf(RoutedObjectStorage);
   });
 
   it('uses S3 when the API and worker are configured for object storage', () => {
@@ -32,12 +32,12 @@ describe('createStorage', () => {
           S3_SECRET_ACCESS_KEY: 'secret',
         }),
       ),
-    ).toBeInstanceOf(S3ObjectStorage);
+    ).toBeInstanceOf(RoutedObjectStorage);
   });
 
   it('refuses an incomplete S3 configuration instead of deleting local files', () => {
     expect(() => createStorage(env({ STORAGE_DRIVER: 's3' }))).toThrow(
-      /STORAGE_DRIVER=s3 requires S3_BUCKET/,
+      /STORAGE_DRIVER=s3 requires/,
     );
   });
 });

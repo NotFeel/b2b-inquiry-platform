@@ -1,13 +1,10 @@
 {
+  "/page": "app/page.js",
+  "/[locale]/(auth)/login/page": "app/[locale]/(auth)/login/page.js",
+  "/[locale]/(admin)/dashboard/page": "app/[locale]/(admin)/dashboard/page.js",
   "/[locale]/(admin)/products/page": "app/[locale]/(admin)/products/page.js",
   "/[locale]/(admin)/categories/page": "app/[locale]/(admin)/categories/page.js",
   "/[locale]/(admin)/tags/page": "app/[locale]/(admin)/tags/page.js",
   "/[locale]/(admin)/leads/page": "app/[locale]/(admin)/leads/page.js",
-  "/[locale]/(admin)/analytics/page": "app/[locale]/(admin)/analytics/page.js",
-  "/[locale]/(admin)/quote-templates/page": "app/[locale]/(admin)/quote-templates/page.js",
-  "/[locale]/(admin)/quote-exports/page": "app/[locale]/(admin)/quote-exports/page.js",
-  "/[locale]/(admin)/pi-documents/page": "app/[locale]/(admin)/pi-documents/page.js",
-  "/[locale]/(admin)/content/page": "app/[locale]/(admin)/content/page.js",
-  "/[locale]/(admin)/content/factory-media/page": "app/[locale]/(admin)/content/factory-media/page.js",
-  "/[locale]/(admin)/ads/page": "app/[locale]/(admin)/ads/page.js"
+  "/[locale]/(admin)/analytics/page": "app/[locale]/(admin)/analytics/page.js"
 }

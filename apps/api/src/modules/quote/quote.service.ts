@@ -1,11 +1,13 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { ERROR_CODES, QUEUE_NAMES } from '@b2b/contracts';
-import type { QuoteExportCreateInput, QuoteExportPreviewInput, QuoteTemplateUploadInput } from '@b2b/validation';
+import { ERROR_CODES } from '@b2b/contracts';
+import type {
+  QuoteExportCreateInput,
+  QuoteExportPreviewInput,
+  QuoteTemplateUploadInput,
+} from '@b2b/validation';
 import { APP_ENV, type AppEnv } from '../../config/config.module';
 import { ApiError } from '../../common/errors/api-error';
 import { AuditService } from '../../common/services/audit.service';
-import { JobsService } from '../../common/services/jobs.service';
-import { JsonLogger } from '../../common/logger.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProductsService } from '../products/products.service';
 
@@ -31,13 +33,13 @@ export class QuoteService {
     @Inject(APP_ENV) private readonly env: AppEnv,
     private readonly prisma: PrismaService,
     private readonly products: ProductsService,
-    private readonly jobs: JobsService,
     private readonly audit: AuditService,
-    private readonly logger: JsonLogger,
   ) {}
 
   async listTemplates() {
-    const templates = await this.prisma.quoteTemplate.findMany({ orderBy: [{ name: 'asc' }, { version: 'desc' }] });
+    const templates = await this.prisma.quoteTemplate.findMany({
+      orderBy: [{ name: 'asc' }, { version: 'desc' }],
+    });
     return templates.map((template) => ({
       id: template.id,
       name: template.name,
@@ -61,19 +63,29 @@ export class QuoteService {
   async createTemplateVersion(input: QuoteTemplateUploadInput, actorId: string, requestId: string) {
     const asset = await this.prisma.fileAsset.findUnique({ where: { id: input.fileAssetId } });
     if (!asset || asset.status !== 'ready') {
-      throw new ApiError(ERROR_CODES.quoteTemplateInvalid, 'The uploaded template file is unavailable.');
+      throw new ApiError(
+        ERROR_CODES.quoteTemplateInvalid,
+        'The uploaded template file is unavailable.',
+      );
     }
     if (!asset.storageKey.toLowerCase().endsWith('.xlsx')) {
-      throw new ApiError(ERROR_CODES.quoteTemplateInvalid, 'Quote templates must be .xlsx workbooks.');
+      throw new ApiError(
+        ERROR_CODES.quoteTemplateInvalid,
+        'Quote templates must be .xlsx workbooks.',
+      );
     }
 
     const unknownFields = Object.values(input.fieldMapping).filter(
       (field) => !(QUOTE_TEMPLATE_FIELD_KEYS as readonly string[]).includes(field),
     );
     if (unknownFields.length > 0) {
-      throw new ApiError(ERROR_CODES.quoteTemplateInvalid, 'The template references unknown fields.', {
-        details: { unknownFields: unknownFields.join(',') },
-      });
+      throw new ApiError(
+        ERROR_CODES.quoteTemplateInvalid,
+        'The template references unknown fields.',
+        {
+          details: { unknownFields: unknownFields.join(',') },
+        },
+      );
     }
 
     const latest = await this.prisma.quoteTemplate.findFirst({
@@ -111,12 +123,21 @@ export class QuoteService {
       entityType: 'quote_template',
       entityId: template.id,
       requestId,
-      metadata: { name: template.name, version: template.version, templateType: template.templateType },
+      metadata: {
+        name: template.name,
+        version: template.version,
+        templateType: template.templateType,
+      },
     });
     return template;
   }
 
-  async setTemplateStatus(id: string, status: 'draft' | 'active' | 'disabled', actorId: string, requestId: string) {
+  async setTemplateStatus(
+    id: string,
+    status: 'draft' | 'active' | 'disabled',
+    actorId: string,
+    requestId: string,
+  ) {
     const template = await this.prisma.quoteTemplate.findUnique({ where: { id } });
     if (!template) throw ApiError.notFound('Quote template not found.');
 
@@ -140,32 +161,43 @@ export class QuoteService {
   }
 
   async preview(input: QuoteExportPreviewInput) {
-    const productIds = await this.products.resolveExportScope({
-      categoryId: input.categoryId ?? null,
-      includeDescendants: input.includeDescendants,
-      publishStatus: input.publishStatus,
-      lifecycleStatus: input.lifecycleStatus,
-      tag: input.tag,
-      search: input.search,
-    });
+    const productIds = await this.products.resolveExportScope(
+      {
+        categoryId: input.categoryId ?? null,
+        includeDescendants: input.includeDescendants,
+        publishStatus: input.publishStatus,
+        lifecycleStatus: input.lifecycleStatus,
+        tag: input.tag,
+        search: input.search,
+      },
+      this.env.QUOTE_EXPORT_MAX_PRODUCTS,
+    );
     return { productCount: productIds.length };
   }
 
   async createExport(input: QuoteExportCreateInput, actorId: string, requestId: string) {
-    const template = await this.prisma.quoteTemplate.findUnique({ where: { id: input.templateId } });
+    const template = await this.prisma.quoteTemplate.findUnique({
+      where: { id: input.templateId },
+    });
     if (!template) throw ApiError.notFound('Quote template not found.');
     if (template.status !== 'active') {
-      throw new ApiError(ERROR_CODES.quoteTemplateInvalid, 'Only an active template can be exported.');
+      throw new ApiError(
+        ERROR_CODES.quoteTemplateInvalid,
+        'Only an active template can be exported.',
+      );
     }
 
-    const productIds = await this.products.resolveExportScope({
-      categoryId: input.categoryId ?? null,
-      includeDescendants: input.includeDescendants,
-      publishStatus: input.publishStatus,
-      lifecycleStatus: input.lifecycleStatus,
-      tag: input.tag,
-      search: input.search,
-    });
+    const productIds = await this.products.resolveExportScope(
+      {
+        categoryId: input.categoryId ?? null,
+        includeDescendants: input.includeDescendants,
+        publishStatus: input.publishStatus,
+        lifecycleStatus: input.lifecycleStatus,
+        tag: input.tag,
+        search: input.search,
+      },
+      this.env.QUOTE_EXPORT_MAX_PRODUCTS,
+    );
     if (productIds.length === 0) {
       throw new ApiError(ERROR_CODES.quoteExportEmpty, 'No products match the selected filters.');
     }
@@ -194,32 +226,17 @@ export class QuoteService {
       },
     });
 
-    await this.jobs.enqueue(
-      QUEUE_NAMES.quoteExport,
-      {
-        jobId: job.id,
-        templateId: template.id,
-        templateVersion: template.version,
-        locale: input.locale,
-        filter: {
-          categoryId: input.categoryId ?? null,
-          includeDescendants: input.includeDescendants,
-          publishStatus: input.publishStatus,
-          lifecycleStatus: input.lifecycleStatus,
-          tag: input.tag,
-          search: input.search,
-        },
-      },
-      { jobId: `quote-export-${job.id}` },
-    );
-
     await this.audit.record({
       actorId,
       action: 'quote_export.create',
       entityType: 'quote_export_job',
       entityId: job.id,
       requestId,
-      metadata: { templateId: template.id, templateVersion: template.version, productCount: productIds.length },
+      metadata: {
+        templateId: template.id,
+        templateVersion: template.version,
+        productCount: productIds.length,
+      },
     });
     return { jobId: job.id, productCount: productIds.length, status: job.status };
   }
@@ -233,7 +250,10 @@ export class QuoteService {
         orderBy: { createdAt: 'desc' },
         skip: (query.page - 1) * query.pageSize,
         take: query.pageSize,
-        include: { template: { select: { name: true } }, requestedBy: { select: { displayName: true } } },
+        include: {
+          template: { select: { name: true } },
+          requestedBy: { select: { displayName: true } },
+        },
       }),
     ]);
     return {
@@ -247,7 +267,10 @@ export class QuoteService {
         filterSnapshot: (job.filterSnapshot as Record<string, unknown>) ?? {},
         status: job.status,
         errorCode: job.errorCode,
-        fileUrl: job.fileKey && job.status === 'SUCCEEDED' && job.purgeState === 'NONE' ? job.fileKey : null,
+        fileUrl:
+          job.fileKey && job.status === 'SUCCEEDED' && job.purgeState === 'NONE'
+            ? job.fileKey
+            : null,
         fileSizeBytes: job.fileSizeBytes === null ? null : Number(job.fileSizeBytes),
         expiresAt: job.expiresAt?.toISOString() ?? null,
         createdAt: job.createdAt.toISOString(),
@@ -288,35 +311,24 @@ export class QuoteService {
       return { status: 'deletion_pending' as const };
     }
 
-    const updated = await this.prisma.quoteExportJob.update({
-      where: { id },
-      data: { purgeState: 'PENDING', purgeRequestedAt: new Date() },
-    });
-
-    if (job.fileKey) {
-      const deletionJob = await this.prisma.fileDeletionJob.create({
-        data: {
-          storageKey: job.fileKey,
-          entityType: 'quote_export_job',
-          entityId: id,
-          status: 'QUEUED',
-        },
+    const updated = await this.prisma.$transaction(async (transaction) => {
+      const record = await transaction.quoteExportJob.update({
+        where: { id },
+        data: { purgeState: 'PENDING', purgeRequestedAt: new Date() },
       });
-      try {
-        await this.jobs.enqueue(
-          QUEUE_NAMES.fileDelete,
-          { jobId: deletionJob.id, storageKey: job.fileKey, entityType: 'quote_export_job', entityId: id },
-          { jobId: `file-delete-${deletionJob.id}` },
-        );
-      } catch (error) {
-        this.logger.error(
-          'quote.export_delete_enqueue_failed',
-          error instanceof Error ? error.message : String(error),
-          'QuoteService',
-          { deletionJobId: deletionJob.id },
-        );
+      if (job.fileKey) {
+        await transaction.fileDeletionJob.create({
+          data: {
+            storageKey: job.fileKey,
+            entityType: 'quote_export_job',
+            entityId: id,
+            status: 'QUEUED',
+            idempotencyKey: `quote-export:${id}`,
+          },
+        });
       }
-    }
+      return record;
+    });
 
     await this.audit.record({
       actorId,

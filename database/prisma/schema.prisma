@@ -779,6 +779,10 @@ model QuoteExportJob {
   productCount     Int        @default(0)
   status           JobStatus  @default(QUEUED)
   attempts         Int        @default(0)
+  runAfter         DateTime   @default(now()) @db.Timestamptz(6)
+  lockedBy         String?    @db.VarChar(120)
+  lockedUntil      DateTime?  @db.Timestamptz(6)
+  heartbeatAt      DateTime?  @db.Timestamptz(6)
   fileKey          String?    @db.VarChar(500)
   fileSha256       String?    @db.VarChar(64)
   fileSizeBytes    BigInt?
@@ -786,6 +790,7 @@ model QuoteExportJob {
   purgeState       PurgeState @default(NONE)
   purgeRequestedAt DateTime?  @db.Timestamptz(6)
   expiresAt        DateTime?  @db.Timestamptz(6)
+  completedAt      DateTime?  @db.Timestamptz(6)
 
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
@@ -794,6 +799,7 @@ model QuoteExportJob {
   requestedBy AdminUser     @relation(fields: [requestedById], references: [id], onDelete: Restrict)
 
   @@index([requestedById, createdAt(sort: Desc)])
+  @@index([status, runAfter, lockedUntil])
   @@index([status, createdAt])
   @@index([purgeState, purgeRequestedAt])
   @@map("quote_export_jobs")
@@ -1044,6 +1050,9 @@ model FileDeletionJob {
   status         JobStatus @default(QUEUED)
   attempts       Int       @default(0)
   runAfter       DateTime  @default(now()) @db.Timestamptz(6)
+  lockedBy       String?   @db.VarChar(120)
+  lockedUntil    DateTime? @db.Timestamptz(6)
+  heartbeatAt    DateTime? @db.Timestamptz(6)
   lastErrorCode  String?   @db.VarChar(120)
   /// Deduplicates re-submitted deletes for the same object, so a double click
   /// or a retried request cannot queue the same physical delete twice.
@@ -1053,7 +1062,7 @@ model FileDeletionJob {
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
 
-  @@index([status, runAfter])
+  @@index([status, runAfter, lockedUntil])
   @@index([storageKey])
   @@index([entityType, entityId])
   @@index([productId, status])
@@ -1067,12 +1076,17 @@ model OutboxEvent {
   status        JobStatus @default(QUEUED)
   attempts      Int       @default(0)
   runAfter      DateTime  @default(now()) @db.Timestamptz(6)
+  lockedBy      String?   @db.VarChar(120)
+  lockedUntil   DateTime? @db.Timestamptz(6)
+  heartbeatAt   DateTime? @db.Timestamptz(6)
   lastErrorCode String?   @db.VarChar(120)
+  idempotencyKey String?  @unique @db.VarChar(160)
+  completedAt   DateTime? @db.Timestamptz(6)
   processedAt   DateTime? @db.Timestamptz(6)
 
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
 
-  @@index([status, runAfter])
+  @@index([status, runAfter, lockedUntil])
   @@map("outbox_events")
 }

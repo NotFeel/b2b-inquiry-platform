@@ -1,14 +1,10 @@
 import { Controller, Get } from '@nestjs/common';
 import { Public } from '../../common/decorators';
 import { PrismaService } from '../../prisma/prisma.service';
-import { RedisService } from '../../common/services/redis.service';
 
 @Controller('health')
 export class HealthController {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly redis: RedisService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   // Liveness must not touch dependencies: it only proves the process is up.
   @Public()
@@ -32,13 +28,6 @@ export class HealthController {
       checks.database = { ok: true };
     } catch {
       checks.database = { ok: false, errorCode: 'DB_UNAVAILABLE' };
-    }
-
-    if (this.redis.isConfigured()) {
-      const ok = await this.redis.ping();
-      checks.redis = ok ? { ok: true } : { ok: false, errorCode: 'REDIS_UNAVAILABLE' };
-    } else {
-      checks.redis = { ok: false, errorCode: 'REDIS_NOT_CONFIGURED' };
     }
 
     const ready = Boolean(checks.database?.ok);

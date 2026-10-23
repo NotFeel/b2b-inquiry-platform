@@ -5,6 +5,7 @@ import type {
   FileAssetProcessingStatus,
   FileAssetStatusResult,
   MenuNode,
+  PresignedUploadResult,
 } from '@b2b/contracts';
 
 // Requests default to the admin origin and are forwarded by the Next proxy.
@@ -130,6 +131,15 @@ export async function uploadFile(
   storageKey: string;
   status: FileAssetProcessingStatus;
 }> {
+  if (file.type.startsWith('image/')) {
+    try {
+      return await uploadFileDirect(file, purpose);
+    } catch (error) {
+      if (!(error instanceof AdminApiError) || error.code !== 'UPLOAD_DIRECT_UNAVAILABLE') {
+        throw error;
+      }
+    }
+  }
   const form = new FormData();
   form.append('file', file);
   const response = await fetch(buildApiUrl('/admin/files/upload', { purpose }), {
@@ -173,12 +183,83 @@ export async function uploadFile(
   return uploaded;
 }
 
-async function waitForFileAsset(id: string, timeoutMs = 60_000): Promise<FileAssetStatusResult> {
+export async function uploadFileDirect(
+  file: File,
+  purpose: string,
+  paths: {
+    initiate?: string;
+    confirm?: (id: string) => string;
+    status?: (id: string) => string;
+  } = {},
+): Promise<{
+  id: string;
+  url: string | null;
+  originalName: string;
+  storageKey: string;
+  status: FileAssetProcessingStatus;
+}> {
+  const initiated = await adminApi.post<{ data: PresignedUploadResult }>(
+    paths.initiate ?? '/admin/files/presign-upload',
+    {
+      purpose,
+      originalName: file.name,
+      declaredMime: file.type || imageMimeFromName(file.name),
+      sizeBytes: file.size,
+    },
+  );
+  const upload = initiated.data;
+  const put = await fetch(upload.uploadUrl, {
+    method: upload.method,
+    headers: upload.headers,
+    body: file,
+  });
+  if (!put.ok) {
+    throw new AdminApiError(
+      put.status,
+      'STORAGE_ERROR',
+      `Object storage rejected the upload (${put.status}).`,
+    );
+  }
+
+  const confirmed = await adminApi.post<{ data: FileAssetStatusResult }>(
+    paths.confirm?.(upload.fileAssetId) ?? `/admin/files/${upload.fileAssetId}/confirm-upload`,
+  );
+  let status = confirmed.data;
+  if (status.status === 'processing') {
+    status = await waitForFileAsset(upload.fileAssetId, 60_000, paths.status?.(upload.fileAssetId));
+  }
+  if (status.status !== 'ready') {
+    throw new AdminApiError(
+      422,
+      'UPLOAD_PROCESSING_FAILED',
+      'The image could not be safely decoded or optimized.',
+    );
+  }
+  return {
+    id: upload.fileAssetId,
+    url: status.url,
+    originalName: file.name,
+    storageKey: upload.storageKey,
+    status: 'ready',
+  };
+}
+
+function imageMimeFromName(name: string): string {
+  const extension = name.toLowerCase().split('.').pop();
+  if (extension === 'png') return 'image/png';
+  if (extension === 'webp') return 'image/webp';
+  if (extension === 'jpg' || extension === 'jpeg') return 'image/jpeg';
+  return 'application/octet-stream';
+}
+
+async function waitForFileAsset(
+  id: string,
+  timeoutMs = 60_000,
+  statusPath = `/admin/files/${id}/status`,
+): Promise<FileAssetStatusResult> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const response = await adminApi.get<{ data: FileAssetStatusResult }>(
-      `/admin/files/${id}/status`,
-    );
+    const response = await adminApi.get<{ data: FileAssetStatusResult }>(statusPath);
     if (response.data.status !== 'processing') {
       return response.data;
     }

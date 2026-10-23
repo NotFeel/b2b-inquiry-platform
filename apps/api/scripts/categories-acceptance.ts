@@ -7,7 +7,7 @@
  * protection, optimistic concurrency and the storefront ancestor-visibility
  * rules for product filtering.
  *
- * Usage (needs the local Postgres/Redis from infra/docker-compose.dev.yml):
+ * Usage (needs the local PostgreSQL from infra/docker-compose.dev.yml):
  *   pnpm --filter @b2b/api run acceptance:categories
  *   QA_ACTOR_ID=<admin user id> pnpm --filter @b2b/api run acceptance:categories
  *

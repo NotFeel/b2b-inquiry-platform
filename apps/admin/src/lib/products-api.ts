@@ -11,7 +11,7 @@ import type {
   ProductSlugSuggestion,
   PublishStatus,
 } from '@b2b/contracts';
-import { AdminApiError, adminApi, buildApiUrl } from './admin-api';
+import { AdminApiError, adminApi, buildApiUrl, uploadFileDirect } from './admin-api';
 
 // Typed wrappers over the product endpoints (docs/24 §6).
 //
@@ -230,6 +230,19 @@ export const productsApi = {
  * attached explicitly.
  */
 export async function uploadProductImage(file: File): Promise<MediaStagingResult> {
+  try {
+    const direct = await uploadFileDirect(file, 'product-image', {
+      initiate: '/admin/media/staging/presign',
+      confirm: (id) => `/admin/media/staging/${id}/confirm`,
+      status: (id) => `/admin/media/staging/${id}`,
+    });
+    return getProductImageStaging(direct.id);
+  } catch (error) {
+    if (!(error instanceof AdminApiError) || error.code !== 'UPLOAD_DIRECT_UNAVAILABLE') {
+      throw error;
+    }
+  }
+
   const form = new FormData();
   form.append('file', file);
   const response = await fetch(buildApiUrl('/admin/media/staging'), {

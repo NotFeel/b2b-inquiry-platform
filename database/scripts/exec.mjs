@@ -58,6 +58,18 @@ if (!command) {
   process.exit(1);
 }
 
+// Runtime traffic uses the Neon pooled URL. Prisma migrations must use the
+// direct endpoint from a single controlled release job, so the wrapper swaps
+// DATABASE_URL only for migrate commands. The value is never printed.
+if (
+  command === 'prisma' &&
+  args[0] === 'migrate' &&
+  typeof process.env.DIRECT_DATABASE_URL === 'string' &&
+  process.env.DIRECT_DATABASE_URL.trim().length > 0
+) {
+  process.env.DATABASE_URL = process.env.DIRECT_DATABASE_URL;
+}
+
 const binDir = join(repoRoot, 'node_modules', '.bin');
 const child = spawn(command, args, {
   stdio: 'inherit',

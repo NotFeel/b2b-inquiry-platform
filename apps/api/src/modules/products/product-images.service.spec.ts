@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AppEnv } from '../../config/config.module';
 import type { AuditService } from '../../common/services/audit.service';
-import type { JobsService } from '../../common/services/jobs.service';
 import type { JsonLogger } from '../../common/logger.service';
 import type { StorageService } from '../../common/services/storage.service';
 import type { PrismaService } from '../../prisma/prisma.service';
@@ -26,7 +25,6 @@ const failedImage = {
 
 describe('ProductImagesService.planProductPurge', () => {
   it('retries an image whose earlier physical delete failed instead of stranding the product', async () => {
-    const enqueue = vi.fn(async () => 'queued');
     const audit = { record: vi.fn(async () => undefined) };
     const transaction = {
       fileDeletionJob: {
@@ -63,7 +61,6 @@ describe('ProductImagesService.planProductPurge', () => {
       { REVALIDATE_SECRET: undefined } as unknown as AppEnv,
       prisma as unknown as PrismaService,
       {} as StorageService,
-      { enqueue } as unknown as JobsService,
       audit as unknown as AuditService,
       logger as unknown as JsonLogger,
     );
@@ -85,6 +82,5 @@ describe('ProductImagesService.planProductPurge', () => {
       where: { id: 'image-1' },
       data: { deleteState: 'DELETE_PENDING', isCover: false },
     });
-    expect(enqueue).toHaveBeenCalledTimes(2);
   });
 });

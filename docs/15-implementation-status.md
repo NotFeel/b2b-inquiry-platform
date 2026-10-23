@@ -36,7 +36,7 @@
 
 ```bash
 pnpm install
-docker compose -f infra/docker-compose.dev.yml up -d postgres redis
+docker compose -f infra/docker-compose.dev.yml up -d postgres
 cp .env.example .env      # 修改 DATABASE_URL / SESSION_SECRET / WHATSAPP_BUSINESS_NUMBER
 
 pnpm db:generate
@@ -56,9 +56,9 @@ pnpm --filter @b2b/admin start        # http://localhost:3001
 - **Prisma 引擎下载**：当本机 Node 的信任链不包含镜像根证书时，需要
   `NODE_EXTRA_CA_CERTS=<导出的根证书链> PRISMA_ENGINES_MIRROR=<可达镜像> pnpm db:generate`。
   该设置只影响构建期下载，不写入代码仓库。
-- **端口占用**：`docker compose` 的宿主端口可用 `POSTGRES_HOST_PORT` / `REDIS_HOST_PORT` 覆盖，
-  避免与本机已有的 PostgreSQL/Redis 冲突（此时需同步修改 `.env` 的 `DATABASE_URL`/`REDIS_URL`）。
-- **无 Redis 时**：限流自动降级为进程内计数，后台任务入队返回 `JOB_FAILED` 而不是静默丢弃。
+- **端口占用**：`docker compose` 的宿主端口可用 `POSTGRES_HOST_PORT` 覆盖，避免与本机
+  已有 PostgreSQL 冲突（此时同步修改 `.env` 的 `DATABASE_URL`）。
+- **任务运行**：后台任务写入 PostgreSQL；必须启动 `@b2b/worker` task runner 才会执行。
 
 ## 5. 验证记录（本机）
 
@@ -73,7 +73,7 @@ pnpm --filter @b2b/admin start        # http://localhost:3001
 | 价格泄漏（接口） | `GET /api/v1/public/products` | 响应中无 price/amount/cost 字段 |
 | 未授权访问 | `GET /api/v1/admin/products`（无 Cookie） | `401 UNAUTHORIZED` |
 | 询盘意图 | `POST /api/v1/public/inquiry-intents` | 返回 intentId 与仅含 SKU 的预填文案 |
-| 健康检查 | `GET /api/v1/health/ready` | `database.ok=true`、`redis.ok=true` |
+| 健康检查 | `GET /api/v1/health/ready` | `database.ok=true` |
 
 ## 6. UI 重设计落地情况（`docs/16`）
 
@@ -409,7 +409,7 @@ useEffect(() => { /* 记录 previouslyFocused → 聚焦弹窗内第一个可聚
 | 路由冲突 | 启用菜单之间无重复路由；`leads`（停用）与 `customers`（启用）共用 `/leads`，说明唯一性必须只在启用菜单之间比较 |
 | 翻译 | 每个菜单都有 `zh-CN` 与 `en-US` 标签，无缺失 |
 | 菜单权限持有者 | 仅 `super_admin` 持有 `menu.read`/`menu.update` |
-| 菜单树缓存 | **不存在**：Redis 仅用于任务队列/限流/健康检查，菜单与权限每次都直接查库，因此变更后无需失效动作 |
+| 菜单树缓存 | **不存在**：菜单与权限每次都直接查库，因此变更后无需失效动作 |
 
 **重复「系统管理」节点追踪（docs/19 §7.3）**：
 
@@ -492,7 +492,7 @@ useEffect(() => { /* 记录 previouslyFocused → 聚焦弹窗内第一个可聚
 | 状态的实际影响面 | 前台 `product-card.tsx`、商品详情页按 `lifecycleStatus === 'preorder'` 显示预订标记；发布状态参与前台过滤/精选/新品排序 → **属于流程状态，不能任意增删** |
 | 其他引用 | `Ad.placement`（当前无数据）按 code 匹配 `ad_placement`；`InquiryActivity.source`（当前无数据）按 code 匹配 `inquiry_source`；`Product.packaging` 为自由文本（1 个去重值，3 条 demo 商品）；`PiDocument.termsSnapshot.paymentTerms` 为文本快照 |
 | 权限 | 仅 `super_admin` 持有 `dictionary.read` / `dictionary.update`；业务角色（catalog_manager/sales/viewer）此前无法读取任何字典选项 |
-| 缓存 | **无字典缓存**（Redis 仅用于任务队列/限流/健康检查），改动下一个请求即生效；前端由新 hook 做请求去重与显式失效 |
+| 缓存 | **无字典缓存**：改动下一个请求即生效；前端由新 hook 做请求去重与显式失效 |
 
 `manual` / `website_click` / `whatsapp_webhook` 等历史数据的分组按现状保留：它们在数据库中本就挂在 `inquiry_source` 下，未做任何重分组或改码。
 
@@ -970,3 +970,56 @@ useEffect(() => { /* 记录 previouslyFocused → 聚焦弹窗内第一个可聚
 - 本轮未切换 SQLite、未移除 Redis/BullMQ、未删除历史图片或队列数据。
 - 自动化结果：Contracts 17、Worker 14、API 187、Admin 148、Storefront 21，
   共 387 项通过；文件删除真实数据库/本地存储验收 20/20 通过。
+
+## 24. Cloudflare + Neon + R2 + PostgreSQL Task Runner（2026-10-23）
+
+### 24.1 已落地代码
+
+- API/Worker 移除 BullMQ/ioredis；任务真相继续复用 `FileDeletionJob`、`QuoteExportJob`
+  和 `OutboxEvent`，未新建重复队列表。
+- Additive migration `20261023120000_durable_task_leases` 增加 `runAfter`、
+  `lockedBy`、`lockedUntil`、`heartbeatAt`、`completedAt` 和 Outbox 幂等键。
+- 单并发 PostgreSQL task runner 使用 `FOR UPDATE SKIP LOCKED` 原子 claim，执行期间
+  heartbeat，失败按指数退避重试，崩溃后过期租约可恢复；图片/分析事件写入 Outbox。
+- API 任务的创建与业务状态写入同库事务；图片上传任务只有在 Outbox 持久化成功后才
+  视为受理，避免只存在于进程内或外部队列。
+- R2 StorageAdapter 支持 public/private 双 bucket、未知前缀 fail-closed、S3 presigned
+  PUT/GET、HEAD 元数据和 API/Worker 一致路由。
+- Admin 图片上传优先 R2 presigned PUT + HEAD confirm；非 S3 环境返回
+  `UPLOAD_DIRECT_UNAVAILABLE` 并由前端回退到 multipart。
+- Neon/迁移连接分离：runtime 使用 `DATABASE_URL`，`prisma migrate` 在存在
+  `DIRECT_DATABASE_URL` 时自动切换 direct 连接。
+- Excel 导出增加 `QUOTE_EXPORT_MAX_PRODUCTS`（默认 5000）硬上限，API 创建与 Worker
+  执行都只读取 `max + 1` 行并明确拒绝超限，避免无界内存加载。
+
+### 24.2 Cloudflare Worker POC
+
+- 固定版本：Next.js 15.5.28、`@opennextjs/cloudflare@1.20.13`、`wrangler@4.152.0`。
+- Storefront 本地 OpenNext Worker bundle 通过；Wrangler preview 验证：
+  `/` → 308 `/en-US`，首页/产品列表/动态产品详情均 200，标题、JSON-LD 与无价格扫描通过。
+- Admin 本地 OpenNext Worker bundle 通过；登录页 200，Admin 同源
+  `/api/v1/health/ready` rewrite 200，错误登录 POST 经代理返回 401。
+- 尚未使用真实 Cloudflare 账号做 preview deployment、完整登录 Cookie/CRUD、R2 上传、
+  Excel 下载和多版本回滚，因此 Phase 1 生产切换仍为 No-Go。
+
+### 24.3 数据库任务验收
+
+- 本地迁移 validated + deployed；未删除历史任务或业务数据。
+- `acceptance:task-runner` 20/20：4 个 runner 并发领取无重复、attempt/lease 正确、
+  过期租约可恢复、runner 真实删除 QA 私有对象并清除锁；存储失败会重新排队并保留
+  error/runAfter，恢复后排空任务并删除对象。
+- `acceptance:file-delete` 20/20：存储失败保持 key/FAILED、人工重试、幂等、商品清理
+  等待图片对象和审计均通过。
+- `pnpm run lint`、`pnpm run typecheck`、`pnpm run build` 通过；全仓测试
+  Contracts 19 / Worker 13 / API 194 / Admin 149 / Storefront 21，共 396 项通过。
+- Cloudflare Storefront/Admin 的 OpenNext Worker 本地 build 均通过；Wrangler preview
+  实测 Storefront 根路径 308、首页/列表/动态详情 200，Admin 登录页 200、同源
+  health rewrite 200、错误登录代理 401。
+
+### 24.4 剩余 No-Go / 外部验收
+
+- 未创建真实 Neon project、R2 buckets、Cloudflare preview deployment；无外部凭据，
+  不能宣称生产 Go。
+- 未完成 Neon PITR 恢复演练、R2 CORS/私有匿名访问实测、Cloudflare 完整 Session/CRUD
+  与 Excel 下载验收。
+- 未完成 2C/1G + Sharp/Excel/Runner 的 RSS、P95、OOM 和 swap 压测。

@@ -1,6 +1,6 @@
 # 02. 系统架构设计
 
-> 当前目标生产架构以 `docs/33-lightweight-cloudflare-neon-r2-implementation.md` 为实施基线。本文描述目标逻辑边界；现有代码仍有 Redis/BullMQ 与服务器端 Next.js 运行路径，迁移完成前不得将目标状态描述为已上线。
+> 当前目标生产架构以 `docs/33-lightweight-cloudflare-neon-r2-implementation.md` 为实施基线。本文描述目标逻辑边界；代码已切换 PostgreSQL task runner，但 Cloudflare/Neon/R2 的真实生产部署与完整验收仍需按门禁完成。
 
 ## 1. 目标架构
 
@@ -27,7 +27,8 @@ flowchart TB
 - **API**：NestJS 是唯一可信业务校验、认证和授权边界；公共 DTO 使用字段 allowlist，不直接返回 Prisma 完整模型。
 - **Neon PostgreSQL**：唯一业务数据源；保留 PostgreSQL/Prisma，不迁移 SQLite。生产运行时与 migration 使用合适的连接方式并分离职责。
 - **Cloudflare R2**：文件和图片对象唯一正式存储；数据库保存元数据、key、hash、状态和业务关联。
-- **任务执行器**：目标以 PG 持久化任务/Outbox 替代 Redis/BullMQ。现有任务处理代码只有在验证重试、租约、原子领取和幂等后才能移除 Redis。
+- **任务执行器**：已使用现有 `FileDeletionJob`、`QuoteExportJob`、`OutboxEvent` 作为任务真相，
+  PostgreSQL `FOR UPDATE SKIP LOCKED` 原子领取、租约/heartbeat、指数退避和幂等重试；生产不运行 Redis。
 - **Cloudflare CDN**：只缓存公开页面/公开商品派生图；后台、登录态、上传授权、Excel、PI、私有原图均不得共享缓存。
 - **服务器**：不再运行前后台 Next.js，也不部署 PostgreSQL/Redis；只运行 NestJS API 与任务处理运行时。API 和任务执行器是否同进程必须经过目标 2C/1G 内存/延迟压测决定。
 
@@ -35,7 +36,8 @@ flowchart TB
 
 仓库当前两个前端 workspace 为 Next.js 15.5.27。Storefront 使用 Server Component 服务端获取数据并生成动态 metadata；Admin 依赖 Next rewrite、Session 与动态 CRUD。Cloudflare 的可用部署能力不代表本仓库每一项能力自动兼容。先在独立 preview 分支验证；若 adapter 不兼容，应暂时使用 Cloudflare 代理现有 Node SSR，不可删减 SEO、locale、身份认证或后台功能来强行上线。
 
-当前 `apps/api` 与 `apps/worker` 包依赖 `bullmq`、`ioredis`，故生产 Redis 目前仍属于代码实际依赖。目标是在完成 PG runner 分阶段迁移后才移除这些依赖。开发环境 `infra/docker-compose.dev.yml` 可继续保留本地 PostgreSQL/Redis，除非单独完成开发体验调整。
+当前 `apps/api` 与 `apps/worker` 已移除 `bullmq`、`ioredis`。开发环境只需要 PostgreSQL；
+本地不要求启动 Redis。
 
 ## 4. API 与业务安全
 

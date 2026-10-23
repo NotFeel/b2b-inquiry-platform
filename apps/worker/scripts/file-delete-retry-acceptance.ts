@@ -17,11 +17,13 @@
 import { existsSync, promises as fs } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { PrismaClient } from '@b2b/database';
+import { loadWorkerEnv } from '../src/env';
 import { processFileDeletion } from '../src/jobs/file-delete';
 import { WorkerLogger } from '../src/logger';
 import { LocalObjectStorage } from '../src/storage';
 import type { ObjectStorage } from '../src/storage';
 
+loadWorkerEnv();
 const prisma = new PrismaClient();
 const storageRootSetting = process.env.STORAGE_LOCAL_ROOT ?? './.data/uploads';
 // Same resolution rule as the worker runtime: a relative setting is resolved
@@ -106,7 +108,13 @@ async function main(): Promise<void> {
   let threw = false;
   try {
     await processFileDeletion(
-      { jobId: failingJob.id, storageKey: key, entityType: 'product_image', entityId: imageId, productId: product.id },
+      {
+        jobId: failingJob.id,
+        storageKey: key,
+        entityType: 'product_image',
+        entityId: imageId,
+        productId: product.id,
+      },
       { prisma, storage: failingStorage, logger, env: null },
     );
   } catch {
@@ -116,14 +124,21 @@ async function main(): Promise<void> {
 
   const afterFailure = await prisma.fileDeletionJob.findUnique({ where: { id: failingJob.id } });
   record('failure.jobStaysFailed', afterFailure?.status === 'FAILED', afterFailure?.status ?? '');
-  record('failure.errorCodeKept', Boolean(afterFailure?.lastErrorCode), afterFailure?.lastErrorCode ?? '');
+  record(
+    'failure.errorCodeKept',
+    Boolean(afterFailure?.lastErrorCode),
+    afterFailure?.lastErrorCode ?? '',
+  );
   record('failure.keyKept', afterFailure?.storageKey === key);
   const failedImage = await prisma.productImage.findUnique({ where: { id: imageId } });
   record('failure.imageStateDeleteFailed', failedImage?.deleteState === 'DELETE_FAILED');
   record('failure.fileStillOnDisk', existsSync(resolveStoragePath(key)));
-  record('failure.noFalseSuccessAudit', (await prisma.auditLog.count({
-    where: { entityId: imageId, action: 'product.image.permanent_delete_succeeded' },
-  })) === 0);
+  record(
+    'failure.noFalseSuccessAudit',
+    (await prisma.auditLog.count({
+      where: { entityId: imageId, action: 'product.image.permanent_delete_succeeded' },
+    })) === 0,
+  );
 
   // ------------------------------------------ 2. manual retry with healthy storage
   await prisma.fileDeletionJob.update({
@@ -131,21 +146,36 @@ async function main(): Promise<void> {
     data: { status: 'QUEUED', attempts: 0, lastErrorCode: null },
   });
   await processFileDeletion(
-    { jobId: failingJob.id, storageKey: key, entityType: 'product_image', entityId: imageId, productId: product.id },
+    {
+      jobId: failingJob.id,
+      storageKey: key,
+      entityType: 'product_image',
+      entityId: imageId,
+      productId: product.id,
+    },
     { prisma, storage: realStorage, logger, env: null },
   );
   const afterRetry = await prisma.fileDeletionJob.findUnique({ where: { id: failingJob.id } });
   record('retry.jobSucceeded', afterRetry?.status === 'SUCCEEDED');
   record('retry.objectGone', !existsSync(resolveStoragePath(key)));
   record('retry.imageRowGone', (await prisma.productImage.count({ where: { id: imageId } })) === 0);
-  record('retry.auditRecorded', (await prisma.auditLog.count({
-    where: { entityId: imageId, action: 'product.image.permanent_delete_succeeded' },
-  })) === 1);
+  record(
+    'retry.auditRecorded',
+    (await prisma.auditLog.count({
+      where: { entityId: imageId, action: 'product.image.permanent_delete_succeeded' },
+    })) === 1,
+  );
 
   // Re-running the same task is idempotent: a missing object is a success, not
   // an error, and nothing is recreated.
   await processFileDeletion(
-    { jobId: failingJob.id, storageKey: key, entityType: 'product_image', entityId: imageId, productId: product.id },
+    {
+      jobId: failingJob.id,
+      storageKey: key,
+      entityType: 'product_image',
+      entityId: imageId,
+      productId: product.id,
+    },
     { prisma, storage: realStorage, logger, env: null },
   );
   record('retry.idempotent', (await prisma.productImage.count({ where: { id: imageId } })) === 0);
@@ -183,52 +213,81 @@ async function main(): Promise<void> {
 
   // The product task runs first on purpose: it must refuse to delete anything
   // while an image object still exists.
-  let requeueRequests = 0;
+  const productRunStartedAt = Date.now();
   await processFileDeletion(
-    { jobId: productJob.id, storageKey: null, entityType: 'product', entityId: product.id, productId: product.id },
+    {
+      jobId: productJob.id,
+      storageKey: null,
+      entityType: 'product',
+      entityId: product.id,
+      productId: product.id,
+    },
     {
       prisma,
       storage: realStorage,
       logger,
       env: null,
-      // A wait is not a failure: the task re-queues itself and keeps its retry
-      // budget for real storage errors.
-      enqueue: async () => {
-        requeueRequests += 1;
-      },
     },
   );
-  record('purge.requeuedWhileWaiting', requeueRequests === 1);
   record(
     'purge.productKeptWhileImagePending',
     (await prisma.product.count({ where: { id: product.id } })) === 1,
   );
-  record('purge.storageKeyStillTracked', Boolean(await prisma.productImage.findUnique({
-    where: { id: purgeImage.id },
-    select: { storageKey: true },
-  })));
+  record(
+    'purge.storageKeyStillTracked',
+    Boolean(
+      await prisma.productImage.findUnique({
+        where: { id: purgeImage.id },
+        select: { storageKey: true },
+      }),
+    ),
+  );
   const waitingJob = await prisma.fileDeletionJob.findUnique({ where: { id: productJob.id } });
   record('purge.taskRescheduled', waitingJob?.status === 'QUEUED');
+  record(
+    'purge.runAfterScheduled',
+    Boolean(waitingJob?.runAfter && waitingJob.runAfter.getTime() > productRunStartedAt),
+  );
 
   // Now the image task, then the product task.
   await processFileDeletion(
-    { jobId: imageJob.id, storageKey: purgeKey, entityType: 'product_image', entityId: purgeImage.id, productId: product.id },
+    {
+      jobId: imageJob.id,
+      storageKey: purgeKey,
+      entityType: 'product_image',
+      entityId: purgeImage.id,
+      productId: product.id,
+    },
     { prisma, storage: realStorage, logger, env: null },
   );
   await processFileDeletion(
-    { jobId: productJob.id, storageKey: null, entityType: 'product', entityId: product.id, productId: product.id },
+    {
+      jobId: productJob.id,
+      storageKey: null,
+      entityType: 'product',
+      entityId: product.id,
+      productId: product.id,
+    },
     { prisma, storage: realStorage, logger, env: null },
   );
-  record('purge.productGoneAfterImages', (await prisma.product.count({ where: { id: product.id } })) === 0);
+  record(
+    'purge.productGoneAfterImages',
+    (await prisma.product.count({ where: { id: product.id } })) === 0,
+  );
   record('purge.productObjectGone', !existsSync(resolveStoragePath(purgeKey)));
-  record('purge.translationsCascaded', (await prisma.productTranslation.count({
-    where: { productId: product.id },
-  })) === 0);
+  record(
+    'purge.translationsCascaded',
+    (await prisma.productTranslation.count({
+      where: { productId: product.id },
+    })) === 0,
+  );
   const purgeJob = await prisma.fileDeletionJob.findUnique({ where: { id: productJob.id } });
   record('purge.taskSucceeded', purgeJob?.status === 'SUCCEEDED');
 
   // ------------------------------------------------------------------ cleanup
-  await prisma.auditLog.deleteMany({ where: { entityId: { in: [imageId, purgeImage.id, product.id] } } });
+  await prisma.auditLog.deleteMany({
+    where: { entityId: { in: [imageId, purgeImage.id, product.id] } },
+  });
   await prisma.fileDeletionJob.deleteMany({
     where: { id: { in: [failingJob.id, imageJob.id, productJob.id] } },
   });

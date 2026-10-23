@@ -1,16 +1,17 @@
 import { Inject, Injectable } from '@nestjs/common';
-import {
-  ERROR_CODES,
-  QUEUE_NAMES,
-  imageAssetVersion,
-  imageVariantStorageKey,
+import { ERROR_CODES, imageAssetVersion, imageVariantStorageKey } from '@b2b/contracts';
+import type {
+  FileAssetStatusResult,
+  FileAssetSummary,
+  MediaStagingResult,
+  PresignedUploadResult,
 } from '@b2b/contracts';
-import type { FileAssetStatusResult, FileAssetSummary, MediaStagingResult } from '@b2b/contracts';
+import type { DirectUploadInitInput } from '@b2b/validation';
+import { Prisma } from '@b2b/database';
 import { APP_ENV, type AppEnv } from '../../config/config.module';
 import { ApiError } from '../../common/errors/api-error';
 import { AuditService } from '../../common/services/audit.service';
 import { CryptoService } from '../../common/services/crypto.service';
-import { JobsService } from '../../common/services/jobs.service';
 import { JsonLogger } from '../../common/logger.service';
 import { StorageService } from '../../common/services/storage.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -42,7 +43,6 @@ export class FilesService {
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly crypto: CryptoService,
-    private readonly jobs: JobsService,
     private readonly audit: AuditService,
     private readonly logger: JsonLogger,
   ) {}
@@ -177,39 +177,47 @@ export class FilesService {
     const sha256 = this.crypto.sha256(input.buffer);
     const stored = await this.storage.put(storageKey, input.buffer, mimeType);
 
-    const asset = await this.prisma.fileAsset.create({
-      data: {
-        storageKey,
-        originalName: input.originalName.slice(0, 255),
-        mimeType,
-        sizeBytes: BigInt(stored.sizeBytes),
-        sha256,
-        width: dimensions?.width ?? null,
-        height: dimensions?.height ?? null,
-        purpose: input.purpose,
-        // The original is validated and stored; derivative generation is a
-        // follow-up job and does not block using the asset.
-        // Sharp owns the real decode. The asset cannot be attached or served
-        // as ready until the worker has produced at least one safe variant.
-        status: hasImageDimensions ? 'processing' : 'ready',
-        isPublic: rules.isPublic,
-        uploadedById: actorId,
-      },
-    });
-
-    if (hasImageDimensions) {
-      try {
-        await this.enqueueDerivatives(asset.id, storageKey);
-      } catch {
-        await this.prisma.fileAsset.update({
-          where: { id: asset.id },
-          data: { status: 'failed' },
+    let asset;
+    try {
+      asset = await this.prisma.$transaction(async (transaction) => {
+        const created = await transaction.fileAsset.create({
+          data: {
+            storageKey,
+            originalName: input.originalName.slice(0, 255),
+            mimeType,
+            sizeBytes: BigInt(stored.sizeBytes),
+            sha256,
+            width: dimensions?.width ?? null,
+            height: dimensions?.height ?? null,
+            purpose: input.purpose,
+            // Sharp owns the real decode. The asset only becomes ready after
+            // the PostgreSQL task runner has produced and verified variants.
+            status: hasImageDimensions ? 'processing' : 'ready',
+            isPublic: rules.isPublic,
+            uploadedById: actorId,
+          },
         });
-        throw new ApiError(
-          ERROR_CODES.uploadProcessingFailed,
-          'The image could not be queued for safe processing.',
-        );
-      }
+        if (hasImageDimensions) {
+          await transaction.outboxEvent.create({
+            data: {
+              eventType: 'image-derivatives',
+              payload: {
+                fileAssetId: created.id,
+                storageKey,
+                widths: this.env.imageDerivativeWidths,
+              } as never,
+              status: 'QUEUED',
+              idempotencyKey: `image-derivatives:${created.id}`,
+            },
+          });
+        }
+        return created;
+      });
+    } catch (error) {
+      // The object was written before the DB transaction. A failed task insert
+      // must not leave an untracked object behind.
+      await this.storage.delete(storageKey).catch(() => undefined);
+      throw error;
     }
 
     await this.audit.record({
@@ -237,6 +245,187 @@ export class FilesService {
           : asset.isPublic
             ? this.storage.publicUrl(asset.storageKey)
             : null,
+    };
+  }
+
+  async initiateDirectUpload(
+    input: DirectUploadInitInput,
+    actorId: string,
+    requestId: string,
+  ): Promise<PresignedUploadResult> {
+    const rules = PURPOSE_RULES[input.purpose];
+    if (!rules) {
+      throw new ApiError(ERROR_CODES.uploadTypeNotAllowed, 'Unsupported upload purpose.');
+    }
+    if (rules.kind !== 'image') {
+      throw new ApiError(
+        ERROR_CODES.uploadTypeNotAllowed,
+        'Direct upload is limited to validated image purposes.',
+      );
+    }
+    if (!this.storage.supportsPresignedUploads()) {
+      throw new ApiError(
+        ERROR_CODES.uploadDirectUnavailable,
+        'Direct upload requires S3-compatible object storage.',
+      );
+    }
+    if (input.sizeBytes > this.env.UPLOAD_MAX_BYTES) {
+      throw new ApiError(ERROR_CODES.uploadTooLarge, 'The uploaded file exceeds the size limit.');
+    }
+    const extension = extensionOf(input.originalName);
+    if (!rules.extensions.includes(extension)) {
+      throw new ApiError(
+        ERROR_CODES.uploadTypeNotAllowed,
+        `Allowed extensions for this purpose: ${rules.extensions.join(', ')}.`,
+      );
+    }
+    const allowedMimes = Object.values(IMAGE_MIME_BY_KIND);
+    if (!allowedMimes.includes(input.declaredMime)) {
+      throw new ApiError(
+        ERROR_CODES.uploadTypeNotAllowed,
+        'Direct image upload requires JPEG, PNG or WebP.',
+      );
+    }
+
+    const storageKey = this.storage.buildKey(input.purpose, input.originalName);
+    const expiresAt = new Date(Date.now() + this.env.UPLOAD_URL_TTL_SECONDS * 1000);
+    const asset = await this.prisma.fileAsset.create({
+      data: {
+        storageKey,
+        originalName: input.originalName.slice(0, 255),
+        mimeType: input.declaredMime,
+        sizeBytes: BigInt(input.sizeBytes),
+        purpose: input.purpose,
+        status: 'uploading',
+        isPublic: rules.isPublic,
+        uploadedById: actorId,
+      },
+    });
+
+    try {
+      const uploadUrl = await this.storage.presignPut(
+        storageKey,
+        input.declaredMime,
+        this.env.UPLOAD_URL_TTL_SECONDS,
+      );
+      await this.audit.record({
+        actorId,
+        action: 'file.upload_requested',
+        entityType: 'file_asset',
+        entityId: asset.id,
+        requestId,
+        metadata: { purpose: input.purpose, sizeBytes: input.sizeBytes },
+      });
+      return {
+        fileAssetId: asset.id,
+        storageKey,
+        method: 'PUT',
+        uploadUrl,
+        headers: { 'Content-Type': input.declaredMime },
+        expiresAt: expiresAt.toISOString(),
+      };
+    } catch (error) {
+      await this.prisma.fileAsset.delete({ where: { id: asset.id } }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async confirmDirectUpload(
+    id: string,
+    actorId: string,
+    requestId: string,
+  ): Promise<FileAssetStatusResult> {
+    const asset = await this.getAssetOrThrow(id);
+    if (asset.uploadedById !== actorId) {
+      throw ApiError.forbidden('This upload belongs to another operator.');
+    }
+    if (asset.status === 'ready') return this.getAssetStatus(id);
+    if (asset.status === 'processing') {
+      // Confirmation is idempotent while the task runner owns the processing
+      // lease. A repeated browser request must not reset attempts or runAfter.
+      return this.getAssetStatus(id);
+    }
+
+    const rules = PURPOSE_RULES[asset.purpose];
+    if (!rules || rules.kind !== 'image') {
+      throw new ApiError(ERROR_CODES.uploadTypeNotAllowed, 'Unsupported direct upload purpose.');
+    }
+    const metadata = await this.storage.stat(asset.storageKey);
+    if (!metadata) {
+      throw new ApiError(ERROR_CODES.storageUnavailable, 'The uploaded object was not found.', {
+        status: 503,
+      });
+    }
+    if (
+      metadata.sizeBytes !== Number(asset.sizeBytes) ||
+      metadata.sizeBytes > this.env.UPLOAD_MAX_BYTES
+    ) {
+      throw new ApiError(
+        ERROR_CODES.uploadSignatureMismatch,
+        'The uploaded object size does not match the authorized upload.',
+      );
+    }
+    const actualMime = metadata.contentType?.split(';', 1)[0]?.trim().toLowerCase() ?? '';
+    if (!Object.values(IMAGE_MIME_BY_KIND).includes(actualMime)) {
+      throw new ApiError(
+        ERROR_CODES.uploadSignatureMismatch,
+        'The uploaded object has an unsupported content type.',
+      );
+    }
+
+    const status = await this.prisma.$transaction(async (transaction) => {
+      const updated = await transaction.fileAsset.update({
+        where: { id: asset.id },
+        data: {
+          mimeType: actualMime,
+          status: 'processing',
+          derivatives: Prisma.DbNull,
+        },
+      });
+      await transaction.outboxEvent.upsert({
+        where: { idempotencyKey: `image-derivatives:${asset.id}` },
+        create: {
+          eventType: 'image-derivatives',
+          payload: {
+            fileAssetId: asset.id,
+            storageKey: asset.storageKey,
+            widths: this.env.imageDerivativeWidths,
+          } as never,
+          status: 'QUEUED',
+          idempotencyKey: `image-derivatives:${asset.id}`,
+        },
+        update: {
+          status: 'QUEUED',
+          attempts: 0,
+          runAfter: new Date(),
+          lockedBy: null,
+          lockedUntil: null,
+          heartbeatAt: null,
+          lastErrorCode: null,
+        },
+      });
+      return updated;
+    });
+
+    await this.audit.record({
+      actorId,
+      action: 'file.upload_confirmed',
+      entityType: 'file_asset',
+      entityId: asset.id,
+      requestId,
+      metadata: { purpose: asset.purpose, sizeBytes: metadata.sizeBytes },
+    });
+    return {
+      fileAssetId: status.id,
+      status: 'processing',
+      url:
+        status.purpose === 'product-image'
+          ? this.storage.adminProductImageUrl(status.id)
+          : status.isPublic
+            ? this.storage.publicUrl(status.storageKey)
+            : null,
+      width: status.width,
+      height: status.height,
     };
   }
 
@@ -305,6 +494,12 @@ export class FilesService {
     ttlSeconds: number,
   ): Promise<{ url: string; expiresAt: string }> {
     const asset = await this.getAssetOrThrow(id);
+    if (this.storage.supportsPresignedUploads()) {
+      return {
+        url: await this.storage.presignGet(asset.storageKey, ttlSeconds),
+        expiresAt: new Date(Date.now() + ttlSeconds * 1000).toISOString(),
+      };
+    }
     const token = this.crypto.signPayload(asset.storageKey, ttlSeconds);
     return {
       url: `${this.env.API_BASE_URL.replace(/\/+$/, '')}/api/v1/files/signed/${asset.storageKey}?token=${encodeURIComponent(token)}`,
@@ -414,7 +609,7 @@ export class FilesService {
   }
 
   /**
-   * Deletes the asset record and queues physical deletion. The two systems have
+   * Deletes the asset record and persists physical deletion work. The two systems have
    * no shared transaction, so the object is removed by an idempotent retryable
    * job instead of being assumed deleted (docs/10 §7).
    */
@@ -436,32 +631,19 @@ export class FilesService {
       );
     }
 
-    const job = await this.prisma.fileDeletionJob.create({
-      data: {
-        storageKey: asset.storageKey,
-        entityType: 'file_asset',
-        entityId: asset.id,
-        status: 'QUEUED',
-      },
-    });
-    await this.prisma.fileAsset.delete({ where: { id } });
-
-    try {
-      await this.jobs.enqueue(QUEUE_NAMES.fileDelete, {
-        jobId: job.id,
-        storageKey: asset.storageKey,
+    const job = await this.prisma.$transaction(async (transaction) => {
+      const created = await transaction.fileDeletionJob.create({
+        data: {
+          storageKey: asset.storageKey,
+          entityType: 'file_asset',
+          entityId: asset.id,
+          status: 'QUEUED',
+          idempotencyKey: `file-asset:${asset.id}`,
+        },
       });
-    } catch (error) {
-      this.logger.error(
-        'file.delete_enqueue_failed',
-        error instanceof Error ? error.message : String(error),
-        'FilesService',
-        { jobId: job.id, storageKey: asset.storageKey },
-      );
-      // The deletion job remains queued in the database and can be retried by an
-      // operator or the scheduler; the API reports success because the record is
-      // already gone from the UI.
-    }
+      await transaction.fileAsset.delete({ where: { id } });
+      return created;
+    });
 
     await this.audit.record({
       actorId,
@@ -472,13 +654,5 @@ export class FilesService {
       metadata: { storageKey: asset.storageKey, deletionJobId: job.id },
     });
     return { deleted: true, deletionJobId: job.id };
-  }
-
-  async enqueueDerivatives(fileAssetId: string, storageKey: string): Promise<void> {
-    await this.jobs.enqueue(QUEUE_NAMES.imageDerivatives, {
-      fileAssetId,
-      storageKey,
-      widths: this.env.imageDerivativeWidths,
-    });
   }
 }

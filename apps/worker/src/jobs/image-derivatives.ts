@@ -122,6 +122,7 @@ export async function processImageDerivatives(
       data: {
         width: sourceWidth,
         height: sourceHeight,
+        sha256,
         status: 'ready',
         derivatives: derivatives as never,
       },
@@ -151,8 +152,8 @@ export async function processImageDerivatives(
     await prisma.fileAsset.update({
       where: { id: asset.id },
       data: {
-        // Keep the staging UI in "processing" while BullMQ still has retries.
-        // Only the terminal attempt exposes a failed asset.
+        // Keep the staging UI in "processing" while the PostgreSQL runner still
+        // has retries. Only the terminal attempt exposes a failed asset.
         status: finalAttempt ? 'failed' : 'processing',
         derivatives: {
           status: finalAttempt ? 'failed' : 'retrying',

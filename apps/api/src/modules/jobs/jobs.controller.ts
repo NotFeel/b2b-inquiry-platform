@@ -1,8 +1,7 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
-import { QUEUE_NAMES, ERROR_CODES } from '@b2b/contracts';
+import { ERROR_CODES } from '@b2b/contracts';
 import { ApiError } from '../../common/errors/api-error';
 import { Permission, RequirePermissions } from '../../common/decorators';
-import { JobsService } from '../../common/services/jobs.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
 const JOB_ID_PATTERN = /^[A-Za-z0-9._:-]{1,120}$/;
@@ -10,15 +9,59 @@ const SUPPORTED_JOB_TYPES = new Set(['quote-export']);
 
 @Controller('admin/jobs')
 export class JobsController {
-  constructor(
-    private readonly jobs: JobsService,
-    private readonly prisma: PrismaService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
+
+  @RequirePermissions(Permission.jobRead)
+  @Get('summary')
+  async summary() {
+    const now = new Date();
+    const [
+      fileQueued,
+      fileProcessing,
+      fileFailed,
+      quoteQueued,
+      quoteProcessing,
+      quoteFailed,
+      outboxQueued,
+      outboxProcessing,
+      outboxFailed,
+      expiredLeases,
+    ] = await this.prisma.$transaction([
+      this.prisma.fileDeletionJob.count({ where: { status: 'QUEUED' } }),
+      this.prisma.fileDeletionJob.count({ where: { status: 'PROCESSING' } }),
+      this.prisma.fileDeletionJob.count({ where: { status: 'FAILED' } }),
+      this.prisma.quoteExportJob.count({ where: { status: 'QUEUED' } }),
+      this.prisma.quoteExportJob.count({ where: { status: 'PROCESSING' } }),
+      this.prisma.quoteExportJob.count({ where: { status: 'FAILED' } }),
+      this.prisma.outboxEvent.count({ where: { status: 'QUEUED' } }),
+      this.prisma.outboxEvent.count({ where: { status: 'PROCESSING' } }),
+      this.prisma.outboxEvent.count({ where: { status: 'FAILED' } }),
+      this.prisma.$queryRaw<{ count: bigint }[]>`
+        SELECT (
+          (SELECT COUNT(*) FROM file_deletion_jobs
+           WHERE status = 'PROCESSING' AND "lockedUntil" < ${now})
+          + (SELECT COUNT(*) FROM quote_export_jobs
+             WHERE status = 'PROCESSING' AND "lockedUntil" < ${now})
+          + (SELECT COUNT(*) FROM outbox_events
+             WHERE status = 'PROCESSING' AND "lockedUntil" < ${now})
+        )::bigint AS count
+      `,
+    ]);
+    return {
+      data: {
+        fileDeletion: { queued: fileQueued, processing: fileProcessing, failed: fileFailed },
+        quoteExport: { queued: quoteQueued, processing: quoteProcessing, failed: quoteFailed },
+        outbox: { queued: outboxQueued, processing: outboxProcessing, failed: outboxFailed },
+        expiredLeases: Number(expiredLeases[0]?.count ?? 0),
+        observedAt: now.toISOString(),
+      },
+    };
+  }
 
   /**
    * Unified job status endpoint. The persisted record is authoritative - the
-   * queue is only consulted for progress - so a Redis outage never hides the
-   * real state of an export (docs/05 §5).
+   * PostgreSQL task row is authoritative; no transport state is needed to
+   * report status (docs/05 §5, docs/33 §7).
    */
   @RequirePermissions(Permission.jobRead)
   @Get(':jobId')
@@ -27,49 +70,24 @@ export class JobsController {
       throw ApiError.validation('Invalid job id.', { jobId: 'validation.required' });
     }
 
-    if (type && !SUPPORTED_JOB_TYPES.has(type)) {
+    const jobType = type ?? 'quote-export';
+    if (!SUPPORTED_JOB_TYPES.has(jobType)) {
       throw ApiError.validation('Unsupported job type.', { type: 'validation.unsupported' });
     }
 
-    if (type === 'quote-export') {
-      const job = await this.prisma.quoteExportJob.findUnique({ where: { id: jobId } });
-      if (!job) throw new ApiError(ERROR_CODES.jobNotFound, 'Job not found.');
-      let progress: number | null = null;
-      try {
-        const state = await this.jobs.getJobState(
-          QUEUE_NAMES.quoteExport,
-          `quote-export-${job.id}`,
-        );
-        progress = typeof state?.progress === 'number' ? state.progress : null;
-      } catch {
-        progress = null;
-      }
-      return {
-        data: {
-          id: job.id,
-          status: job.status,
-          errorCode: job.errorCode,
-          progress,
-          result: {
-            productCount: job.productCount,
-            fileKey: job.purgeState === 'NONE' ? job.fileKey : null,
-          },
-          updatedAt: job.updatedAt.toISOString(),
-        },
-      };
-    }
-
-    // Fall back to the queue for ids that are not persisted business jobs.
-    const state = await this.jobs.getJobState(QUEUE_NAMES.quoteExport, jobId);
-    if (!state) throw new ApiError(ERROR_CODES.jobNotFound, 'Job not found.');
+    const job = await this.prisma.quoteExportJob.findUnique({ where: { id: jobId } });
+    if (!job) throw new ApiError(ERROR_CODES.jobNotFound, 'Job not found.');
     return {
       data: {
-        id: jobId,
-        status: state.state === 'completed' ? 'succeeded' : state.state,
-        errorCode: state.error ? ERROR_CODES.jobFailed : null,
-        progress: typeof state.progress === 'number' ? state.progress : null,
-        result: null,
-        updatedAt: new Date().toISOString(),
+        id: job.id,
+        status: job.status,
+        errorCode: job.errorCode,
+        progress: null,
+        result: {
+          productCount: job.productCount,
+          fileKey: job.purgeState === 'NONE' ? job.fileKey : null,
+        },
+        updatedAt: job.updatedAt.toISOString(),
       },
     };
   }

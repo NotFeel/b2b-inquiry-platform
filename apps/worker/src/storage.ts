@@ -3,6 +3,7 @@ import { createReadStream, existsSync, mkdirSync, promises as fs } from 'node:fs
 import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import type { Readable } from 'node:stream';
 import { Readable as NodeReadable } from 'node:stream';
+import { storageVisibilityForKey, type StorageVisibility } from '@b2b/contracts';
 import type { WorkerEnv } from './env';
 
 export interface ObjectStorage {
@@ -11,6 +12,34 @@ export interface ObjectStorage {
   readStream(key: string): Readable;
   exists(key: string): Promise<boolean>;
   delete(key: string): Promise<void>;
+}
+
+export class RoutedObjectStorage implements ObjectStorage {
+  constructor(private readonly drivers: Record<StorageVisibility, ObjectStorage>) {}
+
+  private driver(key: string): ObjectStorage {
+    return this.drivers[storageVisibilityForKey(key)] ?? this.drivers.private;
+  }
+
+  put(key: string, body: Buffer, contentType: string): Promise<void> {
+    return this.driver(key).put(key, body, contentType);
+  }
+
+  get(key: string): Promise<Buffer> {
+    return this.driver(key).get(key);
+  }
+
+  readStream(key: string): Readable {
+    return this.driver(key).readStream(key);
+  }
+
+  exists(key: string): Promise<boolean> {
+    return this.driver(key).exists(key);
+  }
+
+  delete(key: string): Promise<void> {
+    return this.driver(key).delete(key);
+  }
 }
 
 // Mirrors the API's local driver. Production deploys set STORAGE_DRIVER=s3; the
@@ -216,7 +245,6 @@ export function createStorage(env: WorkerEnv): ObjectStorage {
   // always address the same directory regardless of their working directory.
   if (env.STORAGE_DRIVER === 's3') {
     const missing = [
-      ['S3_BUCKET', env.S3_BUCKET],
       ['S3_ACCESS_KEY_ID', env.S3_ACCESS_KEY_ID],
       ['S3_SECRET_ACCESS_KEY', env.S3_SECRET_ACCESS_KEY],
     ]
@@ -225,16 +253,27 @@ export function createStorage(env: WorkerEnv): ObjectStorage {
     if (missing.length > 0) {
       throw new Error(`STORAGE_DRIVER=s3 requires ${missing.join(', ')}.`);
     }
-    return new S3ObjectStorage({
+    const shared = {
       endpoint: env.S3_ENDPOINT || `https://s3.${env.S3_REGION || 'us-east-1'}.amazonaws.com`,
       region: env.S3_REGION || 'us-east-1',
-      bucket: env.S3_BUCKET,
       accessKeyId: env.S3_ACCESS_KEY_ID,
       secretAccessKey: env.S3_SECRET_ACCESS_KEY,
       forcePathStyle: env.S3_FORCE_PATH_STYLE,
+    };
+    const publicBucket = env.S3_PUBLIC_BUCKET || env.S3_BUCKET;
+    const privateBucket = env.S3_PRIVATE_BUCKET || env.S3_BUCKET;
+    if (!publicBucket || !privateBucket) {
+      throw new Error(
+        'STORAGE_DRIVER=s3 requires S3_PUBLIC_BUCKET and S3_PRIVATE_BUCKET (or S3_BUCKET fallback).',
+      );
+    }
+    return new RoutedObjectStorage({
+      public: new S3ObjectStorage({ ...shared, bucket: publicBucket }),
+      private: new S3ObjectStorage({ ...shared, bucket: privateBucket }),
     });
   }
-  return new LocalObjectStorage(resolveFromRepoRoot(env.STORAGE_LOCAL_ROOT));
+  const local = new LocalObjectStorage(resolveFromRepoRoot(env.STORAGE_LOCAL_ROOT));
+  return new RoutedObjectStorage({ public: local, private: local });
 }
 
 function findRepoRoot(start: string): string {

@@ -1,5 +1,6 @@
 import { config as loadDotenv } from 'dotenv';
 import { existsSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
 
@@ -17,17 +18,13 @@ for (const candidate of [
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   DATABASE_URL: z.string().min(1),
-  REDIS_URL: z.string().min(1),
-  QUEUE_PREFIX: z.string().default('b2b'),
-  WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(50).default(4),
   JOB_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(3),
   JOB_RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(30),
-  /**
-   * Durable delete rows are the source of truth. This interval re-enqueues a
-   * row whose queue message was lost (Redis restart, enqueue failure) so a
-   * `DELETE_PENDING` image cannot strand its object forever.
-   */
-  FILE_DELETE_SWEEP_INTERVAL_SECONDS: z.coerce.number().int().min(5).max(3600).default(30),
+  TASK_RUNNER_ID: z.string().trim().default(`${hostname()}:${process.pid}`),
+  TASK_LEASE_SECONDS: z.coerce.number().int().min(15).max(3600).default(120),
+  TASK_POLL_INTERVAL_MS: z.coerce.number().int().min(250).max(60_000).default(2_000),
+  TASK_RETRY_BASE_DELAY_MS: z.coerce.number().int().min(250).max(300_000).default(3_000),
+  ANALYTICS_RAW_RETENTION_DAYS: z.coerce.number().int().min(7).max(3650).default(90),
   STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
   STORAGE_LOCAL_ROOT: z.string().default('./.data/uploads'),
   WORKER_TMP_DIR: z.string().default('./.data/tmp'),
@@ -39,6 +36,8 @@ const schema = z.object({
   S3_ENDPOINT: z.string().default(''),
   S3_REGION: z.string().default(''),
   S3_BUCKET: z.string().default(''),
+  S3_PUBLIC_BUCKET: z.string().default(''),
+  S3_PRIVATE_BUCKET: z.string().default(''),
   S3_ACCESS_KEY_ID: z.string().default(''),
   S3_SECRET_ACCESS_KEY: z.string().default(''),
   S3_PUBLIC_BASE_URL: z.string().default(''),
@@ -53,6 +52,7 @@ const schema = z.object({
   IMAGE_PROCESSING_TIMEOUT_SECONDS: z.coerce.number().int().min(1).max(120).default(20),
   IMAGE_PROCESSING_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(1),
   IMAGE_WEBP_QUALITY: z.coerce.number().int().min(40).max(100).default(82),
+  QUOTE_EXPORT_MAX_PRODUCTS: z.coerce.number().int().min(1).max(100_000).default(5_000),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 });
 
