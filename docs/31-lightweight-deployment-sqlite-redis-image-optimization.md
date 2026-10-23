@@ -419,6 +419,17 @@ public/banners/{assetId}/mobile.webp
 - [ ] Nginx/TLS、防火墙、私网数据库与备份有效。
 - [ ] OOM、5xx、DB 连接、任务积压与文件删除失败可告警。
 
+## 1.4 最新决策：Neon + Cloudflare + R2（2026-10-23）
+
+当前用户已确定目标基础设施为：Neon PostgreSQL、Cloudflare 承载前后台 UI、Cloudflare R2 存储图片、单台 2 vCPU / 1 GB 后端服务器运行业务 API。该决策的完整执行清单以 `docs/33-lightweight-cloudflare-neon-r2-implementation.md` 为准。
+
+在本文件其他段落仍描述“两台 1C/1G”“自托管 PostgreSQL/Redis”或“先维持当前 Redis”的地方，均作为历史评估或迁移中间状态阅读；不再作为最终生产部署拓扑。仍保留的约束：
+- 不迁 SQLite；保留 PostgreSQL + Prisma。
+- 目标移除 Redis，但仅在所有运行时代码都迁移并通过任务恢复测试后操作。
+- Worker 任务逻辑仍然需要；可以与 API 使用同代码库，是否同进程取决于真实内存与 P95 测试。
+- Next.js 运行时需单独验证 Cloudflare 兼容性；若失败则暂时保持 Node SSR + Cloudflare 代理，不强行静态化。
+- R2 对象存储替代服务器本地生产文件，但旧 key、资产记录和现存文件必须通过迁移脚本对账，不可直接改 URL 或删除原对象。
+
 ## 9. 当前实施状态：图片 Phase 1（2026-10-21）
 
 - 沿用现有 Sharp Worker，无新增常驻图片服务或图片表。
