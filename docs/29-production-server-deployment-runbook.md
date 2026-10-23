@@ -9,6 +9,20 @@
 
 ---
 
+## 目标架构状态说明（2026-10-23）
+
+本手册后续章节保留原有“服务器运行 Storefront/Admin/API/Worker + 本地 Postgres/Redis”的详细操作，作为旧拓扑的回滚、临时运行或迁移参考；**不得将其当作当前目标架构的最终生产部署方式**。
+
+新的目标生产架构及逐项执行步骤见 `docs/33-lightweight-cloudflare-neon-r2-implementation.md`：
+- Storefront 与 Admin 目标部署至 Cloudflare Workers，但须先通过 Next.js 15.5.27 兼容性 POC。
+- PostgreSQL 使用 Neon。
+- 图片/私有文件使用 R2，按 public/private 分离访问。
+- 2C/1G 服务器只运行 NestJS API 与后台任务运行时；是否同一进程须由内存与延迟测试决定。
+- 目标移除 Redis/BullMQ，但只能在所有任务已迁移至 PostgreSQL 持久化任务执行、旧队列安全排空、重试/租约/幂等与重启恢复均验收后执行。
+
+迁移至目标架构后，本手册中涉及本地 PostgreSQL/Redis 安装、四个 systemd 应用进程、前后台 Nginx 代理和相关端口的步骤应标记为旧拓扑，不得照抄执行。切换之前保留本手册中的回滚指引。
+
+
 ## 1. 推荐部署决策
 
 ### 1.1 首发生产拓扑
