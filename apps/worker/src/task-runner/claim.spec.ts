@@ -58,6 +58,8 @@ describe('PostgreSQL task claim', () => {
       expect.any(Date),
       '22222222-2222-4222-8222-222222222222',
     );
+    expect(unsafe.mock.calls[0]?.[0]).toContain('"errorCode" = NULL');
+    expect(unsafe.mock.calls[0]?.[0]).not.toContain('"lastErrorCode" = NULL');
   });
 
   it('claims image derivative outbox events with their structured payload', async () => {
