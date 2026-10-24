@@ -87,7 +87,8 @@ jobs:
         run: |
           SHA="$(git rev-parse HEAD)"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          tar -czf "/tmp/b2b-backend-${SHA}.tar.gz"             --exclude='.git'             --exclude='.env'             --exclude='.env.*'             --exclude='.data'             --exclude='apps/*/.next'             --exclude='apps/*/.open-next'             --exclude='apps/*/.wrangler'             -C "$GITHUB_WORKSPACE" .
+          EXCLUDES=(--exclude='.git' --exclude='.env' --exclude='.env.*' --exclude='.data' --exclude='apps/*/.next' --exclude='apps/*/.open-next' --exclude='apps/*/.wrangler')
+          tar -czf "/tmp/b2b-backend-${SHA}.tar.gz" "${EXCLUDES[@]}" -C "$GITHUB_WORKSPACE" .
           ls -lh "/tmp/b2b-backend-${SHA}.tar.gz"
 
       - name: Configure SSH
@@ -107,8 +108,8 @@ jobs:
           SSH_USER: ${{ secrets.TOKYO_SSH_USER }}
           SHA: ${{ steps.package.outputs.sha }}
         run: |
-          scp -o StrictHostKeyChecking=yes             "/tmp/b2b-backend-${SHA}.tar.gz"             "${SSH_USER}@${SSH_HOST}:/opt/b2b-inquiry-platform/incoming/b2b-backend-${SHA}.tar.gz"
-          scp -o StrictHostKeyChecking=yes             scripts/deploy-b2b-backend.sh             "${SSH_USER}@${SSH_HOST}:/opt/b2b-inquiry-platform/incoming/deploy-b2b-backend-${SHA}.sh"
+          scp -o StrictHostKeyChecking=yes "/tmp/b2b-backend-${SHA}.tar.gz" "${SSH_USER}@${SSH_HOST}:/opt/b2b-inquiry-platform/incoming/b2b-backend-${SHA}.tar.gz"
+          scp -o StrictHostKeyChecking=yes scripts/deploy-b2b-backend.sh "${SSH_USER}@${SSH_HOST}:/opt/b2b-inquiry-platform/incoming/deploy-b2b-backend-${SHA}.sh"
 
       - name: Deploy and health-check on Tokyo server
         env:
@@ -116,4 +117,4 @@ jobs:
           SSH_USER: ${{ secrets.TOKYO_SSH_USER }}
           SHA: ${{ steps.package.outputs.sha }}
         run: |
-          ssh -o StrictHostKeyChecking=yes "${SSH_USER}@${SSH_HOST}"             "sudo install -o root -g root -m 0750 /opt/b2b-inquiry-platform/incoming/deploy-b2b-backend-${SHA}.sh /usr/local/sbin/deploy-b2b-backend && sudo /usr/local/sbin/deploy-b2b-backend /opt/b2b-inquiry-platform/incoming/b2b-backend-${SHA}.tar.gz ${SHA}"
+          ssh -o StrictHostKeyChecking=yes "${SSH_USER}@${SSH_HOST}" "sudo install -o root -g root -m 0750 /opt/b2b-inquiry-platform/incoming/deploy-b2b-backend-${SHA}.sh /usr/local/sbin/deploy-b2b-backend && sudo /usr/local/sbin/deploy-b2b-backend /opt/b2b-inquiry-platform/incoming/b2b-backend-${SHA}.tar.gz ${SHA}"
