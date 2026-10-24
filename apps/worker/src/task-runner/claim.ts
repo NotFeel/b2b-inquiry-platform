@@ -175,6 +175,7 @@ async function claimRow(
   options: TaskRunnerOptions,
 ): Promise<{ attempts: number } | null> {
   const leaseUntil = new Date(Date.now() + options.leaseSeconds * 1000);
+  const errorColumn = table === 'quote_export_jobs' ? 'errorCode' : 'lastErrorCode';
   const result = await transaction.$queryRawUnsafe<{ attempts: number }[]>(
     `UPDATE "${table}"
      SET status = 'PROCESSING'::"JobStatus",
@@ -182,7 +183,7 @@ async function claimRow(
          "lockedBy" = $1,
          "lockedUntil" = $2,
          "heartbeatAt" = now(),
-         "lastErrorCode" = NULL,
+         "${errorColumn}" = NULL,
          "updatedAt" = now()
      WHERE id = $3::uuid
      RETURNING attempts`,
