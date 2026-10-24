@@ -41,8 +41,8 @@ jobs:
           node --version
           pnpm --version
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Install build dependencies
+        run: pnpm install --frozen-lockfile --reporter=append-only
 
       - name: Quality gates
         run: |
@@ -68,21 +68,27 @@ jobs:
           test -n "$DIRECT_DATABASE_URL" || { echo "NEON_DIRECT_DATABASE_URL is missing; refusing to migrate over pooled URL" >&2; exit 1; }
           pnpm db:deploy
 
+      # The server must not install dependencies. Prepare the complete pnpm
+      # production workspace in CI, then ship its node_modules and workspace links.
+      - name: Prepare production runtime dependencies
+        run: |
+          pnpm install --prod --frozen-lockfile --reporter=append-only
+          test -f node_modules/.modules.yaml
+          test -f apps/api/node_modules/@nestjs/core/package.json
+          test -f apps/api/node_modules/@nestjs/platform-express/package.json
+          test -f apps/api/node_modules/express/package.json
+          test -f database/node_modules/@prisma/client/package.json
+          test -f database/generated/client/index.js
+          test -f apps/api/dist/main.js
+          test -f apps/worker/dist/index.js
+
       - name: Package backend release
         id: package
         run: |
           SHA="$(git rev-parse HEAD)"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          tar -czf "/tmp/b2b-backend-${SHA}.tar.gz" \
-            --exclude='.git' \
-            --exclude='node_modules' \
-            --exclude='.env' \
-            --exclude='.env.*' \
-            --exclude='.data' \
-            --exclude='apps/*/.next' \
-            --exclude='apps/*/.open-next' \
-            --exclude='apps/*/.wrangler' \
-            -C "$GITHUB_WORKSPACE" .
+          tar -czf "/tmp/b2b-backend-${SHA}.tar.gz"             --exclude='.git'             --exclude='.env'             --exclude='.env.*'             --exclude='.data'             --exclude='apps/*/.next'             --exclude='apps/*/.open-next'             --exclude='apps/*/.wrangler'             -C "$GITHUB_WORKSPACE" .
+          ls -lh "/tmp/b2b-backend-${SHA}.tar.gz"
 
       - name: Configure SSH
         env:
@@ -95,15 +101,14 @@ jobs:
           printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
-      - name: Upload release package
+      - name: Upload release and deployment script
         env:
           SSH_HOST: ${{ secrets.TOKYO_SSH_HOST }}
           SSH_USER: ${{ secrets.TOKYO_SSH_USER }}
           SHA: ${{ steps.package.outputs.sha }}
         run: |
-          scp -o StrictHostKeyChecking=yes \
-            "/tmp/b2b-backend-${SHA}.tar.gz" \
-            "${SSH_USER}@${SSH_HOST}:/opt/b2b-inquiry-platform/incoming/b2b-backend-${SHA}.tar.gz"
+          scp -o StrictHostKeyChecking=yes             "/tmp/b2b-backend-${SHA}.tar.gz"             "${SSH_USER}@${SSH_HOST}:/opt/b2b-inquiry-platform/incoming/b2b-backend-${SHA}.tar.gz"
+          scp -o StrictHostKeyChecking=yes             scripts/deploy-b2b-backend.sh             "${SSH_USER}@${SSH_HOST}:/opt/b2b-inquiry-platform/incoming/deploy-b2b-backend-${SHA}.sh"
 
       - name: Deploy and health-check on Tokyo server
         env:
@@ -111,5 +116,4 @@ jobs:
           SSH_USER: ${{ secrets.TOKYO_SSH_USER }}
           SHA: ${{ steps.package.outputs.sha }}
         run: |
-          ssh -o StrictHostKeyChecking=yes "${SSH_USER}@${SSH_HOST}" \
-            "sudo /usr/local/sbin/deploy-b2b-backend /opt/b2b-inquiry-platform/incoming/b2b-backend-${SHA}.tar.gz ${SHA}"
+          ssh -o StrictHostKeyChecking=yes "${SSH_USER}@${SSH_HOST}"             "sudo install -o root -g root -m 0750 /opt/b2b-inquiry-platform/incoming/deploy-b2b-backend-${SHA}.sh /usr/local/sbin/deploy-b2b-backend && sudo /usr/local/sbin/deploy-b2b-backend /opt/b2b-inquiry-platform/incoming/b2b-backend-${SHA}.tar.gz ${SHA}"
