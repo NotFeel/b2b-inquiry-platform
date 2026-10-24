@@ -26,6 +26,9 @@ esac
 exec 9>"$LOCK_FILE"
 flock -n 9 || { echo "Another backend deployment is running" >&2; exit 2; }
 
+# Remove failed upload artifacts older than 24 hours when a later deployment runs.
+find "$ROOT/incoming" -maxdepth 1 -type f \( -name 'b2b-backend-*.tar.gz' -o -name 'deploy-b2b-backend-*.sh' \) -mmin +1440 -delete
+
 free_kb="$(df -Pk "$ROOT" | awk 'NR == 2 {print $4}')"
 if [[ ! "$free_kb" =~ ^[0-9]+$ ]] || (( free_kb < MIN_FREE_KB )); then
   echo "Refusing deployment: at least 1.5 GiB free disk space is required; available KB=${free_kb:-unknown}" >&2
@@ -44,7 +47,14 @@ OLD_RELEASE="$(readlink -f "$ROOT/current" 2>/dev/null || true)"
 
 is_valid_release() {
   local dir="$1"
-  [[ -f "$dir/node_modules/.modules.yaml"     && -f "$dir/apps/api/node_modules/@nestjs/core/package.json"     && -f "$dir/apps/api/node_modules/@nestjs/platform-express/package.json"     && -f "$dir/apps/api/node_modules/express/package.json"     && -f "$dir/database/node_modules/@prisma/client/package.json"     && -f "$dir/apps/api/dist/main.js"     && -f "$dir/apps/worker/dist/index.js"     && -f "$dir/database/generated/client/index.js" ]]
+  [[ -f "$dir/node_modules/.modules.yaml" &&
+     -f "$dir/apps/api/node_modules/@nestjs/core/package.json" &&
+     -f "$dir/apps/api/node_modules/@nestjs/platform-express/package.json" &&
+     -f "$dir/apps/api/node_modules/express/package.json" &&
+     -f "$dir/database/node_modules/@prisma/client/package.json" &&
+     -f "$dir/apps/api/dist/main.js" &&
+     -f "$dir/apps/worker/dist/index.js" &&
+     -f "$dir/database/generated/client/index.js" ]]
 }
 
 if [[ -e "$RELEASE" ]]; then
@@ -88,7 +98,8 @@ systemctl restart b2b-api.service b2b-task-runner.service
 
 ok=0
 for _ in $(seq 1 15); do
-  if curl --fail --silent --show-error http://127.0.0.1:3002/api/v1/health/ready >/dev/null      && systemctl is-active --quiet b2b-task-runner.service; then
+  if curl --fail --silent --show-error http://127.0.0.1:3002/api/v1/health/ready >/dev/null &&
+     systemctl is-active --quiet b2b-task-runner.service; then
     ok=1
     break
   fi
