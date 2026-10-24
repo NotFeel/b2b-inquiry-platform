@@ -202,6 +202,7 @@ async function failTask(
   retryAt: Date,
 ): Promise<void> {
   const table = tableFor(task);
+  const errorColumn = table === 'quote_export_jobs' ? 'errorCode' : 'lastErrorCode';
   const code = message.slice(0, 120);
   await prisma.$executeRawUnsafe(
     `UPDATE "${table}"
@@ -210,7 +211,7 @@ async function failTask(
          "lockedBy" = NULL,
          "lockedUntil" = NULL,
          "heartbeatAt" = NULL,
-         "lastErrorCode" = $4,
+         "${errorColumn}" = $4,
          "updatedAt" = now()
      WHERE id = $1::uuid`,
     task.id,
@@ -249,13 +250,14 @@ async function failExhaustedExpiredTasks(
   options: TaskRunnerOptions,
 ): Promise<void> {
   for (const table of ['file_deletion_jobs', 'quote_export_jobs', 'outbox_events'] as const) {
+    const errorColumn = table === 'quote_export_jobs' ? 'errorCode' : 'lastErrorCode';
     await prisma.$executeRawUnsafe(
       `UPDATE "${table}"
        SET status = 'FAILED'::"JobStatus",
            "lockedBy" = NULL,
            "lockedUntil" = NULL,
            "heartbeatAt" = NULL,
-           "lastErrorCode" = COALESCE("lastErrorCode", 'TASK_LEASE_EXPIRED'),
+           "${errorColumn}" = COALESCE("${errorColumn}", 'TASK_LEASE_EXPIRED'),
            "updatedAt" = now()
        WHERE status = 'PROCESSING'::"JobStatus"
          AND attempts >= $1
