@@ -1,0 +1,115 @@
+name: Deploy Tokyo Backend
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "要部署的分支、tag 或 commit SHA"
+        required: true
+        default: "main"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    environment: production
+    env:
+      # 非生产的占位值；构建/单元测试阶段不连接该数据库。
+      DATABASE_URL: postgresql://app:app_local_only@127.0.0.1:5432/b2b_catalog?schema=public
+      SESSION_SECRET: test-only-session-secret-do-not-use-in-production
+    steps:
+      - name: Checkout selected ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Enable pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.25.0 --activate
+          node --version
+          pnpm --version
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Quality gates
+        run: |
+          pnpm lint
+          pnpm typecheck
+          pnpm test
+
+      - name: Generate Prisma Client and build backend
+        run: |
+          pnpm db:generate
+          pnpm -r --filter "./packages/**" build
+          pnpm --filter @b2b/api build
+          pnpm --filter @b2b/worker build
+
+      # This is a production write: the workflow should be manually triggered
+      # and protected by the production Environment approval policy.
+      - name: Apply production database migrations
+        env:
+          DATABASE_URL: ${{ secrets.NEON_POOLED_DATABASE_URL }}
+          DIRECT_DATABASE_URL: ${{ secrets.NEON_DIRECT_DATABASE_URL }}
+        run: |
+          test -n "$DATABASE_URL" || { echo "NEON_POOLED_DATABASE_URL is missing" >&2; exit 1; }
+          test -n "$DIRECT_DATABASE_URL" || { echo "NEON_DIRECT_DATABASE_URL is missing; refusing to migrate over pooled URL" >&2; exit 1; }
+          pnpm db:deploy
+
+      - name: Package backend release
+        id: package
+        run: |
+          SHA="$(git rev-parse HEAD)"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          tar -czf "/tmp/b2b-backend-${SHA}.tar.gz" \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='.env' \
+            --exclude='.env.*' \
+            --exclude='.data' \
+            --exclude='apps/*/.next' \
+            --exclude='apps/*/.open-next' \
+            --exclude='apps/*/.wrangler' \
+            -C "$GITHUB_WORKSPACE" .
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.TOKYO_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.TOKYO_SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Upload release package
+        env:
+          SSH_HOST: ${{ secrets.TOKYO_SSH_HOST }}
+          SSH_USER: ${{ secrets.TOKYO_SSH_USER }}
+          SHA: ${{ steps.package.outputs.sha }}
+        run: |
+          scp -o StrictHostKeyChecking=yes \
+            "/tmp/b2b-backend-${SHA}.tar.gz" \
+            "${SSH_USER}@${SSH_HOST}:/opt/b2b-inquiry-platform/incoming/b2b-backend-${SHA}.tar.gz"
+
+      - name: Deploy and health-check on Tokyo server
+        env:
+          SSH_HOST: ${{ secrets.TOKYO_SSH_HOST }}
+          SSH_USER: ${{ secrets.TOKYO_SSH_USER }}
+          SHA: ${{ steps.package.outputs.sha }}
+        run: |
+          ssh -o StrictHostKeyChecking=yes "${SSH_USER}@${SSH_HOST}" \
+            "sudo /usr/local/sbin/deploy-b2b-backend /opt/b2b-inquiry-platform/incoming/b2b-backend-${SHA}.tar.gz ${SHA}"
