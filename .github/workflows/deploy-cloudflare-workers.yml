@@ -60,8 +60,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "24"
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
 
       - name: Enable pinned pnpm
         shell: bash
@@ -156,11 +154,11 @@ jobs:
           JOB_RESULT: ${{ job.status }}
         run: |
           {
-            echo "## Cloudflare production deployment"
-            echo ""
-            echo "- Result: `$JOB_RESULT`"
-            echo "- Target: `$DEPLOY_SERVICE`"
-            echo "- Ref: `$RELEASE_REF`"
-            echo "- Commit: `$RELEASE_SHA`"
-            echo "- Trigger: manual workflow_dispatch"
+            printf '%s\n' '## Cloudflare production deployment'
+            printf '\n'
+            printf -- '- Result: `%s`\n' "$JOB_RESULT"
+            printf -- '- Target: `%s`\n' "$DEPLOY_SERVICE"
+            printf -- '- Ref: `%s`\n' "$RELEASE_REF"
+            printf -- '- Commit: `%s`\n' "$RELEASE_SHA"
+            printf '%s\n' '- Trigger: manual workflow_dispatch'
           } >> "$GITHUB_STEP_SUMMARY"
