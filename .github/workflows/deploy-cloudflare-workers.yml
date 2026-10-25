@@ -1,0 +1,165 @@
+name: Manual Deploy Cloudflare Workers
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "选择要发布的 Cloudflare Worker"
+        required: true
+        type: choice
+        options:
+          - storefront
+          - admin
+          - both
+        default: storefront
+      confirm_production:
+        description: "确认将所选服务发布到生产环境"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build, validate and deploy
+    if: ${{ inputs.confirm_production }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: production
+    env:
+      # Build/test-only values. These must never be used for production deployment.
+      DATABASE_URL: postgresql://app:app_local_only@127.0.0.1:5432/b2b_catalog?schema=public
+      SESSION_SECRET: test-only-session-secret-do-not-use-in-production
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+    steps:
+      - name: Checkout selected commit
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Record release metadata
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "ref=$GITHUB_REF" >> "$GITHUB_OUTPUT"
+          echo "Selected service: ${{ inputs.service }}"
+          echo "Commit: $(git rev-parse HEAD)"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Enable pinned pnpm
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@11.25.0 --activate
+          node --version
+          pnpm --version
+
+      - name: Validate deployment credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo "::error::GitHub Environment secret CLOUDFLARE_API_TOKEN is missing"; exit 1; }
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo "::error::GitHub Environment secret CLOUDFLARE_ACCOUNT_ID is missing"; exit 1; }
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile --reporter=append-only
+
+      - name: Quality gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm lint
+          pnpm typecheck
+          pnpm test
+
+      - name: Build shared packages
+        run: |
+          set -euo pipefail
+          pnpm db:generate
+          pnpm -r --filter "./packages/**" build
+
+      - name: Build selected Worker(s)
+        shell: bash
+        env:
+          DEPLOY_SERVICE: ${{ inputs.service }}
+        run: |
+          set -euo pipefail
+          case "$DEPLOY_SERVICE" in
+            storefront)
+              pnpm --filter @b2b/storefront run build:worker
+              ;;
+            admin)
+              pnpm --filter @b2b/admin run build:worker
+              ;;
+            both)
+              pnpm --filter @b2b/storefront run build:worker
+              pnpm --filter @b2b/admin run build:worker
+              ;;
+            *)
+              echo "::error::Unsupported deployment target"
+              exit 1
+              ;;
+          esac
+
+      - name: Validate Wrangler production configuration
+        shell: bash
+        env:
+          DEPLOY_SERVICE: ${{ inputs.service }}
+        run: |
+          set -euo pipefail
+          case "$DEPLOY_SERVICE" in
+            storefront)
+              pnpm --filter @b2b/storefront exec wrangler deploy --dry-run
+              ;;
+            admin)
+              pnpm --filter @b2b/admin exec wrangler deploy --dry-run
+              ;;
+            both)
+              pnpm --filter @b2b/storefront exec wrangler deploy --dry-run
+              pnpm --filter @b2b/admin exec wrangler deploy --dry-run
+              ;;
+          esac
+
+      - name: Deploy storefront Worker
+        if: ${{ inputs.service == 'storefront' || inputs.service == 'both' }}
+        run: pnpm --filter @b2b/storefront exec wrangler deploy
+
+      - name: Deploy admin Worker
+        if: ${{ inputs.service == 'admin' || inputs.service == 'both' }}
+        run: pnpm --filter @b2b/admin exec wrangler deploy
+
+      - name: Write deployment summary
+        if: always()
+        shell: bash
+        env:
+          DEPLOY_SERVICE: ${{ inputs.service }}
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
+          RELEASE_REF: ${{ steps.release.outputs.ref }}
+          JOB_RESULT: ${{ job.status }}
+        run: |
+          {
+            echo "## Cloudflare production deployment"
+            echo ""
+            echo "- Result: `$JOB_RESULT`"
+            echo "- Target: `$DEPLOY_SERVICE`"
+            echo "- Ref: `$RELEASE_REF`"
+            echo "- Commit: `$RELEASE_SHA`"
+            echo "- Trigger: manual workflow_dispatch"
+          } >> "$GITHUB_STEP_SUMMARY"
