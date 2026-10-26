@@ -62,6 +62,12 @@ services:
       postgres: {condition: service_healthy}
       api: {condition: service_healthy}
     networks: [application, database]
+    healthcheck:
+      test: ["CMD", "node", "-e", "const {PrismaClient}=require('/workspace/database/generated/client');const p=new PrismaClient();p[String.fromCharCode(36)+'queryRawUnsafe']('SELECT 1').then(()=>p[String.fromCharCode(36)+'disconnect']()).catch(()=>{p[String.fromCharCode(36)+'disconnect']().finally(()=>process.exit(1))})"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
 
   storefront:
