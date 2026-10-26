@@ -23,7 +23,7 @@ Securely copy from the repository (do not clone it):
 
 Run `chmod 700 /opt/b2b-inquiry-platform/deploy/deploy.sh` and `chmod 600 /opt/b2b-inquiry-platform/deploy/.env /opt/b2b-inquiry-platform/.env.api`. Replace every placeholder. Generate secrets using `openssl rand -hex 32`; URL-encode special characters in database passwords. Keep secrets out of Git. The compose .env holds Postgres credentials, Cloudflare token and a GHCR read-packages token; it is not injected wholesale into application containers. The separate `.env.api` is passed only to API/Worker.
 
-If GeoIP database mode is enabled, place the licensed `GeoLite2-Country.mmdb` at `/opt/b2b-inquiry-platform/data/geoip/GeoLite2-Country.mmdb`.
+The example starts with `GEOIP_PROVIDER=none` so deployment does not depend on a separately licensed database file. To enable database-based GeoIP later, place the licensed `GeoLite2-Country.mmdb` at `/opt/b2b-inquiry-platform/data/geoip/GeoLite2-Country.mmdb` and change `GEOIP_PROVIDER=database` in `.env.api`.
 
 ## 2. Cloudflare Tunnel
 
