@@ -1,0 +1,29 @@
+name: b2b-actions-runner
+services:
+  runner:
+    build:
+      context: .
+      args:
+        RUNNER_VERSION: ${RUNNER_VERSION:-2.328.0}
+    image: b2b-inquiry-platform/local-actions-runner:2.328.0
+    container_name: b2b-local-deploy-runner
+    restart: unless-stopped
+    environment:
+      GITHUB_REPOSITORY: NotFeel/b2b-inquiry-platform
+      RUNNER_NAME: b2b-local-deploy-01
+      RUNNER_LABELS: local-deploy
+      RUNNER_WORKDIR: _work
+      RUNNER_PAT: ${RUNNER_PAT:?Set RUNNER_PAT in runner .env}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - runner_work:/runner/_work
+      - /opt/b2b-inquiry-platform/deploy:/opt/b2b-inquiry-platform/deploy:rw
+      - /opt/b2b-inquiry-platform/.env.api:/opt/b2b-inquiry-platform/.env.api:ro
+      - /opt/b2b-inquiry-platform/backups:/opt/b2b-inquiry-platform/backups
+      - /opt/b2b-inquiry-platform/logs:/opt/b2b-inquiry-platform/logs
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+volumes:
+  runner_work:
