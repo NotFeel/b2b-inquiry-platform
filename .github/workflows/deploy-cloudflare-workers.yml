@@ -34,12 +34,15 @@ jobs:
     timeout-minutes: 30
     environment: production
     env:
-      # Build/test-only values. These must never be used for production deployment.
+      # Production API origins are deliberately fixed here so Next.js bakes
+      # them into the storefront Worker during build; no dashboard variable is
+      # required and production must never fall back to localhost:3002.
+      API_BASE_URL: https://api.wuxuanglobal.com
+      STOREFRONT_API_PROXY_TARGET: https://api.wuxuanglobal.com
+      # Next.js resolves admin rewrites at build time as well.
+      ADMIN_API_PROXY_TARGET: https://api.wuxuanglobal.com
       DATABASE_URL: postgresql://app:app_local_only@127.0.0.1:5432/b2b_catalog?schema=public
       SESSION_SECRET: test-only-session-secret-do-not-use-in-production
-      # Next.js resolves rewrites at build time. Without this, the deployed
-      # admin Worker would bake in the development fallback localhost:3002.
-      ADMIN_API_PROXY_TARGET: https://api.wuxuanglobal.com
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
@@ -79,6 +82,8 @@ jobs:
           set -euo pipefail
           test -n "$CLOUDFLARE_API_TOKEN" || { echo "::error::GitHub Environment secret CLOUDFLARE_API_TOKEN is missing"; exit 1; }
           test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo "::error::GitHub Environment secret CLOUDFLARE_ACCOUNT_ID is missing"; exit 1; }
+          test "$API_BASE_URL" = "https://api.wuxuanglobal.com" || { echo "::error::Unexpected API_BASE_URL"; exit 1; }
+          test "$STOREFRONT_API_PROXY_TARGET" = "https://api.wuxuanglobal.com" || { echo "::error::Unexpected STOREFRONT_API_PROXY_TARGET"; exit 1; }
 
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile --reporter=append-only
@@ -101,6 +106,11 @@ jobs:
         shell: bash
         env:
           DEPLOY_SERVICE: ${{ inputs.service }}
+          # Explicit step-level values prevent later workflow edits from
+          # accidentally building storefront with the local API fallback.
+          API_BASE_URL: https://api.wuxuanglobal.com
+          STOREFRONT_API_PROXY_TARGET: https://api.wuxuanglobal.com
+          ADMIN_API_PROXY_TARGET: https://api.wuxuanglobal.com
         run: |
           set -euo pipefail
           case "$DEPLOY_SERVICE" in
@@ -119,6 +129,18 @@ jobs:
               exit 1
               ;;
           esac
+
+      - name: Verify storefront production API configuration
+        if: ${{ inputs.service == 'storefront' || inputs.service == 'both' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d apps/storefront/.open-next || { echo "::error::Storefront Worker build output is missing"; exit 1; }
+          if grep -R -F -a -q "http://localhost:3002" apps/storefront/.open-next; then
+            echo "::error::Storefront build output still contains the localhost API fallback"
+            exit 1
+          fi
+          echo "Storefront build passed the localhost API fallback check."
 
       - name: Validate Wrangler production configuration
         shell: bash
@@ -163,5 +185,6 @@ jobs:
             printf -- '- Target: `%s`\n' "$DEPLOY_SERVICE"
             printf -- '- Ref: `%s`\n' "$RELEASE_REF"
             printf -- '- Commit: `%s`\n' "$RELEASE_SHA"
+            printf '%s\n' '- API origin: `https://api.wuxuanglobal.com`'
             printf '%s\n' '- Trigger: manual workflow_dispatch'
           } >> "$GITHUB_STEP_SUMMARY"
