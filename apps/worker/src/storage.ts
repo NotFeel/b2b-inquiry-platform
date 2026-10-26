@@ -165,13 +165,14 @@ export class S3ObjectStorage implements ObjectStorage {
     const stringToSign = ['AWS4-HMAC-SHA256', timestamp, scope, sha256Hex(canonicalRequest)].join(
       '\n',
     );
-    const signingKey = ['AWS4', this.options.secretAccessKey].reduce<Buffer | string>(
-      (previous, current) =>
-        typeof previous === 'string'
-          ? createHmac('sha256', `AWS4${current}`).update(shortDate).digest()
-          : createHmac('sha256', previous).update(current).digest(),
-      '',
-    ) as Buffer;
+    // Keep this derivation identical to the API S3 driver:
+    // date -> region -> service -> aws4_request.
+    const dateKey = createHmac('sha256', `AWS4${this.options.secretAccessKey}`)
+      .update(shortDate)
+      .digest();
+    const regionKey = createHmac('sha256', dateKey).update(this.options.region).digest();
+    const serviceKey = createHmac('sha256', regionKey).update('s3').digest();
+    const signingKey = createHmac('sha256', serviceKey).update('aws4_request').digest();
     const signature = createHmac('sha256', signingKey).update(stringToSign).digest('hex');
     return {
       ...headers,
