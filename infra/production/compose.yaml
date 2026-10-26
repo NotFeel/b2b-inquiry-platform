@@ -37,7 +37,7 @@ services:
       postgres: {condition: service_healthy}
     networks: [application, database]
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/api/v1/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/api/v1/health/ready').then(async r=>{const j=await r.json();process.exit(r.ok&&j.status==='ok'?0:1)}).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 4s
       retries: 5
@@ -71,7 +71,7 @@ services:
     depends_on: {api: {condition: service_healthy}}
     networks: [application]
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.status<400?0:1)).catch(()=>process.exit(1))"]
       interval: 20s
       timeout: 5s
       retries: 5
