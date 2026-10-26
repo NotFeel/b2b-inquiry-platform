@@ -142,7 +142,7 @@ export class StorageService {
       const key = imageVariantStorageKey(assetId, version, width);
       return `${publicBase}/${key}`;
     }
-    return `${this.env.API_BASE_URL.replace(/\\/+$/, '')}${publicImageVariantPath(assetId, version, name)}`;
+    return `${this.env.API_BASE_URL.replace(/\/+$/, '')}${publicImageVariantPath(assetId, version, name)}`;
   }
 
   /** Authenticated admin-only preview for a product-image source object. */
