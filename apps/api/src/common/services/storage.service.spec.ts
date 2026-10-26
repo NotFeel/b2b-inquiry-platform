@@ -37,6 +37,16 @@ describe('R2 bucket routing', () => {
     expect(url.pathname).toBe('/public-assets/public/products/asset/version/640.webp');
   });
 
+
+  it('serves published product variants from the configured R2 custom domain', () => {
+    expect(service().publicProductImageUrl('asset-id', 'version-id', '1280.webp')).toBe(
+      'https://images.example.com/public/products/asset-id/version-id/1280.webp',
+    );
+    expect(service().publicProductImageUrl('asset-id', 'version-id', '640.webp')).toBe(
+      'https://images.example.com/public/products/asset-id/version-id/640.webp',
+    );
+  });
+
   it('does not expose private keys through the public CDN base URL', () => {
     expect(service().publicUrl('quote-exports/2026/10/job.xlsx')).toBe(
       'https://api.example.com/api/v1/files/quote-exports/2026/10/job.xlsx',
