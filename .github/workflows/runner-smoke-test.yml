@@ -1,0 +1,16 @@
+name: Runner smoke test
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  smoke-test:
+    runs-on: [self-hosted, linux, x64, local-deploy]
+    timeout-minutes: 5
+    steps:
+      - name: Verify runner accepted a trusted test job
+        run: |
+          echo "Runner label local-deploy accepted this job."
+          echo "Runner: $RUNNER_NAME"
+          uname -a
+          test -d /opt/b2b-inquiry-platform/deploy
