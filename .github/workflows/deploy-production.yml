@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   deploy:
-    if: ${{ inputs.confirm_production == 'DEPLOY' }}
+    if: ${{ github.ref == 'refs/heads/main' && inputs.confirm_production == 'DEPLOY' }}
     runs-on: [self-hosted, linux, x64, local-deploy]
     environment: production
     timeout-minutes: 30
