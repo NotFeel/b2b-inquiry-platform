@@ -1,0 +1,41 @@
+name: Manual production deployment
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: "Exact 40-character commit SHA whose images are already published"
+        required: true
+        type: string
+      confirm_production:
+        description: "Type DEPLOY to authorize production deployment"
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: ${{ inputs.confirm_production == 'DEPLOY' }}
+    runs-on: [self-hosted, linux, x64, local-deploy]
+    environment: production
+    timeout-minutes: 30
+    steps:
+      - name: Validate exact commit SHA
+        shell: bash
+        env:
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: |
+          [[ "$COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "commit_sha must be exactly 40 lowercase hexadecimal characters" >&2
+            exit 1
+          }
+      # Intentionally no checkout: the server never downloads application source.
+      - name: Deploy immutable images
+        shell: bash
+        env:
+          IMAGE_TAG: sha-${{ inputs.commit_sha }}
+        run: |
+          test -x /opt/b2b-inquiry-platform/deploy/deploy.sh
+          IMAGE_TAG="$IMAGE_TAG" /opt/b2b-inquiry-platform/deploy/deploy.sh
