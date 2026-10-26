@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { S3StorageDriver } from './s3.driver';
 
 function driver(bucket: string) {
@@ -28,6 +28,26 @@ describe('S3-compatible presigned URLs', () => {
     expect(url.searchParams.get('X-Amz-Content-Sha256')).toBe('UNSIGNED-PAYLOAD');
     expect(url.searchParams.get('X-Amz-Credential')).toContain('/auto/s3/aws4_request');
     expect(url.searchParams.get('X-Amz-Signature')).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('derives a valid SigV4 signature with the date/region/service key chain', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-02T03:04:05.000Z'));
+    try {
+      const url = new URL(
+        await driver('private-assets').presignPut(
+          'product-image/2026/10/source.png',
+          'image/png',
+          900,
+        ),
+      );
+      expect(url.searchParams.get('X-Amz-Date')).toBe('20260102T030405Z');
+      expect(url.searchParams.get('X-Amz-Signature')).toBe(
+        '332e8528ad6142c7e9da588c737e3e9091dde4b4865064c1158b615d3204ada4',
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('creates a GET URL for the selected bucket without exposing credentials', async () => {
