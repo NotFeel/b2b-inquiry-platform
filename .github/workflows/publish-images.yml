@@ -70,7 +70,7 @@ jobs:
           file: infra/production/Dockerfile
           target: admin
           push: true
-          tags: ghcr.io/${{ steps.image.outputs.owner }}/b2b-inquiry-platform-admin:sha-${{ github.sha }}
+          tags: ghcr.io/${{ steps.image.outputs.owner }}/b2b-inquiry-platform-admin:sha-${{ steps.source.outputs.sha }}
           cache-from: type=gha,scope=admin
           cache-to: type=gha,mode=max,scope=admin
           build-args: |
@@ -82,7 +82,7 @@ jobs:
           file: infra/production/Dockerfile
           target: api
           push: true
-          tags: ghcr.io/${{ steps.image.outputs.owner }}/b2b-inquiry-platform-api:sha-${{ github.sha }}
+          tags: ghcr.io/${{ steps.image.outputs.owner }}/b2b-inquiry-platform-api:sha-${{ steps.source.outputs.sha }}
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=max,scope=api
       - name: Build and push Worker
@@ -92,15 +92,15 @@ jobs:
           file: infra/production/Dockerfile
           target: worker
           push: true
-          tags: ghcr.io/${{ steps.image.outputs.owner }}/b2b-inquiry-platform-worker:sha-${{ github.sha }}
+          tags: ghcr.io/${{ steps.image.outputs.owner }}/b2b-inquiry-platform-worker:sha-${{ steps.source.outputs.sha }}
           cache-from: type=gha,scope=worker
           cache-to: type=gha,mode=max,scope=worker
       - name: Write immutable image manifest
         run: |
           {
             echo "Commit: ${{ steps.source.outputs.sha }}"
-            echo "Storefront: ghcr.io/${{ steps.image.outputs.owner }}/b2b-inquiry-platform-storefront:sha-${{ github.sha }}"
-            echo "Admin: ghcr.io/${{ steps.image.outputs.owner }}/b2b-inquiry-platform-admin:sha-${{ github.sha }}"
-            echo "API: ghcr.io/${{ steps.image.outputs.owner }}/b2b-inquiry-platform-api:sha-${{ github.sha }}"
-            echo "Worker: ghcr.io/${{ steps.image.outputs.owner }}/b2b-inquiry-platform-worker:sha-${{ github.sha }}"
+            echo "Storefront: ghcr.io/${{ steps.image.outputs.owner }}/b2b-inquiry-platform-storefront:sha-${{ steps.source.outputs.sha }}"
+            echo "Admin: ghcr.io/${{ steps.image.outputs.owner }}/b2b-inquiry-platform-admin:sha-${{ steps.source.outputs.sha }}"
+            echo "API: ghcr.io/${{ steps.image.outputs.owner }}/b2b-inquiry-platform-api:sha-${{ steps.source.outputs.sha }}"
+            echo "Worker: ghcr.io/${{ steps.image.outputs.owner }}/b2b-inquiry-platform-worker:sha-${{ steps.source.outputs.sha }}"
           } | tee image-manifest.txt
