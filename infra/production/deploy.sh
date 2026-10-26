@@ -13,6 +13,7 @@ NEW_TAG="${IMAGE_TAG:-}"
 [[ "$NEW_TAG" =~ ^sha-[0-9a-f]{40}$ ]] || { echo "IMAGE_TAG must be sha-<40 lowercase hex>" >&2; exit 2; }
 dc(){ docker compose --env-file "$ENV_FILE" -f "$COMPOSE" "$@"; }
 set -a; source "$ENV_FILE"; set +a
+export IMAGE_TAG="$NEW_TAG"
 : "${GHCR_USERNAME:?Missing GHCR_USERNAME}"
 : "${GHCR_READ_TOKEN:?Missing GHCR_READ_TOKEN}"
 PREVIOUS=""
