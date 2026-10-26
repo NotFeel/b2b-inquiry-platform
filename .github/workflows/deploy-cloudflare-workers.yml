@@ -37,9 +37,11 @@ jobs:
       # Build/test-only values. These must never be used for production deployment.
       DATABASE_URL: postgresql://app:app_local_only@127.0.0.1:5432/b2b_catalog?schema=public
       SESSION_SECRET: test-only-session-secret-do-not-use-in-production
-      # Next.js resolves rewrites at build time. Without this, the deployed
-      # admin Worker would bake in the development fallback localhost:3002.
+      # Next.js resolves rewrites at build time. Set production API targets explicitly
+      # so the deployed Workers never bake in the development fallback localhost:3002.
       ADMIN_API_PROXY_TARGET: https://api.wuxuanglobal.com
+      API_BASE_URL: https://api.wuxuanglobal.com
+      STOREFRONT_API_PROXY_TARGET: https://api.wuxuanglobal.com
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
@@ -157,11 +159,11 @@ jobs:
           JOB_RESULT: ${{ job.status }}
         run: |
           {
-            printf '%s\n' '## Cloudflare production deployment'
-            printf '\n'
-            printf -- '- Result: `%s`\n' "$JOB_RESULT"
-            printf -- '- Target: `%s`\n' "$DEPLOY_SERVICE"
-            printf -- '- Ref: `%s`\n' "$RELEASE_REF"
-            printf -- '- Commit: `%s`\n' "$RELEASE_SHA"
-            printf '%s\n' '- Trigger: manual workflow_dispatch'
+            printf '%s\\n' '## Cloudflare production deployment'
+            printf '\\n'
+            printf -- '- Result: `%s`\\n' "$JOB_RESULT"
+            printf -- '- Target: `%s`\\n' "$DEPLOY_SERVICE"
+            printf -- '- Ref: `%s`\\n' "$RELEASE_REF"
+            printf -- '- Commit: `%s`\\n' "$RELEASE_SHA"
+            printf '%s\\n' '- Trigger: manual workflow_dispatch'
           } >> "$GITHUB_STEP_SUMMARY"
