@@ -10,13 +10,17 @@ const nextConfig = {
   eslint: { ignoreDuringBuilds: true },
   async rewrites() {
     // Browser requests stay on the admin origin. The Next server forwards them
-    // to the API, so split-host deployments do not depend on browser CORS and
-    // do not bake `localhost` into the client bundle.
-    const target = (
-      process.env.ADMIN_API_PROXY_TARGET ??
-      process.env.API_BASE_URL ??
-      'http://localhost:3002'
-    ).replace(/\/+$/, '');
+    // to the API, so split-host deployments do not depend on browser CORS.
+    // This value is resolved during the build and baked into the rewrite rules.
+    const configuredTarget = process.env.ADMIN_API_PROXY_TARGET ?? process.env.API_BASE_URL;
+    const rawTarget =
+      configuredTarget ?? (process.env.NODE_ENV === 'development' ? 'http://localhost:3002' : '');
+    if (!rawTarget) {
+      throw new Error(
+        'Production admin builds require ADMIN_API_PROXY_TARGET or API_BASE_URL to point to the API origin.',
+      );
+    }
+    const target = rawTarget.replace(/\/+$/, '');
     return [{ source: '/api/v1/:path*', destination: `${target}/api/v1/:path*` }];
   },
   async headers() {
