@@ -17,6 +17,20 @@ function amzDate(date: Date): { timestamp: string; shortDate: string } {
   return { timestamp, shortDate: timestamp.slice(0, 8) };
 }
 
+/**
+ * AWS Signature Version 4 key derivation.
+ *
+ * The signing key must be derived in four chained HMAC steps:
+ * date -> region -> service -> aws4_request. Reusing the secret or skipping
+ * any step produces syntactically valid but unusable signatures (R2 returns 403).
+ */
+function deriveSigningKey(secretAccessKey: string, shortDate: string, region: string): Buffer {
+  const dateKey = createHmac('sha256', `AWS4${secretAccessKey}`).update(shortDate).digest();
+  const regionKey = createHmac('sha256', dateKey).update(region).digest();
+  const serviceKey = createHmac('sha256', regionKey).update('s3').digest();
+  return createHmac('sha256', serviceKey).update('aws4_request').digest();
+}
+
 // Minimal SigV4 implementation for S3-compatible object storage. Keeping it
 // dependency-free avoids pulling a large SDK into the API image; the surface is
 // limited to the four operations this platform needs.
@@ -72,13 +86,11 @@ export class S3StorageDriver implements StorageDriver {
     const stringToSign = ['AWS4-HMAC-SHA256', timestamp, scope, sha256Hex(canonicalRequest)].join(
       '\n',
     );
-    const signingKey = ['AWS4', this.options.secretAccessKey].reduce<Buffer | string>(
-      (previous, current) =>
-        typeof previous === 'string'
-          ? createHmac('sha256', `AWS4${current}`).update(shortDate).digest()
-          : createHmac('sha256', previous).update(current).digest(),
-      '',
-    ) as Buffer;
+    const signingKey = deriveSigningKey(
+      this.options.secretAccessKey,
+      shortDate,
+      this.options.region,
+    );
     const signature = createHmac('sha256', signingKey).update(stringToSign).digest('hex');
     return {
       ...headers,
@@ -199,13 +211,11 @@ export class S3StorageDriver implements StorageDriver {
     const stringToSign = ['AWS4-HMAC-SHA256', timestamp, scope, sha256Hex(canonicalRequest)].join(
       '\n',
     );
-    const signingKey = ['AWS4', this.options.secretAccessKey].reduce<Buffer | string>(
-      (previous, current) =>
-        typeof previous === 'string'
-          ? createHmac('sha256', `AWS4${current}`).update(shortDate).digest()
-          : createHmac('sha256', previous).update(current).digest(),
-      '',
-    ) as Buffer;
+    const signingKey = deriveSigningKey(
+      this.options.secretAccessKey,
+      shortDate,
+      this.options.region,
+    );
     const signature = createHmac('sha256', signingKey).update(stringToSign).digest('hex');
     url.searchParams.set('X-Amz-Signature', signature);
     return url.toString();
