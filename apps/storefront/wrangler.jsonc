@@ -22,5 +22,9 @@
   ],
   "images": {
     "binding": "IMAGES"
+  },
+  "vars": {
+    "API_BASE_URL": "https://api.wuxuanglobal.com",
+    "STOREFRONT_API_PROXY_TARGET": "https://api.wuxuanglobal.com"
   }
 }

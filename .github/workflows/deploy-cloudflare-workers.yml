@@ -43,6 +43,10 @@ jobs:
       ADMIN_API_PROXY_TARGET: https://api.wuxuanglobal.com
       DATABASE_URL: postgresql://app:app_local_only@127.0.0.1:5432/b2b_catalog?schema=public
       SESSION_SECRET: test-only-session-secret-do-not-use-in-production
+      # Set production API targets explicitly for both build-time rewrites and Worker runtime.
+      ADMIN_API_PROXY_TARGET: https://api.wuxuanglobal.com
+      API_BASE_URL: https://api.wuxuanglobal.com
+      STOREFRONT_API_PROXY_TARGET: https://api.wuxuanglobal.com
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
