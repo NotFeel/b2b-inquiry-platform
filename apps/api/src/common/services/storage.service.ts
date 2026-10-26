@@ -127,7 +127,7 @@ export class StorageService {
     ) {
       return `${base}/${key}`;
     }
-    return this.env.API_BASE_URL.replace(/\/+$/, '') + publicImageVariantPath(assetId, version, name);
+    return `${this.env.API_BASE_URL.replace(/\/+$/, '')}/api/v1/files/${key}`;
   }
 
   /** Immutable, publication-gated public product-image URL. */
