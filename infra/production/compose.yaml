@@ -1,0 +1,111 @@
+name: b2b-inquiry-platform
+services:
+  postgres:
+    image: postgres:16-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    networks: [database]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+
+  api:
+    image: ghcr.io/notfeel/b2b-inquiry-platform-api:${IMAGE_TAG:?Set IMAGE_TAG}
+    restart: unless-stopped
+    env_file: [/opt/b2b-inquiry-platform/.env.api]
+    environment:
+      NODE_ENV: production
+      API_PORT: "3002"
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
+      DIRECT_DATABASE_URL: ${DIRECT_DATABASE_URL:-}
+      STORAGE_LOCAL_ROOT: /data/uploads
+      GEOIP_DATABASE_PATH: /data/geoip/GeoLite2-Country.mmdb
+      LOG_PRETTY: "false"
+    volumes:
+      - uploads_data:/data/uploads
+      - geoip_data:/data/geoip:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+    networks: [application, database]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/api/v1/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 4s
+      retries: 5
+      start_period: 45s
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+
+  worker:
+    image: ghcr.io/notfeel/b2b-inquiry-platform-worker:${IMAGE_TAG:?Set IMAGE_TAG}
+    restart: unless-stopped
+    env_file: [/opt/b2b-inquiry-platform/.env.api]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
+      DIRECT_DATABASE_URL: ${DIRECT_DATABASE_URL:-}
+      STORAGE_LOCAL_ROOT: /data/uploads
+      GEOIP_DATABASE_PATH: /data/geoip/GeoLite2-Country.mmdb
+      LOG_PRETTY: "false"
+    volumes:
+      - uploads_data:/data/uploads
+      - geoip_data:/data/geoip:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+      api: {condition: service_healthy}
+    networks: [application, database]
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+
+  storefront:
+    image: ghcr.io/notfeel/b2b-inquiry-platform-storefront:${IMAGE_TAG:?Set IMAGE_TAG}
+    restart: unless-stopped
+    environment: {NODE_ENV: production, PORT: "3000"}
+    depends_on: {api: {condition: service_healthy}}
+    networks: [application]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+
+  admin:
+    image: ghcr.io/notfeel/b2b-inquiry-platform-admin:${IMAGE_TAG:?Set IMAGE_TAG}
+    restart: unless-stopped
+    environment: {NODE_ENV: production, PORT: "3001"}
+    depends_on: {api: {condition: service_healthy}}
+    networks: [application]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.0
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      storefront: {condition: service_healthy}
+      admin: {condition: service_healthy}
+    networks: [application]
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+
+networks:
+  application: {driver: bridge}
+  database: {driver: bridge, internal: true}
+volumes:
+  postgres_data:
+  uploads_data:
+  geoip_data:
