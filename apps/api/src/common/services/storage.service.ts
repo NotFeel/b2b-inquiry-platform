@@ -132,7 +132,16 @@ export class StorageService {
 
   /** Immutable, publication-gated public product-image URL. */
   publicProductImageUrl(assetId: string, version: string, name: string): string {
-    return `${this.env.API_BASE_URL.replace(/\/+$/, '')}${publicImageVariantPath(assetId, version, name)}`;
+    // Published derivatives live at the exact R2 object key and should bypass
+    // the API proxy. Keep the API route for local development and source fallback.
+    const publicBase = this.env.S3_PUBLIC_BASE_URL.replace(/\\/+$/, '');
+    const isVariantName = /^\\d+\\.webp$/.test(name);
+    if (this.env.STORAGE_DRIVER === 's3' && publicBase.length > 0 && isVariantName) {
+      const width = Number.parseInt(name, 10);
+      const key = imageVariantStorageKey(assetId, version, width);
+      return `${publicBase}/${key}`;
+    }
+    return `${this.env.API_BASE_URL.replace(/\\/+$/, '')}${publicImageVariantPath(assetId, version, name)}`;
   }
 
   /** Authenticated admin-only preview for a product-image source object. */
