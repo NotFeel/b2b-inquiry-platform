@@ -31,8 +31,8 @@ services:
       GEOIP_DATABASE_PATH: /data/geoip/GeoLite2-Country.mmdb
       LOG_PRETTY: "false"
     volumes:
-      - uploads_data:/data/uploads
-      - geoip_data:/data/geoip:ro
+      - /opt/b2b-inquiry-platform/data/uploads:/data/uploads
+      - /opt/b2b-inquiry-platform/data/geoip:/data/geoip:ro
     depends_on:
       postgres: {condition: service_healthy}
     networks: [application, database]
@@ -56,8 +56,8 @@ services:
       GEOIP_DATABASE_PATH: /data/geoip/GeoLite2-Country.mmdb
       LOG_PRETTY: "false"
     volumes:
-      - uploads_data:/data/uploads
-      - geoip_data:/data/geoip:ro
+      - /opt/b2b-inquiry-platform/data/uploads:/data/uploads
+      - /opt/b2b-inquiry-platform/data/geoip:/data/geoip:ro
     depends_on:
       postgres: {condition: service_healthy}
       api: {condition: service_healthy}
@@ -107,5 +107,3 @@ networks:
   database: {driver: bridge, internal: true}
 volumes:
   postgres_data:
-  uploads_data:
-  geoip_data:
