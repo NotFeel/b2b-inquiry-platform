@@ -134,7 +134,8 @@ export class StorageService {
   publicProductImageUrl(assetId: string, version: string, name: string): string {
     // Published derivatives live at the exact R2 object key and should bypass
     // the API proxy. Keep the API route for local development and source fallback.
-    const publicBase = this.env.S3_PUBLIC_BASE_URL.replace(/\/+$/, '');
+    const configuredPublicBase = this.env.S3_PUBLIC_BASE_URL || (this.env.NODE_ENV === 'production' ? 'https://images.wuxuanglobal.com' : '');
+    const publicBase = configuredPublicBase.replace(/\/+$/, '');
     const isVariantName = /^\d+\.webp$/.test(name);
     if (this.env.STORAGE_DRIVER === 's3' && publicBase.length > 0 && isVariantName) {
       const width = Number.parseInt(name, 10);
