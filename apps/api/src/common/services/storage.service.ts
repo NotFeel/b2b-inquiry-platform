@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import {
+  imageVariantStorageKey,
   publicImageVariantPath,
   storageVisibilityForKey,
   type StorageVisibility,
