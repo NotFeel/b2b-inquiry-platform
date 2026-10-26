@@ -33,7 +33,7 @@ test -s "$BACKUP"
 find "$BACKUPS" -maxdepth 1 -type f -name 'pre-migration-*.sql.gz' -printf '%T@ %p\n' | sort -nr | awk 'NR>14 {print $2}' | xargs -r rm -f
 healthy(){
   local svc cid status
-  for svc in api storefront admin; do
+  for svc in api worker storefront admin; do
     for i in $(seq 1 30); do
       cid="$(dc ps -q "$svc" 2>/dev/null || true)"
       status=""
