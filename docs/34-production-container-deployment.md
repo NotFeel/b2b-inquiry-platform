@@ -2,13 +2,16 @@
 
 ## Architecture
 
-Ubuntu 24.04 runs Docker only; application source is never cloned on the server. GitHub-hosted Actions builds four immutable GHCR images tagged `sha-<40-character-commit-sha>`. A repository-scoped containerized runner handles manual deploys. Compose runs PostgreSQL 16, Storefront, Admin, API, Worker, and Cloudflare Tunnel. PostgreSQL has no published host port. Named volumes preserve the database and uploads.
+Ubuntu 24.04 runs Docker only; application source is never cloned on the server. GitHub-hosted Actions builds four immutable GHCR images tagged `sha-<40-character-commit-sha>`. A repository-scoped containerized runner handles manual deploys. Compose runs PostgreSQL 16, Storefront, Admin, API, Worker, and Cloudflare Tunnel. PostgreSQL has no published host port. A named volume preserves PostgreSQL data; bind-mounted host directories preserve uploads and GeoIP data.
 
 ## 1. Prepare server
 
 ```bash
 sudo install -d -m 0750 /opt/b2b-inquiry-platform/{deploy,runner,backups/database,backups/uploads,logs,data/uploads,data/geoip}
 sudo chown -R "$USER":"$USER" /opt/b2b-inquiry-platform
+# The Node.js runtime uses UID 1000; ensure upload files are writable by that UID.
+sudo chown -R 1000:1000 /opt/b2b-inquiry-platform/data/uploads
+sudo chmod -R u+rwX,go-rwx /opt/b2b-inquiry-platform/data/uploads
 ```
 
 Securely copy from the repository (do not clone it):
