@@ -19,7 +19,11 @@ import type {
 //
 // The storefront never talks to the database and never receives internal price
 // fields: every response here is a public DTO projection (docs/02 §2).
-const API_BASE_URL = process.env.API_BASE_URL ?? 'http://localhost:3002';
+const API_BASE_URL =
+  process.env.API_BASE_URL ??
+  (process.env.NODE_ENV === 'production'
+    ? 'https://api.wuxuanglobal.com'
+    : 'http://localhost:3002');
 /** Browser endpoint stays same-origin; the Next server proxies it to the API. */
 export const INQUIRY_INTENT_ENDPOINT = '/api/v1/public/inquiry-intents';
 
