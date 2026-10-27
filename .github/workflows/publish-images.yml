@@ -7,9 +7,6 @@ on:
         required: true
         default: main
         type: string
-  push:
-    branches: [main]
-    paths-ignore: ["docs/**", "**/*.md"]
 permissions:
   contents: read
   packages: write
