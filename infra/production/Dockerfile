@@ -32,6 +32,7 @@ USER node
 FROM runtime-base AS storefront
 WORKDIR /workspace/apps/storefront
 COPY --from=build --chown=node:node /workspace/apps/storefront/package.json ./package.json
+COPY --from=build --chown=node:node /workspace/apps/storefront/node_modules ./node_modules
 COPY --from=build --chown=node:node /workspace/apps/storefront/next.config.mjs ./next.config.mjs
 COPY --from=build --chown=node:node /workspace/apps/storefront/.next ./.next
 COPY --from=build --chown=node:node /workspace/apps/storefront/public ./public
@@ -41,6 +42,7 @@ CMD ["node", "/workspace/node_modules/next/dist/bin/next", "start", "--hostname"
 FROM runtime-base AS admin
 WORKDIR /workspace/apps/admin
 COPY --from=build --chown=node:node /workspace/apps/admin/package.json ./package.json
+COPY --from=build --chown=node:node /workspace/apps/admin/node_modules ./node_modules
 COPY --from=build --chown=node:node /workspace/apps/admin/next.config.mjs ./next.config.mjs
 COPY --from=build --chown=node:node /workspace/apps/admin/.next ./.next
 COPY --from=build --chown=node:node /workspace/apps/admin/public ./public
@@ -50,6 +52,7 @@ CMD ["node", "/workspace/node_modules/next/dist/bin/next", "start", "--hostname"
 FROM runtime-base AS api
 WORKDIR /workspace/apps/api
 COPY --from=build --chown=node:node /workspace/apps/api/package.json ./package.json
+COPY --from=build --chown=node:node /workspace/apps/api/node_modules ./node_modules
 COPY --from=build --chown=node:node /workspace/apps/api/dist ./dist
 EXPOSE 3002
 CMD ["node", "dist/main.js"]
@@ -57,5 +60,6 @@ CMD ["node", "dist/main.js"]
 FROM runtime-base AS worker
 WORKDIR /workspace/apps/worker
 COPY --from=build --chown=node:node /workspace/apps/worker/package.json ./package.json
+COPY --from=build --chown=node:node /workspace/apps/worker/node_modules ./node_modules
 COPY --from=build --chown=node:node /workspace/apps/worker/dist ./dist
 CMD ["node", "dist/index.js"]
