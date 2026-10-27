@@ -4,8 +4,8 @@ services:
     build:
       context: .
       args:
-        RUNNER_VERSION: ${RUNNER_VERSION:-2.328.0}
-    image: b2b-inquiry-platform/local-actions-runner:2.328.0
+        RUNNER_VERSION: ${RUNNER_VERSION:-2.338.1}
+    image: b2b-inquiry-platform/local-actions-runner:2.338.1
     container_name: b2b-local-deploy-runner
     restart: unless-stopped
     environment:
