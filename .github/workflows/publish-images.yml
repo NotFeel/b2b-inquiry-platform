@@ -109,22 +109,22 @@ jobs:
         with:
           package-name: b2b-inquiry-platform-storefront
           package-type: container
-          min-versions-to-keep: 10
+          min-versions-to-keep: 5
       - name: Retain recent Admin image versions
         uses: actions/delete-package-versions@v5
         with:
           package-name: b2b-inquiry-platform-admin
           package-type: container
-          min-versions-to-keep: 10
+          min-versions-to-keep: 5
       - name: Retain recent API image versions
         uses: actions/delete-package-versions@v5
         with:
           package-name: b2b-inquiry-platform-api
           package-type: container
-          min-versions-to-keep: 10
+          min-versions-to-keep: 5
       - name: Retain recent Worker image versions
         uses: actions/delete-package-versions@v5
         with:
           package-name: b2b-inquiry-platform-worker
           package-type: container
-          min-versions-to-keep: 10
+          min-versions-to-keep: 5
