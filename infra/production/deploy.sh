@@ -51,6 +51,83 @@ rollback(){
   dc up -d --no-deps api worker storefront admin
   healthy
 }
+
+# Remove only obsolete local images from this application's four GHCR repositories.
+# Retain the current deployed tag and the two most recent distinct published SHA tags.
+# Never prune volumes, networks, unrelated images, or images referenced by containers.
+cleanup_old_project_images(){
+  local keep_count=3
+  local repo tag image_id ref_id ref_tag
+  local -a repos=(
+    "ghcr.io/notfeel/b2b-inquiry-platform-storefront"
+    "ghcr.io/notfeel/b2b-inquiry-platform-admin"
+    "ghcr.io/notfeel/b2b-inquiry-platform-api"
+    "ghcr.io/notfeel/b2b-inquiry-platform-worker"
+  )
+  local -A keep_tags=()
+  local -A seen_tags=()
+
+  # Always keep the image tag that this deployment has just made current.
+  keep_tags["$NEW_TAG"]=1
+
+  # Also keep the previously deployed tag for one-step rollback.
+  if [[ -n "$PREVIOUS" && "$PREVIOUS" =~ ^sha-[0-9a-f]{40}$ ]]; then
+    keep_tags["$PREVIOUS"]=1
+  fi
+
+  # Keep two additional most recent published tags, ordered by image creation
+  # time. Deduplicate tags across the four services to represent releases rather
+  # than counting the four images of a single release as four versions.
+  local -a release_candidates=()
+  for repo in "${repos[@]}"; do
+    while IFS='|' read -r tag created; do
+      [[ "$tag" =~ ^sha-[0-9a-f]{40}$ ]] || continue
+      [[ -n "$created" ]] || continue
+      release_candidates+=("$created|$tag")
+    done < <(
+      docker image ls "$repo" --format '{{.Tag}}|{{.CreatedAt}}' 2>/dev/null || true
+    )
+  done
+
+  if (("${#release_candidates[@]}" > 0)); then
+    while IFS='|' read -r created tag; do
+      [[ -n "$tag" ]] || continue
+      [[ -n "${seen_tags[$tag]:-}" ]] && continue
+      seen_tags["$tag"]=1
+      keep_tags["$tag"]=1
+      local retained=0
+      for ref_tag in "${!keep_tags[@]}"; do
+        [[ "$ref_tag" =~ ^sha-[0-9a-f]{40}$ ]] && ((retained+=1))
+      done
+      # The current and previous tags count toward the retention total.
+      (( retained >= keep_count )) && break
+    done < <(printf '%s\n' "${release_candidates[@]}" | sort -r)
+  fi
+
+  echo "Cleaning obsolete local project images (retaining current and recent rollback tags)."
+  for repo in "${repos[@]}"; do
+    while IFS= read -r tag; do
+      [[ "$tag" =~ ^sha-[0-9a-f]{40}$ ]] || continue
+      [[ -n "${keep_tags[$tag]:-}" ]] && continue
+
+      image_id="$(docker image inspect "$repo:$tag" --format '{{.Id}}' 2>/dev/null || true)"
+      [[ -n "$image_id" ]] || continue
+
+      # Docker will refuse to remove images referenced by any existing container.
+      # Explicitly check first to avoid touching a current or rollback container.
+      if docker ps -a --no-trunc --format '{{.Image}}' | grep -Fqx "$repo:$tag"; then
+        echo "Keeping image referenced by a container: $repo:$tag"
+        continue
+      fi
+
+      echo "Removing obsolete image: $repo:$tag"
+      if ! docker image rm "$repo:$tag"; then
+        echo "WARNING: could not remove $repo:$tag; deployment remains successful." >&2
+      fi
+    done < <(docker image ls "$repo" --format '{{.Tag}}' 2>/dev/null || true)
+  done
+}
+
 export IMAGE_TAG="$NEW_TAG"
 if ! dc run --rm --no-deps api node /workspace/database/scripts/exec.mjs prisma migrate deploy; then
   echo "Migration failed; trying previous app images" >&2
@@ -64,4 +141,6 @@ if ! dc up -d --no-deps api worker storefront admin || ! healthy; then
 fi
 dc up -d cloudflared
 printf '%s\n' "$NEW_TAG" > "$STATE.tmp"; mv "$STATE.tmp" "$STATE"
+# Cleanup is deliberately best-effort: never turn a healthy deployment into a failure.
+cleanup_old_project_images || echo "WARNING: old-image cleanup encountered an error; deployment remains successful." >&2
 echo "Deployment succeeded: $NEW_TAG; backup: $BACKUP"
