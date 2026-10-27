@@ -37,7 +37,8 @@ COPY --from=build --chown=node:node /workspace/apps/storefront/next.config.mjs .
 COPY --from=build --chown=node:node /workspace/apps/storefront/.next ./.next
 COPY --from=build --chown=node:node /workspace/apps/storefront/public ./public
 EXPOSE 3000
-CMD ["node", "/workspace/node_modules/next/dist/bin/next", "start", "--hostname", "0.0.0.0", "--port", "3000"]
+# Next.js is a workspace dependency and is linked from this app's node_modules.
+CMD ["node", "./node_modules/next/dist/bin/next", "start", "--hostname", "0.0.0.0", "--port", "3000"]
 
 FROM runtime-base AS admin
 WORKDIR /workspace/apps/admin
@@ -47,7 +48,8 @@ COPY --from=build --chown=node:node /workspace/apps/admin/next.config.mjs ./next
 COPY --from=build --chown=node:node /workspace/apps/admin/.next ./.next
 COPY --from=build --chown=node:node /workspace/apps/admin/public ./public
 EXPOSE 3001
-CMD ["node", "/workspace/node_modules/next/dist/bin/next", "start", "--hostname", "0.0.0.0", "--port", "3001"]
+# Next.js is a workspace dependency and is linked from this app's node_modules.
+CMD ["node", "./node_modules/next/dist/bin/next", "start", "--hostname", "0.0.0.0", "--port", "3001"]
 
 FROM runtime-base AS api
 WORKDIR /workspace/apps/api
