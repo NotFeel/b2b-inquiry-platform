@@ -21,6 +21,12 @@ COPY --from=build --chown=node:node /workspace/pnpm-lock.yaml ./pnpm-lock.yaml
 COPY --from=build --chown=node:node /workspace/node_modules ./node_modules
 COPY --from=build --chown=node:node /workspace/packages ./packages
 COPY --from=build --chown=node:node /workspace/database ./database
+
+# Fail the image build if the Prisma CLI needed by the release migration is
+# absent from the database workspace package in the runtime image.
+RUN test -x /workspace/database/node_modules/.bin/prisma \
+    && /workspace/database/node_modules/.bin/prisma --version
+
 USER node
 
 FROM runtime-base AS storefront
