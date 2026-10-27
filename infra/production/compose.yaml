@@ -73,7 +73,7 @@ services:
   storefront:
     image: ghcr.io/notfeel/b2b-inquiry-platform-storefront:${IMAGE_TAG:?Set IMAGE_TAG}
     restart: unless-stopped
-    environment: {NODE_ENV: production, PORT: "3000", APP_BASE_URL: "https://wuxuanglobal.com"}
+    environment: {NODE_ENV: production, PORT: "3000", APP_BASE_URL: "https://www.wuxuanglobal.com", API_BASE_URL: "http://api:3002"}
     depends_on: {api: {condition: service_healthy}}
     networks: [application]
     healthcheck:
@@ -87,7 +87,7 @@ services:
   admin:
     image: ghcr.io/notfeel/b2b-inquiry-platform-admin:${IMAGE_TAG:?Set IMAGE_TAG}
     restart: unless-stopped
-    environment: {NODE_ENV: production, PORT: "3001", ADMIN_BASE_URL: "https://admin.wuxuanglobal.com"}
+    environment: {NODE_ENV: production, PORT: "3001", ADMIN_BASE_URL: "https://admin.wuxuanglobal.com", API_BASE_URL: "http://api:3002"}
     depends_on: {api: {condition: service_healthy}}
     networks: [application]
     healthcheck:

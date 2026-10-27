@@ -1,4 +1,5 @@
 FROM node:22-bookworm-slim AS build
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 ENV CI=true
 ARG ADMIN_API_PROXY_TARGET=http://api:3002
 ARG STOREFRONT_API_PROXY_TARGET=http://api:3002
@@ -12,6 +13,7 @@ RUN pnpm db:generate
 RUN pnpm build
 
 FROM node:22-bookworm-slim AS runtime-base
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 WORKDIR /workspace
 RUN corepack enable
