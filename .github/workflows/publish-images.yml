@@ -7,6 +7,9 @@ on:
         required: true
         default: main
         type: string
+  push:
+    branches: [main]
+    paths-ignore: ["docs/**", "**/*.md"]
 permissions:
   contents: read
   packages: write
@@ -101,3 +104,30 @@ jobs:
             echo "API: ghcr.io/${{ steps.image.outputs.owner }}/b2b-inquiry-platform-api:sha-${{ steps.source.outputs.sha }}"
             echo "Worker: ghcr.io/${{ steps.image.outputs.owner }}/b2b-inquiry-platform-worker:sha-${{ steps.source.outputs.sha }}"
           } | tee image-manifest.txt
+
+      # Keep the newest 10 versions per package for rollback.
+      # Run cleanup only after all four images have been successfully published.
+      - name: Retain recent Storefront image versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: b2b-inquiry-platform-storefront
+          package-type: container
+          min-versions-to-keep: 10
+      - name: Retain recent Admin image versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: b2b-inquiry-platform-admin
+          package-type: container
+          min-versions-to-keep: 10
+      - name: Retain recent API image versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: b2b-inquiry-platform-api
+          package-type: container
+          min-versions-to-keep: 10
+      - name: Retain recent Worker image versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: b2b-inquiry-platform-worker
+          package-type: container
+          min-versions-to-keep: 10
