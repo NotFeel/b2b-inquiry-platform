@@ -70,16 +70,32 @@ if (
   process.env.DATABASE_URL = process.env.DIRECT_DATABASE_URL;
 }
 
-const binDir = join(repoRoot, 'node_modules', '.bin');
+// Prisma and other database CLIs are declared in the @b2b/database
+// workspace package, not at the monorepo root. In production images the
+// root .bin directory therefore may not contain a prisma executable.
+// Prefer the package-local binaries, then fall back to root binaries.
+const packageBinDir = join(here, '..', 'node_modules', '.bin');
+const rootBinDir = join(repoRoot, 'node_modules', '.bin');
+const pathEntries = [packageBinDir, rootBinDir, process.env.PATH ?? '']
+  .filter(Boolean)
+  .join(process.platform === 'win32' ? ';' : ':');
+
 const child = spawn(command, args, {
   stdio: 'inherit',
   env: {
     ...process.env,
-    PATH: `${binDir}${process.platform === 'win32' ? ';' : ':'}${process.env.PATH ?? ''}`,
+    PATH: pathEntries,
   },
   // Commands run from the package root (the parent of this script) so the
   // Prisma CLI resolves ./prisma/schema.prisma without extra flags.
   cwd: process.env.EXEC_CWD ?? resolve(here, '..'),
+});
+
+child.on('error', (error) => {
+  process.stderr.write(
+    `[exec] Failed to start "${command}": ${error.message}. Checked PATH: ${pathEntries}\n`,
+  );
+  process.exit(127);
 });
 
 child.on('exit', (code, signal) => {
