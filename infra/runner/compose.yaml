@@ -16,7 +16,7 @@ services:
       RUNNER_PAT: ${RUNNER_PAT:?Set RUNNER_PAT in runner .env}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - runner_work:/runner/_work
+      - /opt/b2b-inquiry-platform/runner/work:/runner/_work
       - /opt/b2b-inquiry-platform/deploy:/opt/b2b-inquiry-platform/deploy:rw
       - /opt/b2b-inquiry-platform/.env.api:/opt/b2b-inquiry-platform/.env.api:ro
       - /opt/b2b-inquiry-platform/backups:/opt/b2b-inquiry-platform/backups
@@ -25,5 +25,3 @@ services:
     logging:
       driver: json-file
       options: {max-size: "10m", max-file: "3"}
-volumes:
-  runner_work:
