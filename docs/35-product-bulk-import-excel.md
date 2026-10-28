@@ -31,9 +31,9 @@ Admin 新增商品批量导入页面。操作员先选择整份 Excel 共用的�
   - Lifecycle Status：available / preorder / discontinued，对应 ProductLifecycleStatus。
 - Category、Status、Lifecycle、Tags 必须从真实 API 选择并提交 ID/code；服务端重新确认存在、启用和可用。禁止自动创建分类、字典项或标签。
 - 标签沿用 Tag / ProductTag，不得重复造标签关联表。标签不自动从 Excel 文字中猜测。
-- 内部价格是可选字段。只有具备 product.cost.update 权限的操作者可导入非空价格；无权限且价格列有值时整批失败。金额按 Decimal 处理，不使用浮点运算。
+- 内部价格是可选字段。业务已确认原始 Price per Unit (CNY) 公式需要作为内部单价保存。只有具备 product.cost.update 权限的操作者可导入非空价格；无权限且价格列有值时整批失败。金额按 Decimal 处理，不使用浮点运算。价格列仅允许安全算术表达式子集（数字、括号、+ - * /），禁止函数、单元格引用、外部链接、名称引用和其他公式语法；例如 =4.7*1.15 计算为 5.405，=3.8*1.15 计算为 4.37。必须用专用 tokenizer/parser 计算，禁止使用 eval、Function 或启动 Excel/WPS 执行任意公式；结果以 Decimal 计算并按业务确认的货币精度策略校验。表达式不符合白名单或发生除零，整批失败。
 - 价格只能留在内部 Product.priceCny。公开 DTO、SSR/SEO、页面源代码、缓存、公开 API、普通日志和错误报告不得泄漏价格。
-- 图片导入第一版可选。不得执行 Excel 公式或根据 DISPIMG 标识猜图片。仅当现有 FileAsset/图片服务已有受控的安全关联方式时才接受 Asset ID；否则该列非空时报错并引导导入后用现有图库上传。
+- 图片导入应支持 WPS DISPIMG 单元格图片与标准 Excel 浮动图片。解析图片 ID/绘图锚点后提取实际媒体字节，并严格映射回对应商品行；不能可靠匹配的图片必须报错，不得按图片文件名或出现顺序猜测。图片须复用现有 FileAsset/产品图库服务，执行 MIME/魔数、大小、像素尺寸、恶意文件和用途校验。媒体存储不支持事务时，使用私有 staging + 失败清理/重试机制，数据库写入仍保持整批原子性。
 - 目标发布状态为 published 时，必须复用现有发布准备检查（实际需要的封面图、翻译等以当前 service/policy 为准）；任何产品不满足，整批失败。
 - slug 为空时调用现有 buildProductSlugCandidate / slug helper。检查同文件和数据库唯一性，数据库唯一约束仍是最终防线。
 - 当前 Product schema 有 enum 状态与 DictionaryItem 外键并行的迁移兼容字段；必须依据现有 ProductsService / DictionaryService / migration 规则保持同步，不得只写其中一个。
@@ -52,22 +52,22 @@ XLSX 解析和字段校验在事务外完成。commit 阶段重新检查关键�
 | 原字段 | 样例 | 发现的问题 | 建议 |
 |---|---|---|---|
 | Product Code | WX-MYT-1、WX-MYT-2 | 可作为产品编码 | 映射到必填 SKU* |
-| Product Image | =_xlfn.DISPIMG("ID_...",1) | Excel 内部显示公式，不是可供服务端使用的图片 URL；使用标准解析未发现传统嵌入图片对象 | 不执行公式，不猜图；模板改为可选 Image URL(s) or Asset ID(s) |
+| Product Image | =_xlfn.DISPIMG("ID_...",1) | 这是 WPS 单元格图片引用，不是 URL；普通 ExcelJS/openpyxl 单元格 API 不一定直接读取图像，但本工作簿内部有 xl/cellimages.xml、xl/_rels/cellimages.xml.rels 和 xl/media/image1.jpeg、image2.jpeg | 通过 DISPIMG ID → cellimages.xml → relationship → media 文件提取图片，并按公式所在行关联 SKU；禁止把 ID 当 URL |
 | Product Name | Rose、Strawberry | 可作英文名称 | 映射到 Product Name (English)* |
 | Price per Unit (CNY)，D 列 | 空 | 与 E 列重复表头 | 合并为唯一内部价格列 |
-| Price per Unit (CNY)，E 列 | =4.7*1.15、=3.8*1.15 | 公式而非可信数字输入；导入端不得执行公式或信任缓存结果 | 业务确认后改填纯数字字面量；数学结果 5.405、4.37 仅作核对，不自动写入 |
+| Price per Unit (CNY)，E 列 | =4.7*1.15、=3.8*1.15 | 公式不可直接信任缓存结果；通用公式执行不安全 | 业务已确认是需要保存的内部单价；只允许安全算术白名单解析，得到 5.405、4.37，再按 Decimal 与货币精度规则校验 |
 | Packing Quantity (PCS) | 168、144 | 业务含义需确认 | 暂映射为 Carton Quantity (pcs)，导入前确认其确为每箱数量 |
 | Case Dimensions (L×W×H cm) | 42*28*51、60*30*35 | 三个值混在一个文本列，难以逐字段校验 | 拆为 Carton Length、Carton Width、Carton Height 三列 |
 | Gross Weight (KG) | 20、21 | 可用于箱规毛重 | 映射到 Carton Gross Weight (kg) |
 
 原表缺失或不明确：英文描述、可选中文名称/描述、slug、单件长宽高、单件重量、包装类型、拆分的箱规尺寸、可选排序字段、标准图片资源标识，以及任务级 Category/发布状态/生命周期/标签选择。任务级字段应该在页面选择，不重复放进 Excel，避免同一属性出现两个数据来源。
 
-### 2.1 业务负责人需要确认
+### 2.1 已确认业务规则与剩余配置
 
-1. Packing Quantity (PCS) 是否确实指每箱数量。
-2. E 列价格公式是否真的是内部单价；公式结果不是自动确认的报价。
-3. 两个样例的品类、发布状态、生命周期和标签取值。
-4. 图片是先导入商品后用图库上传，还是现有项目已有安全可靠的 FileAsset ID 导入机制。
+1. Packing Quantity (PCS) 确实表示每箱数量，映射到 Carton Quantity (pcs)。
+2. E 列价格公式是需要保存的内部单价；安全计算 =4.7*1.15 得 5.405，=3.8*1.15 得 4.37。禁止执行任意 Excel 公式，只解析白名单算术表达式。
+3. 每次导入的品类、发布状态、生命周期和默认标签由 Admin 页面统一选择。
+4. 原始 WPS DISPIMG 图片必须从工作簿 XML 资源中提取，并通过单元格所在行映射到 SKU；图片提取或映射失败则整批失败。
 
 ## 3. 优化 Excel 模板契约
 
@@ -104,12 +104,24 @@ XLSX 解析和字段校验在事务外完成。commit 阶段重新检查关键�
 
 单位约定：单品尺寸 cm 转 mm，乘以 10；不能无损转换成整数 mm 的输入必须报错。单件重量为整数 g。箱规重量用 Decimal。空值与 0 必须区分，不得用 value || default 消除合法的零值。
 
-### 3.2 Excel 安全限制
+### 3.2 图片提取与关联规则（必须实现）
+
+本项目需要支持两类 XLSX 图片：
+
+1. **WPS 单元格内嵌图片**：单元格内容形如 =DISPIMG("ID_...",1)。读取 worksheet XML 得到 cellRef → DISPIMG ID；读取 xl/cellimages.xml 得到 ID → relationship ID；读取 xl/_rels/cellimages.xml.rels 得到 relationship ID → media target；从 ZIP 中提取实际媒体字节。不要只依赖 ExcelJS 的 cell.value 或 worksheet.getImages()，因为 WPS cellImages 不是标准 drawing 图片。
+2. **标准浮动图片**：读取 xl/drawings/drawing*.xml 和对应 .rels，解析 anchor 的起始行/列与媒体目标。图片必须能唯一映射到配置的图片列/商品行；无法唯一映射就返回明确错误。
+
+对当前 凡士林.xlsx 的结构检查已确认存在 xl/cellimages.xml、xl/_rels/cellimages.xml.rels、xl/media/image1.jpeg、xl/media/image2.jpeg；B2、B3 分别引用 DISPIMG ID。实现时应以运行时解析结果为准，不把图片 ID 或文件名硬编码进代码。
+
+图片处理顺序：提取 → 校验文件签名/MIME/尺寸/像素数 → 可选恶意文件扫描 → 私有 staging → 业务媒体服务登记 FileAsset → 事务内关联 ProductImage → 成功后确认 staging，失败时排队清理。必须限制图片总数、单图大小、总解压大小、像素数，防止 ZIP bomb 和超大图片攻击。拒绝 SVG 或其他活动内容，除非现有安全图片服务明确允许并净化。
+
+如果源工作簿的图片行与商品数据行能按同一行唯一匹配，可自动关联；如果存在图片覆盖多行、多个候选图片、缺失商品行或重复关联，不得按图片顺序猜测，整批预检失败并列出 Excel 行号。
+### 3.3 Excel 安全限制
 
 - 仅支持 .xlsx；建议初始上限 10 MB、1,000 条非空数据行，限制应集中为可配置项并经压测确认。
 - 校验真实工作簿结构，不仅信任扩展名或浏览器 MIME。
 - 只读取 Products sheet；表头依模板版本严格匹配。缺列、重复表头、未允许的多余列必须报错。
-- 明确检测 ExcelJS 公式/sharedFormula 类型；所有公式单元格拒绝，不使用 cell.result 作为可信数据。
+- 明确检测 ExcelJS 公式/sharedFormula 类型：默认所有公式单元格拒绝；仅 Unit Price (CNY) [internal] 允许专用安全算术解析器处理白名单表达式。禁止信任缓存结果，禁止执行任意公式。
 - 拒绝宏、加密工作簿、外部链接、合并单元格、异常 XML；限制解析耗时、内存与临时文件空间。
 - 过滤全空行；只有标题、没有数据行时拒绝；错误必须保留真实 Excel 行号。
 - 类型、长度、控制字符、数值范围和精度均在服务端验证。价格、描述等敏感值不能写入普通日志或错误报表。
@@ -234,8 +246,8 @@ IMPORT_FILE_REQUIRED、IMPORT_FILE_TYPE_INVALID、IMPORT_FILE_TOO_LARGE、IMPORT
 - 使用 lockfile 当前的 ExcelJS 版本，不随意升级。
 - 校验文件大小、真实工作簿结构、SHA-256；上传文件存放于受限临时路径或私有对象并设置处理超时。
 - 只解析 Products 工作表，严格匹配模板版本的表头；拒绝缺列、重复列和未知列。
-- 显式检测 formula/sharedFormula，禁止执行或信任公式缓存值。
-- 禁止从 DISPIMG 或宏/外部链接提取业务值。
+- 显式检测 formula/sharedFormula：除内部价格列的白名单算术表达式外，公式均拒绝；不信任缓存值，不执行任意公式。
+- 禁止把 DISPIMG 当 URL 或信任公式缓存。允许按 WPS OOXML 结构解析 xl/cellimages.xml 与对应 .rels，仅提取其引用的嵌入媒体文件；拒绝宏、外部链接及其他活动内容。
 - 只统计非空产品行，保留真实 Excel 行号；空表或只有标题拒绝。
 - 限制字段长度、解析耗时、内存、行数和临时存储量；扩展名/MIME 不能作为唯一判断。
 
@@ -261,7 +273,7 @@ IMPORT_FILE_REQUIRED、IMPORT_FILE_TYPE_INVALID、IMPORT_FILE_TOO_LARGE、IMPORT
 - Category 只提交 UUID；Tags 使用 tagIds。不得根据 label 或用户输入的名字模糊映射 ID。
 - 规格转换要无损；箱规重量和价格使用 Decimal 字符串路径，禁止浮点换算。
 - Product.packaging 是字符串。只有确认与包装字典值兼容后才映射；不兼容则明确拒绝或按经过确认的映射转换。
-- 图片如要导入，必须复用现有媒体/图片服务，不可绕开业务服务直接创建不完整 ProductImage。
+- 图片导入必须按行映射：WPS DISPIMG 以公式所在单元格行作为商品行；标准浮动图片使用 drawing anchor 的起始行/列，并要求图片锚点落在配置的图片列或可确认的商品行。若图片覆盖多行、重复映射、图片列缺失或映射不唯一，报错而非按顺序猜图。提取后校验图片魔数/MIME/大小/像素尺寸，使用现有媒体服务创建 FileAsset，再通过现有产品图片服务关联 ProductImage。由于对象存储不可由 DB 事务自动回滚，先上传私有 staging，DB 事务失败时排入可重试清理任务；成功后再完成正式关联。
 
 ### 6.4 并发和幂等
 
@@ -369,7 +381,7 @@ P0 代码核查：
 
 P1 后端：
 - [ ] XLSX 模板下载/版本校验。
-- [ ] 解析、公式拒绝、文件/行数限制。
+- [ ] 解析标准 Excel 图片与 WPS DISPIMG 图片；价格列安全算术解析；其他公式拒绝；实施文件/行数限制。
 - [ ] 全量预检与错误报告。
 - [ ] 类别/状态/标签/价格权限/发布 readiness 校验。
 - [ ] 短时单次 validationId。
@@ -395,7 +407,7 @@ P3 回归：
 - 任意行错误都使数据库新增数为 0。
 - 复用现有商品模型和业务规则。
 - SKU/slug 唯一、发布 readiness、价格权限有效。
-- 不执行公式，不将 DISPIMG 当作图片 URL。
+- 不执行任意公式；内部价格仅通过安全算术白名单解析；正确提取 WPS DISPIMG/标准浮动图片并按商品行关联，绝不把 DISPIMG ID 当图片 URL。
 - Menu/Permission/Seed/中英文翻译一致，逐 endpoint 授权。
 - UI 在 360px、平板和桌面正常。
 - 成败均有脱敏审计，日志不泄漏价格/秘密。
@@ -404,13 +416,13 @@ P3 回归：
 
 ## 13. 给 VS Code AI 的执行提示词
 
-请按本文件直接实施，不要只输出建议。先遵守 AGENTS.md 与相关技能，检查现有商品模型、服务、图片、状态、标签、权限和菜单机制。复用已有逻辑，不新建平行商品表。实现固定字段选择、版本化 Excel 模板、服务端预检、错误报告与原子提交。任何字段/行/权限/发布校验失败都不能导入；commit 只能消费服务端生成的可信一次性 validationId，且所有写入必须在一个数据库事务中。已存在或重复 SKU 不允许覆盖。拒绝公式和 DISPIMG。内部价格必须受 product.cost.update 保护并确保公开不泄漏。补齐菜单、权限、zh-CN/en-US、审计、测试。最后运行真实 lint/typecheck/test/build 并汇报文件、迁移、测试结果、未执行项和风险。
+请按本文件直接实施，不要只输出建议。先遵守 AGENTS.md 与相关技能，检查现有商品模型、服务、图片、状态、标签、权限和菜单机制。复用已有逻辑，不新建平行商品表。实现固定字段选择、版本化 Excel 模板、服务端预检、错误报告与原子提交。任何字段/行/权限/发布校验失败都不能导入；commit 只能消费服务端生成的可信一次性 validationId，且所有写入必须在一个数据库事务中。已存在或重复 SKU 不允许覆盖。拒绝任意公式；内部价格列只允许专用 Decimal 算术白名单解析。支持标准浮动图片和 WPS DISPIMG，从 OOXML 图片资源映射提取图片并确定性关联商品行，复用现有 FileAsset/产品图片服务，处理 staging 与失败清理。内部价格必须受 product.cost.update 保护并确保公开不泄漏。补齐菜单、权限、zh-CN/en-US、审计、测试。最后运行真实 lint/typecheck/test/build 并汇报文件、迁移、测试结果、未执行项和风险。
 
 ## 14. 明确假设
 
 1. 首版只新增；SKU 冲突整批失败。
 2. Category/Publish Status/Lifecycle/Default Tags 是任务级字段，适用于全部行。
-3. 图片第一版可选；发布规则要求封面时，发布目标的无图产品会导致整批失败。
-4. 价格留空直到业务确认，只有价格权限用户可导入。
+3. 图片支持 WPS DISPIMG 与标准浮动图片；如果无法确定图片对应商品行，整批失败。发布规则要求封面时，缺图产品不能发布。
+4. 内部价格可导入；价格列公式仅允许安全算术白名单解析，且操作者必须有 product.cost.update 权限。
 5. 10 MB、1,000 行为初始建议值，需基于部署环境压测调整。
-6. Packing Quantity 映射到 Carton Quantity 是待确认推断。
+6. Packing Quantity (PCS) 已确认映射为 Carton Quantity (pcs)。
