@@ -73,6 +73,7 @@ services:
   storefront:
     image: ghcr.io/notfeel/b2b-inquiry-platform-storefront:${IMAGE_TAG:?Set IMAGE_TAG}
     restart: unless-stopped
+    ports: ["3000:3000"]
     environment: {NODE_ENV: production, PORT: "3000", APP_BASE_URL: "https://www.wuxuanglobal.com", API_BASE_URL: "http://api:3002"}
     depends_on: {api: {condition: service_healthy}}
     networks: [application]
@@ -87,6 +88,7 @@ services:
   admin:
     image: ghcr.io/notfeel/b2b-inquiry-platform-admin:${IMAGE_TAG:?Set IMAGE_TAG}
     restart: unless-stopped
+    ports: ["3001:3001"]
     environment: {NODE_ENV: production, PORT: "3001", ADMIN_BASE_URL: "https://admin.wuxuanglobal.com", API_BASE_URL: "http://api:3002"}
     depends_on: {api: {condition: service_healthy}}
     networks: [application]
@@ -101,7 +103,7 @@ services:
   cloudflared:
     image: cloudflare/cloudflared:2026.10.0
     restart: unless-stopped
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN}
+    command: tunnel --no-autoupdate --protocol http2 run --token ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN}
     depends_on:
       storefront: {condition: service_healthy}
       admin: {condition: service_healthy}
