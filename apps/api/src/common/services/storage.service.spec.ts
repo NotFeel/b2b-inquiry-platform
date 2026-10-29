@@ -47,6 +47,21 @@ describe('R2 bucket routing', () => {
     );
   });
 
+  it('uses a same-origin path for product images when local storage is enabled', () => {
+    const localEnv = {
+      ...env,
+      STORAGE_DRIVER: 'local',
+      API_BASE_URL: 'http://api:3002',
+      S3_PUBLIC_BASE_URL: '',
+      NODE_ENV: 'production',
+    } as unknown as AppEnv;
+    const localService = new StorageService(localEnv, {} as JsonLogger);
+
+    expect(localService.publicProductImageUrl('asset-id', 'version-id', '1280.webp')).toBe(
+      '/api/v1/files/images/asset-id/version-id/1280.webp',
+    );
+  });
+
   it('keeps non-CDN file URLs same-origin and does not expose private keys via the CDN', () => {
     expect(service().publicUrl('quote-exports/2026/10/job.xlsx')).toBe(
       '/api/v1/files/quote-exports/2026/10/job.xlsx',
