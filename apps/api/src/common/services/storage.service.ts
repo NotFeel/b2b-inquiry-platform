@@ -127,13 +127,14 @@ export class StorageService {
     ) {
       return `${base}/${key}`;
     }
-    return `${this.env.API_BASE_URL.replace(/\/+$/, '')}/api/v1/files/${key}`;
+    return `/api/v1/files/${key}`;
   }
 
   /** Immutable, publication-gated public product-image URL. */
   publicProductImageUrl(assetId: string, version: string, name: string): string {
     // Published derivatives live at the exact R2 object key and should bypass
-    // the API proxy. Keep the API route for local development and source fallback.
+    // the API proxy. The fallback is a same-origin path so the browser never
+    // receives an internal Docker hostname such as http://api:3002.
     const configuredPublicBase = this.env.S3_PUBLIC_BASE_URL || (this.env.NODE_ENV === 'production' ? 'https://images.wuxuanglobal.com' : '');
     const publicBase = configuredPublicBase.replace(/\/+$/, '');
     const isVariantName = /^\d+\.webp$/.test(name);
@@ -142,7 +143,7 @@ export class StorageService {
       const key = imageVariantStorageKey(assetId, version, width);
       return `${publicBase}/${key}`;
     }
-    return `${this.env.API_BASE_URL.replace(/\/+$/, '')}${publicImageVariantPath(assetId, version, name)}`;
+    return publicImageVariantPath(assetId, version, name);
   }
 
   /** Authenticated admin-only preview for a product-image source object. */
