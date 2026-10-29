@@ -465,7 +465,7 @@ async function seedPermissionsAndRoles(options: { referenceOnly?: boolean } = {}
       grantsAdded += created.count;
     }
     return { newPermissions: newPermissionCodes.size, grantsAdded };
-  });
+  }, { maxWait: 10_000, timeout: 60_000 });
 
   console.log(
     `seeded ${PERMISSIONS.length} permissions and ${ROLES.length} roles; ${result.newPermissions} new permission codes, ${result.grantsAdded} role grants added`,
