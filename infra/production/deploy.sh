@@ -134,6 +134,28 @@ if ! dc run --rm --no-deps api node /workspace/database/scripts/exec.mjs prisma 
   rollback || true
   exit 1
 fi
+
+# Schema migrations do not insert code-defined permissions, menus, translations,
+# or built-in status options. Sync only those release-owned reference records
+# after migrations and before switching app containers. This mode preserves
+# business content, global setting values, custom menu labels, custom menu rows,
+# and manually assigned grants on existing non-super-admin roles.
+if ! dc run --rm --no-deps api node /workspace/database/scripts/exec.mjs tsx prisma/seed.ts --reference-only; then
+  echo "Production reference-data seed failed; trying previous app images" >&2
+  rollback || true
+  exit 1
+fi
+if ! dc run --rm --no-deps api node /workspace/database/scripts/exec.mjs tsx scripts/check-menu-translations.ts; then
+  echo "Menu translation validation failed; trying previous app images" >&2
+  rollback || true
+  exit 1
+fi
+if ! dc run --rm --no-deps api node /workspace/database/scripts/exec.mjs tsx scripts/check-production-reference-data.ts; then
+  echo "Production reference-data validation failed; trying previous app images" >&2
+  rollback || true
+  exit 1
+fi
+
 if ! dc up -d --no-deps api worker storefront admin || ! healthy; then
   echo "Deployment health check failed; rolling back app images" >&2
   rollback || echo "Rollback failed; preserve $BACKUP and inspect logs" >&2
