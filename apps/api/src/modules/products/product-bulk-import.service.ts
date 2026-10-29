@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import {
   ERROR_CODES,
@@ -6,25 +6,26 @@ import {
   type ProductImportCommitResult,
   type ProductImportIssue,
   type ProductImportSettings,
-  type ProductImportSummary,
   type ProductImportValidationResult,
 } from '@b2b/contracts';
 import type { Prisma } from '@b2b/database';
+import {
+  ProductImportProcessingError,
+  configurationHash,
+  validateAndStageProductImport,
+  type StoredImportConfiguration,
+  type StoredImportPayload,
+  type StoredProductImage,
+} from '@b2b/product-import';
 import ExcelJS from 'exceljs';
 import { APP_ENV, type AppEnv } from '../../config/config.module';
 import { ApiError } from '../../common/errors/api-error';
 import type { AuthenticatedActor } from '../../common/request-context';
 import { AuditService } from '../../common/services/audit.service';
+import { StorageService } from '../../common/services/storage.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { DictionaryService } from '../dictionary/dictionary.service';
 import { FilesService } from '../files/files.service';
-import {
-  ImportRowError,
-  ProductBulkImportParser,
-  type ParsedProductImage,
-  type ParsedProductRow,
-} from './product-bulk-import-parser';
-import { buildProductSlugCandidate } from './product-slug';
 
 const PRODUCT_STATUS_MAP = {
   draft: 'DRAFT',
@@ -45,41 +46,14 @@ const MARKETING_TAG_CODES = {
   newArrival: 'new-arrival',
   preorder: 'preorder',
 } as const;
-const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-
-interface StoredProductImage extends Omit<ParsedProductImage, 'bytes'> {
-  bytesBase64: string;
-}
-
-interface StoredProductRow extends Omit<ParsedProductRow, 'images'> {
-  images: StoredProductImage[];
-}
-
-interface StoredImportConfiguration {
-  settings: ProductImportSettings;
-  lifecycleStatusItemId: string;
-  publishStatusItemId: string;
-  tagCodes: string[];
-}
-
-interface StoredImportPayload {
-  configuration: StoredImportConfiguration;
-  rows: StoredProductRow[];
-}
 
 interface ValidatedConfiguration extends StoredImportConfiguration {
   issues: ProductImportIssue[];
 }
 
-interface StagedAsset {
+interface StagedAsset extends StoredProductImage {
   rowIndex: number;
   imageIndex: number;
-  fileAssetId: string;
-  storageKey: string;
-  width: number | null;
-  height: number | null;
-  sizeBytes: number;
-  sha256: string | null;
 }
 
 @Injectable()
@@ -89,6 +63,7 @@ export class ProductBulkImportService {
     private readonly prisma: PrismaService,
     private readonly dictionary: DictionaryService,
     private readonly files: FilesService,
+    private readonly storage: StorageService,
     private readonly audit: AuditService,
   ) {}
 
@@ -131,22 +106,19 @@ export class ProductBulkImportService {
       ['Template version', 'optimized-v1'],
       ['Only Products is read during import.'],
       ['Category, publish status, lifecycle and default tags are selected in Admin.'],
-      ['Dimensions are centimetres and are converted to integer millimetres.'],
-      ['Unit price accepts a number, or a safe arithmetic expression such as =4.7*1.15.'],
-      ['Images may be standard floating pictures or WPS DISPIMG cell images.'],
-      ['Any row error blocks the complete import.'],
+      ['Images', 'Standard floating images and WPS DISPIMG cell images are supported.'],
     ]);
     readMe.getColumn(1).width = 28;
-    readMe.getColumn(2).width = 80;
+    readMe.getColumn(2).width = 78;
 
-    const mapping = workbook.addWorksheet('Original Field Mapping');
+    const mapping = workbook.addWorksheet('Field Mapping');
     mapping.addRows([
-      ['Original field', 'Import field'],
-      ['Product Code', 'SKU*'],
-      ['Product Image', 'Image URL(s) or Asset ID(s)'],
-      ['Product Name', 'Product Name (English)*'],
-      ['Price per Unit (CNY)', 'Unit Price (CNY) [internal]'],
-      ['Packing Quantity (PCS)', 'Carton Quantity (pcs)'],
+      ['Optimized column', 'Legacy Price List column'],
+      ['SKU*', 'Product Code'],
+      ['Product Name (English)*', 'Product Name'],
+      ['Unit Price (CNY) [internal]', 'Price per Unit (CNY)'],
+      ['Image URL(s) or Asset ID(s)', 'Product Image'],
+      ['Carton Quantity (pcs)', 'Packing Quantity (PCS)'],
       ['Case Dimensions (L×W×H cm)', 'Carton Length / Width / Height'],
       ['Gross Weight (KG)', 'Carton Gross Weight (kg)'],
     ]);
@@ -162,145 +134,32 @@ export class ProductBulkImportService {
     actor: AuthenticatedActor,
     requestId: string,
   ): Promise<ProductImportValidationResult> {
-    const parser = new ProductBulkImportParser({
-      maxBytes: Math.min(PRODUCT_IMPORT_LIMITS.maxBytes, this.env.UPLOAD_MAX_BYTES),
-      maxRows: PRODUCT_IMPORT_LIMITS.maxRows,
-      maxImageBytes: this.env.UPLOAD_MAX_BYTES,
-      maxPixels: this.env.UPLOAD_MAX_PIXELS,
-      maxTotalUncompressedBytes: PRODUCT_IMPORT_LIMITS.maxTotalUncompressedBytes,
-    });
-
-    let parsed: Awaited<ReturnType<ProductBulkImportParser['parse']>>;
     try {
-      parsed = await parser.parse(file.buffer);
-    } catch (error) {
-      if (!(error instanceof ImportRowError)) throw error;
-      const result = this.invalidResult(parsedPlaceholder(settings.templateVersion), error.issues);
-      await this.auditValidation(actor.id, requestId, result, null);
-      return result;
-    }
-
-    const configuration = await this.validateConfiguration(settings);
-    const errors = [...parsed.errors, ...configuration.issues];
-    if (settings.templateVersion !== parsed.templateVersion) {
-      errors.push(
-        this.issue(
-          1,
-          null,
-          'templateVersion',
-          ERROR_CODES.importHeaderInvalid,
-          `products.import.errors.headerInvalid.${settings.templateVersion}`,
-        ),
+      const outcome = await validateAndStageProductImport(
+        {
+          buffer: file.buffer,
+          settings,
+          actor: {
+            id: actor.id,
+            canUpdateCost: this.has(actor, 'product.cost.update'),
+            canPublish: this.has(actor, 'product.publish'),
+          },
+          maxImageBytes: Math.min(PRODUCT_IMPORT_LIMITS.maxImageBytes, this.env.UPLOAD_MAX_BYTES),
+          maxPixels: this.env.UPLOAD_MAX_PIXELS,
+        },
+        {
+          prisma: this.prisma,
+          storage: this.storage,
+        },
       );
-    }
-    const rows = parsed.rows.map((row) => ({ ...row }));
-    const rowErrors = new Map<number, ProductImportIssue[]>();
-    const pushError = (rowNumber: number, issue: ProductImportIssue) => {
-      const current = rowErrors.get(rowNumber) ?? [];
-      current.push(issue);
-      rowErrors.set(rowNumber, current);
-      errors.push(issue);
-    };
-
-    if (rows.some((row) => row.priceCny !== null) && !this.has(actor, 'product.cost.update')) {
-      for (const row of rows.filter((candidate) => candidate.priceCny !== null)) {
-        pushError(
-          row.rowNumber,
-          this.issue(
-            row.rowNumber,
-            row.sku || null,
-            'priceCny',
-            ERROR_CODES.importPricePermissionDenied,
-            'products.import.errors.pricePermission',
-          ),
-        );
+      await this.auditValidation(actor.id, requestId, outcome.result, outcome.fileSha256);
+      return outcome.result;
+    } catch (error) {
+      if (error instanceof ProductImportProcessingError) {
+        throw new ApiError(error.code, error.message);
       }
+      throw error;
     }
-    if (settings.publishStatus === 'published' && !this.has(actor, 'product.publish')) {
-      for (const row of rows) {
-        pushError(
-          row.rowNumber,
-          this.issue(
-            row.rowNumber,
-            row.sku || null,
-            'publishStatus',
-            ERROR_CODES.importPublishReadinessFailed,
-            'products.import.errors.publishPermission',
-          ),
-        );
-      }
-    }
-
-    await this.validateProductRows(rows, settings.publishStatus, pushError);
-    await this.resolveSlugs(rows, pushError);
-    const issues = dedupeIssues(errors);
-    const summary = summarize(rows, issues, parsed.imageCount);
-    if (issues.some((issue) => issue.severity === 'error')) {
-      const result: ProductImportValidationResult = {
-        validationId: null,
-        templateVersion: parsed.templateVersion,
-        summary,
-        errors: issues.filter((issue) => issue.severity === 'error'),
-        warnings: issues.filter((issue) => issue.severity === 'warning'),
-        expiresAt: null,
-      };
-      await this.auditValidation(actor.id, requestId, result, parsed.fileSha256);
-      return result;
-    }
-
-    const token = randomBytes(32).toString('base64url');
-    const tokenHash = sha256(token);
-    const configHash = this.configurationHash(parsed.fileSha256, configuration);
-    const payload: StoredImportPayload = {
-      configuration,
-      rows: rows.map((row) => ({
-        ...row,
-        images: row.images.map(({ bytes, ...image }) => ({
-          ...image,
-          bytesBase64: bytes.toString('base64'),
-        })),
-      })),
-    };
-    const expiresAt = new Date(Date.now() + PRODUCT_IMPORT_LIMITS.validationTtlSeconds * 1000);
-    await this.prisma.productImportValidation.deleteMany({
-      where: { expiresAt: { lt: new Date() } },
-    });
-    const validation = await this.prisma.productImportValidation.create({
-      data: {
-        tokenHash,
-        actorId: actor.id,
-        fileSha256: parsed.fileSha256,
-        templateVersion: parsed.templateVersion,
-        configHash,
-        payload: payload as unknown as Prisma.InputJsonValue,
-        rowCount: rows.length,
-        imageCount: parsed.imageCount,
-        expiresAt,
-      },
-      select: { id: true },
-    });
-    const result: ProductImportValidationResult = {
-      validationId: token,
-      templateVersion: parsed.templateVersion,
-      summary,
-      errors: [],
-      warnings: [],
-      expiresAt: expiresAt.toISOString(),
-    };
-    await this.audit.record({
-      actorId: actor.id,
-      action: 'product_import.validation_passed',
-      entityType: 'product_import_validation',
-      entityId: validation.id,
-      requestId,
-      metadata: {
-        templateVersion: parsed.templateVersion,
-        fileSha256: parsed.fileSha256,
-        rowCount: rows.length,
-        imageCount: parsed.imageCount,
-      },
-    });
-    return result;
   }
 
   async commit(
@@ -338,7 +197,7 @@ export class ProductBulkImportService {
     if (
       !payload?.configuration?.settings ||
       !Array.isArray(payload.rows) ||
-      validation.configHash !== this.configurationHash(validation.fileSha256, payload.configuration)
+      validation.configHash !== configurationHash(validation.fileSha256, payload.configuration)
     ) {
       throw new ApiError(
         ERROR_CODES.importValidationConfigMismatch,
@@ -378,39 +237,9 @@ export class ProductBulkImportService {
     }
     await this.assertRowsStillUnique(payload.rows);
 
-    const staged: StagedAsset[] = [];
-    try {
-      for (let rowIndex = 0; rowIndex < payload.rows.length; rowIndex += 1) {
-        const row = payload.rows[rowIndex]!;
-        for (let imageIndex = 0; imageIndex < row.images.length; imageIndex += 1) {
-          const image = row.images[imageIndex]!;
-          const uploaded = await this.files.upload(
-            {
-              purpose: 'product-image',
-              originalName: image.mediaName,
-              declaredMime: image.mimeType,
-              buffer: Buffer.from(image.bytesBase64, 'base64'),
-            },
-            actor.id,
-            requestId,
-          );
-          staged.push({
-            rowIndex,
-            imageIndex,
-            fileAssetId: uploaded.id,
-            storageKey: uploaded.storageKey,
-            width: uploaded.width,
-            height: uploaded.height,
-            sizeBytes: uploaded.sizeBytes,
-            sha256: image.sha256,
-          });
-        }
-      }
-    } catch (error) {
-      await this.cleanupStaged(staged, actor.id, requestId);
-      throw error;
-    }
-
+    // Images were written to object storage during validation. Commit only
+    // verifies ownership/metadata; it never decodes Base64 or writes bytes to PG.
+    const staged = await this.resolveStagedAssets(payload, actor.id);
     let createdCount = 0;
     try {
       const completedAt = await this.prisma.$transaction(async (transaction) => {
@@ -499,6 +328,20 @@ export class ProductBulkImportService {
               },
             },
           });
+          for (const asset of rowAssets) {
+            await transaction.outboxEvent.create({
+              data: {
+                eventType: 'image-derivatives',
+                payload: {
+                  fileAssetId: asset.fileAssetId,
+                  storageKey: asset.storageKey,
+                  widths: this.env.imageDerivativeWidths,
+                } as Prisma.InputJsonValue,
+                status: 'QUEUED',
+                idempotencyKey: `image-derivatives:${asset.fileAssetId}`,
+              },
+            });
+          }
           createdCount += 1;
         }
 
@@ -546,6 +389,47 @@ export class ProductBulkImportService {
         { status: 409 },
       );
     }
+  }
+
+  private async resolveStagedAssets(
+    payload: StoredImportPayload,
+    actorId: string,
+  ): Promise<StagedAsset[]> {
+    const imageRows = payload.rows.flatMap((row, rowIndex) =>
+      row.images.map((image, imageIndex) => ({ image, rowIndex, imageIndex })),
+    );
+    if (imageRows.length === 0) return [];
+    const assets = await this.prisma.fileAsset.findMany({
+      where: { id: { in: [...new Set(imageRows.map((row) => row.image.fileAssetId))] } },
+    });
+    const byId = new Map(assets.map((asset) => [asset.id, asset]));
+    return imageRows.map(({ image, rowIndex, imageIndex }) => {
+      const asset = byId.get(image.fileAssetId);
+      if (
+        !asset ||
+        asset.uploadedById !== actorId ||
+        asset.purpose !== 'product-image' ||
+        asset.storageKey !== image.storageKey ||
+        !asset.isPublic ||
+        !['processing', 'ready'].includes(asset.status) ||
+        Number(asset.sizeBytes) !== image.sizeBytes ||
+        (image.sha256 !== null && asset.sha256 !== null && asset.sha256 !== image.sha256)
+      ) {
+        throw new ApiError(
+          ERROR_CODES.importProcessingFailed,
+          'A staged product image is missing or no longer belongs to this validation.',
+        );
+      }
+      return {
+        ...image,
+        rowIndex,
+        imageIndex,
+        width: asset.width ?? image.width,
+        height: asset.height ?? image.height,
+        sizeBytes: Number(asset.sizeBytes),
+        sha256: asset.sha256 ?? image.sha256,
+      };
+    });
   }
 
   private async validateConfiguration(
@@ -627,126 +511,7 @@ export class ProductBulkImportService {
     };
   }
 
-  private async validateProductRows(
-    rows: ParsedProductRow[],
-    publishStatus: ProductImportSettings['publishStatus'],
-    pushError: (rowNumber: number, issue: ProductImportIssue) => void,
-  ): Promise<void> {
-    for (const row of rows) {
-      if (row.slug) row.slug = row.slug.toLowerCase();
-    }
-    const skuValues = [...new Set(rows.map((row) => row.sku).filter(Boolean))];
-    const explicitSlugs = [
-      ...new Set(rows.map((row) => row.slug).filter((slug): slug is string => Boolean(slug))),
-    ];
-    const [existingSkus, existingSlugs] = await Promise.all([
-      this.prisma.product.findMany({
-        where: { sku: { in: skuValues } },
-        select: { sku: true },
-      }),
-      explicitSlugs.length > 0
-        ? this.prisma.product.findMany({
-            where: { slug: { in: explicitSlugs } },
-            select: { slug: true },
-          })
-        : Promise.resolve([]),
-    ]);
-    const usedSkus = new Set(existingSkus.map((row) => row.sku));
-    const usedSlugs = new Set(existingSlugs.map((row) => row.slug));
-
-    for (const row of rows) {
-      if (row.sku && usedSkus.has(row.sku)) {
-        pushError(
-          row.rowNumber,
-          this.issue(
-            row.rowNumber,
-            row.sku,
-            'sku',
-            ERROR_CODES.importSkuAlreadyExists,
-            'products.import.errors.skuExists',
-          ),
-        );
-      }
-      if (row.slug && (!SLUG_PATTERN.test(row.slug) || row.slug.length > 180)) {
-        pushError(
-          row.rowNumber,
-          this.issue(
-            row.rowNumber,
-            row.sku || null,
-            'slug',
-            ERROR_CODES.importFieldInvalid,
-            'products.import.errors.slug',
-          ),
-        );
-      } else if (row.slug && usedSlugs.has(row.slug)) {
-        pushError(
-          row.rowNumber,
-          this.issue(
-            row.rowNumber,
-            row.sku || null,
-            'slug',
-            ERROR_CODES.importSlugDuplicate,
-            'products.import.errors.slugExists',
-          ),
-        );
-      }
-      if (publishStatus === 'published' && row.images.length === 0) {
-        pushError(
-          row.rowNumber,
-          this.issue(
-            row.rowNumber,
-            row.sku || null,
-            'publishStatus',
-            ERROR_CODES.importPublishReadinessFailed,
-            'products.import.errors.publishImage',
-          ),
-        );
-      }
-    }
-  }
-
-  private async resolveSlugs(
-    rows: ParsedProductRow[],
-    pushError: (rowNumber: number, issue: ProductImportIssue) => void,
-  ): Promise<void> {
-    const reserved = new Set(
-      rows.map((row) => row.slug).filter((slug): slug is string => Boolean(slug)),
-    );
-    for (const row of rows) {
-      if (row.slug) continue;
-      let candidate: string | null = null;
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        const generated = buildProductSlugCandidate(row.nameEn || row.sku, 'name-random');
-        if (!reserved.has(generated)) {
-          const exists = await this.prisma.product.findUnique({
-            where: { slug: generated },
-            select: { id: true },
-          });
-          if (!exists) {
-            candidate = generated;
-            break;
-          }
-        }
-      }
-      if (!candidate) {
-        pushError(
-          row.rowNumber,
-          this.issue(
-            row.rowNumber,
-            row.sku || null,
-            'slug',
-            ERROR_CODES.importSlugDuplicate,
-            'products.import.errors.slugGeneration',
-          ),
-        );
-        continue;
-      }
-      row.slug = candidate;
-      reserved.add(candidate);
-    }
-  }
-
-  private async assertRowsStillUnique(rows: StoredProductRow[]): Promise<void> {
+  private async assertRowsStillUnique(rows: StoredImportPayload['rows']): Promise<void> {
     const skus = rows.map((row) => row.sku);
     const slugs = rows.map((row) => row.slug).filter((slug): slug is string => Boolean(slug));
     if (new Set(skus).size !== skus.length || new Set(slugs).size !== slugs.length) {
@@ -779,47 +544,6 @@ export class ProductBulkImportService {
     );
   }
 
-  private configurationHash(fileSha256: string, configuration: StoredImportConfiguration): string {
-    return sha256(
-      JSON.stringify({
-        fileSha256,
-        categoryId: configuration.settings.categoryId,
-        publishStatus: configuration.settings.publishStatus,
-        lifecycleStatus: configuration.settings.lifecycleStatus,
-        tagIds: [...configuration.settings.tagIds].sort(),
-        templateVersion: configuration.settings.templateVersion,
-        lifecycleStatusItemId: configuration.lifecycleStatusItemId,
-        publishStatusItemId: configuration.publishStatusItemId,
-        tagCodes: [...configuration.tagCodes].sort(),
-      }),
-    );
-  }
-
-  private invalidResult(
-    templateVersion: ProductImportSettings['templateVersion'],
-    errors: ProductImportIssue[],
-  ): ProductImportValidationResult {
-    const invalidRows = new Set(
-      errors
-        .map((issue) => issue.rowNumber)
-        .filter((row): row is number => typeof row === 'number'),
-    ).size;
-    return {
-      validationId: null,
-      templateVersion,
-      summary: {
-        totalRows: invalidRows,
-        validRows: 0,
-        invalidRows,
-        warningCount: 0,
-        imageCount: 0,
-      },
-      errors,
-      warnings: [],
-      expiresAt: null,
-    };
-  }
-
   private async auditValidation(
     actorId: string,
     requestId: string,
@@ -833,6 +557,7 @@ export class ProductBulkImportService {
           ? 'product_import.validation_failed'
           : 'product_import.validation_passed',
       entityType: 'product_import_validation',
+      entityId: result.validationId ?? undefined,
       requestId,
       metadata: {
         templateVersion: result.templateVersion,
@@ -858,41 +583,6 @@ export class ProductBulkImportService {
   ): ProductImportIssue {
     return { rowNumber, sku, field, code, messageKey, severity: 'error' };
   }
-}
-
-function summarize(
-  rows: ParsedProductRow[],
-  issues: ProductImportIssue[],
-  imageCount: number,
-): ProductImportSummary {
-  const invalidRows = new Set(
-    issues
-      .filter((issue) => issue.severity === 'error' && issue.rowNumber !== null)
-      .map((issue) => issue.rowNumber as number),
-  );
-  return {
-    totalRows: rows.length,
-    validRows: rows.length - invalidRows.size,
-    invalidRows: invalidRows.size,
-    warningCount: issues.filter((issue) => issue.severity === 'warning').length,
-    imageCount,
-  };
-}
-
-function parsedPlaceholder(
-  templateVersion: ProductImportSettings['templateVersion'],
-): ProductImportSettings['templateVersion'] {
-  return templateVersion;
-}
-
-function dedupeIssues(issues: ProductImportIssue[]): ProductImportIssue[] {
-  const seen = new Set<string>();
-  return issues.filter((issue) => {
-    const key = `${issue.rowNumber}:${issue.field}:${issue.code}:${issue.messageKey}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
 }
 
 function sha256(value: string): string {

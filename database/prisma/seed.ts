@@ -534,7 +534,7 @@ async function seedMenus(
 
   // Full bootstrap can disable stale seeded entries. Production reference sync
   // leaves administrator-created/custom menu entries untouched.
-  let disabledCodes: string[] = [];
+  const disabledCodes: string[] = [];
   if (options.disableStaleMenus !== false) {
     const stale = await prisma.menu.findMany({ select: { id: true, code: true, enabled: true } });
     const orphans = stale.filter((menu) => !seededCodes.has(menu.code) && menu.enabled);

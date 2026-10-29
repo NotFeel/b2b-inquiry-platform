@@ -5,6 +5,7 @@ import { FilesModule } from '../files/files.module';
 import { FileOperationsController } from './file-operations.controller';
 import { ProductBulkImportController } from './product-bulk-import.controller';
 import { ProductBulkImportService } from './product-bulk-import.service';
+import { ProductImportUploadService } from './product-import-upload.service';
 import { ProductImagesService } from './product-images.service';
 import { ProductsController } from './products.controller';
 import { ProductsService } from './products.service';
@@ -24,6 +25,7 @@ import { PublicProductsController } from './public-products.controller';
     ProductsService,
     ProductImagesService,
     ProductBulkImportService,
+    ProductImportUploadService,
     PublicCatalogService,
   ],
   exports: [ProductsService, PublicCatalogService],

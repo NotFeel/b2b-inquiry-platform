@@ -10,6 +10,7 @@ import {
   MENU_ICON_NAMES,
   PI_STATUSES,
   PRODUCT_IMAGE_LIMITS,
+  PRODUCT_IMPORT_LIMITS,
   PRODUCT_LIFECYCLE_STATUSES,
   PRODUCT_SLUG_STRATEGIES,
   PUBLISH_STATUSES,
@@ -612,6 +613,17 @@ export const productImportSettingsSchema = z.object({
   templateVersion: z.enum(['optimized-v1', 'wps-price-list-v1']),
 });
 export type ProductImportSettingsInput = z.infer<typeof productImportSettingsSchema>;
+
+export const productImportUploadInitSchema = productImportSettingsSchema.extend({
+  originalName: z
+    .string()
+    .trim()
+    .min(1)
+    .max(255)
+    .refine((value) => value.toLowerCase().endsWith('.xlsx'), 'Only .xlsx workbooks are accepted.'),
+  sizeBytes: z.coerce.number().int().positive().max(PRODUCT_IMPORT_LIMITS.maxBytes),
+});
+export type ProductImportUploadInitInput = z.infer<typeof productImportUploadInitSchema>;
 
 export const productImportCommitSchema = z.object({
   validationId: z.string().trim().min(32).max(200),

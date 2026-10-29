@@ -3,8 +3,8 @@
 
 > 项目：NotFeel/b2b-inquiry-platform  
 > 目标分支：main  
-> 状态：待实现规范，不代表功能已开发或测试通过。  
-> 检查对象：用户上传的 凡士林.xlsx（工作表 Price List）。
+> 状态：已实现分块上传、异步预检、图片 staging 与原子提交；生产部署仍需按本文完成容量和存储验收。
+> 检查对象：用户上传的 凡士林.xlsx（优化模板 Products 工作表）。
 
 ## 0. AI 开发助手执行要求
 
@@ -118,7 +118,9 @@ XLSX 解析和字段校验在事务外完成。commit 阶段重新检查关键�
 如果源工作簿的图片行与商品数据行能按同一行唯一匹配，可自动关联；如果存在图片覆盖多行、多个候选图片、缺失商品行或重复关联，不得按图片顺序猜测，整批预检失败并列出 Excel 行号。
 ### 3.3 Excel 安全限制
 
-- 仅支持 .xlsx；建议初始上限 10 MB、1,000 条非空数据行，限制应集中为可配置项并经压测确认。
+- 仅支持 .xlsx；当前单份工作簿上限 300 MB、1,000 条非空数据行，目标支持一次导入约 200 MB 文件。
+- 浏览器按服务端下发的 8 MB 块大小顺序上传。单个 HTTP 请求因此低于 Admin/Next 的 10 MB 代理限制；旧整文件 `/validate` 端点仅保留给小文件兼容。
+- 单张图片硬上限 10 MB、每个商品最多 20 张、XLSX 解压后总大小上限 1 GB。`UPLOAD_MAX_BYTES` 只限制单张图片，不限制整份 Excel。
 - 校验真实工作簿结构，不仅信任扩展名或浏览器 MIME。
 - 只读取 Products sheet；表头依模板版本严格匹配。缺列、重复表头、未允许的多余列必须报错。
 - 明确检测 ExcelJS 公式/sharedFormula 类型：默认所有公式单元格拒绝；仅 Unit Price (CNY) [internal] 允许专用安全算术解析器处理白名单表达式。禁止信任缓存结果，禁止执行任意公式。
@@ -126,6 +128,14 @@ XLSX 解析和字段校验在事务外完成。commit 阶段重新检查关键�
 - 过滤全空行；只有标题、没有数据行时拒绝；错误必须保留真实 Excel 行号。
 - 类型、长度、控制字符、数值范围和精度均在服务端验证。价格、描述等敏感值不能写入普通日志或错误报表。
 - 解析结束后按策略清理临时文件。
+
+### 3.4 存储边界与 200 MB 方案
+
+- `STORAGE_DRIVER=local` 时，API 和 Worker 都把相对 `STORAGE_LOCAL_ROOT` 按仓库根目录解析；默认实际目录为 `<repo>/.data/uploads`。工作簿分块位于 `product-import/<uploadId>/chunks/`，产品原图位于 `product-image/`。
+- PostgreSQL 只保存 `FileAsset`、`ProductImage`、`ProductImportUpload`、`ProductImportChunk` 和验证结果元数据。图片字节、Base64、Node `Buffer` 序列化内容不得进入任何 JSONB；validation payload 只允许 storageKey、大小、尺寸、MIME、SHA-256 和 fileAssetId。
+- 本地导入 200 MB 文件时，建议 Worker 并发为 1、Node heap 2–4 GB，并为 `.data` 预留至少 2 GB 空间。Worker 合并分块只分配一份整文件 Buffer；ExcelJS 解析、图片解码和 staging 仍需额外内存，不能仅按“文件大小的两倍”做容量规划。
+- `.data` 只适用于单机开发或单实例自托管。生产 API/Worker 多实例、Serverless/Wrangler 或重启后仍需保留图片时，必须使用共享 S3/R2 私有桶；不同实例的本地磁盘互不可见，不能作为生产对象存储。
+- 上传会话默认 1 小时过期，验证 token 默认 10 分钟过期。Worker 成功或失败后删除分块；过期 upload、validation 和未被商品引用的 staging 图片由 cleanup job 幂等清理。
 
 ## 4. Admin UI/UX 设计
 
@@ -153,7 +163,7 @@ XLSX 解析和字段校验在事务外完成。commit 阶段重新检查关键�
       Selected file name / size / Replace / Remove
 
     [3. Validation]
-      [Validate file]
+      [Upload & validate]
       Total rows | Valid rows | Invalid rows | Warnings
       Row | SKU | Field | Error code | How to fix
       [Download full error report]
@@ -177,7 +187,7 @@ XLSX 解析和字段校验在事务外完成。commit 阶段重新检查关键�
 
 ### 4.4 状态机与验证 token
 
-状态机：EMPTY → FILE_SELECTED → VALIDATING → VALIDATION_FAILED 或 VALIDATION_PASSED → IMPORTING → IMPORT_SUCCEEDED 或 IMPORT_FAILED。
+状态机：EMPTY → FILE_SELECTED → UPLOADING → QUEUED → VALIDATING → VALIDATION_FAILED 或 VALIDATION_PASSED → IMPORTING → IMPORT_SUCCEEDED 或 IMPORT_FAILED。上传中断可重试单个块；用户取消时调用 cancel API 并清理已上传块。
 
 服务端创建短期、一次性 validationId，绑定当前用户、文件 SHA-256、模板版本、Category/Status/Lifecycle/Tags 和规范化结果摘要；建议 10 分钟过期。仅全量校验通过才生成可 commit 的 token。提交前核对 token 归属、时效和配置摘要。生产多实例不得只靠内存 Map；应使用数据库/可靠共享存储。任何配置变更须重新预检。
 
@@ -195,9 +205,33 @@ GET /admin/products/bulk-import/template
 
 复用现有分类树、字典和标签接口，不新建重复选项 API。所有 ID/code 在服务端再次确认存在、启用及操作者权限。
 
-### 5.3 预检
+### 5.3 分块上传
 
-POST /admin/products/bulk-import/validate，multipart/form-data 包含 file、categoryId、publishStatus、lifecycleStatus、tagIds 和 templateVersion。
+POST /admin/products/bulk-import/uploads
+
+请求 JSON 包含 originalName、sizeBytes、categoryId、publishStatus、lifecycleStatus、tagIds 和 templateVersion。响应返回 uploadId、服务端 chunkSize（8 MB）、chunkCount 和 expiresAt。所有端点要求 product.import，并校验上传归属当前操作者。
+
+PUT /admin/products/bulk-import/uploads/:uploadId/chunks/:index
+
+multipart/form-data 只包含当前 file 块。服务端校验索引、期望长度和 SHA-256，对象写入私有 `product-import/<uploadId>/chunks/`。数据库 chunk 行写入失败时必须删除刚写入的对象，浏览器可安全重试同一索引。
+
+POST /admin/products/bulk-import/uploads/:uploadId/complete
+
+核对块数量、索引唯一性和声明总字节数，然后在一个事务中把上传状态改为 QUEUED 并写入 `product-import-validate` outbox 任务。该接口返回 202。
+
+GET /admin/products/bulk-import/uploads/:uploadId
+
+返回 UPLOADING/QUEUED/VALIDATING/VALIDATED/INVALID/FAILED/EXPIRED/CANCELLED 状态、上传进度、错误码及验证摘要。Admin 在上传完成后轮询此端点。
+
+POST /admin/products/bulk-import/uploads/:uploadId/cancel
+
+取消 UPLOADING/QUEUED/FAILED 会话并清理已上传分块；验证已经开始后返回冲突。
+
+### 5.4 异步预检
+
+Worker 领取任务后按索引读取所有块，逐块复核长度和 SHA-256，再合并为一份工作簿 Buffer。任何块缺失或不匹配都进入 FAILED，不继续解析。成功时 Worker 在同一个数据库事务中写入 FileAsset 元数据和短时 validation token；validation JSONB 不含图片字节。
+
+兼容端点：POST /admin/products/bulk-import/validate 仅用于小于 8 MB 的旧客户端和小文件 smoke test，multipart/form-data 包含 file、categoryId、publishStatus、lifecycleStatus、tagIds 和 templateVersion。
 
 成功响应建议：
 
@@ -218,7 +252,7 @@ POST /admin/products/bulk-import/validate，multipart/form-data 包含 file、ca
 
 预检只校验，不写产品。任意错误时不得生成可 commit 的 token。错误对象至少含 rowNumber、sku（如可读）、field、code、messageKey、severity，不返回价格原值。错误多时应分页并提供完整报告下载。
 
-### 5.4 提交
+### 5.5 提交
 
 POST /admin/products/bulk-import/commit，请求只包含 validationId，不接受前端任意产品 JSON 数组。
 
@@ -229,11 +263,11 @@ POST /admin/products/bulk-import/commit，请求只包含 validationId，不接�
 - 重复提交不得重复插入；返回第一次结果或 409 IMPORT_ALREADY_CONSUMED。
 - 返回 batchId（若有）、createdCount、completedAt。
 
-### 5.5 错误报告
+### 5.6 错误报告
 
 建议 GET /admin/products/bulk-import/validation/:validationId/errors.csv。必须验证操作者归属/权限和报告过期时间。CSV 做正确转义并防公式注入。只导出行号、SKU（按权限策略）、字段、错误码、修复提示等必要内容。
 
-### 5.6 错误码建议
+### 5.7 错误码建议
 
 IMPORT_FILE_REQUIRED、IMPORT_FILE_TYPE_INVALID、IMPORT_FILE_TOO_LARGE、IMPORT_ROW_LIMIT_EXCEEDED、IMPORT_WORKSHEET_MISSING、IMPORT_HEADER_INVALID、IMPORT_DUPLICATE_HEADER、IMPORT_FORMULA_NOT_ALLOWED、IMPORT_NO_DATA_ROWS、IMPORT_REQUIRED_FIELD_MISSING、IMPORT_FIELD_INVALID、IMPORT_DUPLICATE_SKU_IN_FILE、IMPORT_SKU_ALREADY_EXISTS、IMPORT_SLUG_DUPLICATE、IMPORT_CATEGORY_INVALID、IMPORT_STATUS_INVALID、IMPORT_LIFECYCLE_INVALID、IMPORT_TAG_INVALID、IMPORT_PRICE_PERMISSION_DENIED、IMPORT_PUBLISH_READINESS_FAILED、IMPORT_VALIDATION_EXPIRED、IMPORT_VALIDATION_CONFIG_MISMATCH、IMPORT_ALREADY_CONSUMED、IMPORT_ATOMIC_COMMIT_FAILED。
 
@@ -244,10 +278,11 @@ IMPORT_FILE_REQUIRED、IMPORT_FILE_TYPE_INVALID、IMPORT_FILE_TOO_LARGE、IMPORT
 ### 6.1 解析与安全
 
 - 使用 lockfile 当前的 ExcelJS 版本，不随意升级。
-- 校验文件大小、真实工作簿结构、SHA-256；上传文件存放于受限临时路径或私有对象并设置处理超时。
+- 分块阶段校验每块长度和 SHA-256；Worker 合并后再次校验完整工作簿大小、结构、SHA-256。工作簿分块存放在私有对象存储，不写入 PostgreSQL。
 - 只解析 Products 工作表，严格匹配模板版本的表头；拒绝缺列、重复列和未知列。
 - 显式检测 formula/sharedFormula：除内部价格列的白名单算术表达式外，公式均拒绝；不信任缓存值，不执行任意公式。
-- 禁止把 DISPIMG 当 URL 或信任公式缓存。允许按 WPS OOXML 结构解析 xl/cellimages.xml 与对应 .rels，仅提取其引用的嵌入媒体文件；拒绝宏、外部链接及其他活动内容。
+- 禁止把 DISPIMG 当 URL 或信任公式缓存。允许按 WPS OOXML 结构解析 xl/cellimages.xml 与对应 .rels，仅提取其引用的嵌入媒体文件；拒绝宏、外部链接及其他活动内容。WPS 删除单元格图片后可能在 `xl/_rels/cellimages.xml.rels` 留下 `Target="NULL" TargetMode="External"` 占位关系，只允许忽略该文件中的 `NULL` 图片类型占位；若 DISPIMG 仍引用该关系、目标为真实 URL，或出现在其他 `.rels` 文件中，整批失败。
+- XLSX 包结构必须从 ZIP 中央目录检查 `[Content_Types].xml` 与 `xl/workbook.xml`，不能只扫描文件头；大图片工作簿的内容类型条目可能位于数 MB 偏移之后。Worker 随后仍以 CRC 校验读取实际 ZIP 条目。
 - 只统计非空产品行，保留真实 Excel 行号；空表或只有标题拒绝。
 - 限制字段长度、解析耗时、内存、行数和临时存储量；扩展名/MIME 不能作为唯一判断。
 
@@ -346,6 +381,9 @@ API:
 9. 无 product.import/create/publish 权限调用端点：401/403，无数据变化。
 10. 写入成功和失败都有脱敏审计。
 11. 公开商品 API、SSR、SEO、缓存不包含 priceCny/price_cny 或原始价格值。
+12. 200 MB 工作簿按 8 MB 分块完成上传；单块失败可重试，完整 SHA-256 不匹配时 Worker 拒绝解析。
+13. validation JSONB 不含 bytes、Base64 或 Node Buffer 序列化内容，且两张 凡士林 图片分别落到两条商品行。
+14. 第二行 SKU 在预检后发生竞争冲突时，首行商品也必须回滚，最终新增产品数为 0。
 
 ### 9.3 UI/E2E
 
@@ -365,40 +403,48 @@ API:
 
 ## 10. 部署和回滚
 
-- 只新增 UI/API 与 seed 且不增数据库模型时，可能不需要 Prisma migration；仍需确认 seed、API、UI 发布顺序。
-- 若新增导入批次/验证 token 模型，则必须修改 schema、提交 migration、测试迁移并定义回滚方案。
-- 发布建议：兼容迁移（若需要）→ API → Admin → seed 权限/菜单 → smoke test。
+- 本次新增 `product_import_uploads` 和 `product_import_chunks` additive migration。按兼容迁移 → API → Worker → Admin → seed 权限/菜单 → smoke test 发布；先确认 Worker 正在处理 outbox，否则上传会长期停留在 QUEUED。
+- 回滚应用版本时可保留两张新增表，不应在仍可能有上传文件时直接删表认作回滚。若必须撤销 schema，先停止上传、等待任务结束并确认表内没有需要排查的失败记录，再分别 DROP `product_import_chunks`、`product_import_uploads`；删除表不会自动删除对象存储中的分块，必须另行按 `product-import/` 前缀审计清理。
 - 回滚时不要自动删除批量导入后已被编辑或引用的真实产品；如需补偿，按 batch/audit 记录由业务确认后操作。
-- 临时文件、验证 token 和报告需有保留期限，清理失败应可重试并留审计。
+- 上传会话 1 小时、验证 token 10 分钟；cleanup job 必须处理过期分块、过期 validation 和未被商品引用的 staging 图片，失败时保留可重试状态。
+- local driver 仅用于单机开发/单实例自托管。生产多实例必须使用共享 S3/R2；不要把 `.data/uploads` 做成跨容器临时目录，也不要在重启时清空。
 
 ## 11. 分期任务
 
 P0 代码核查：
-- [ ] 阅读技能、商品创建/编辑/发布/图片业务逻辑与测试。
-- [ ] 检查 contracts、Zod schema、错误码、权限、菜单 seed 和翻译。
-- [ ] 锁定模板版本与字段契约。
-- [ ] 确认箱装数量与价格公式语义。
+- [x] 阅读技能、商品创建/编辑/发布/图片业务逻辑与测试。
+- [x] 检查 contracts、Zod schema、错误码、权限、菜单 seed 和翻译。
+- [x] 锁定模板版本与字段契约。
+- [x] 确认箱装数量与价格公式语义。
 
 P1 后端：
-- [ ] XLSX 模板下载/版本校验。
-- [ ] 解析标准 Excel 图片与 WPS DISPIMG 图片；价格列安全算术解析；其他公式拒绝；实施文件/行数限制。
-- [ ] 全量预检与错误报告。
-- [ ] 类别/状态/标签/价格权限/发布 readiness 校验。
-- [ ] 短时单次 validationId。
-- [ ] 一个事务原子写入、并发冲突全回滚。
-- [ ] 审计和临时文件清理。
+- [x] XLSX 模板下载/版本校验。
+- [x] 解析标准 Excel 图片与 WPS DISPIMG 图片；价格列安全算术解析；其他公式拒绝；实施文件/行数限制。
+- [x] 300 MB 文件 / 8 MB 分块上传、异步预检、分块清理与完整 SHA-256 校验。
+- [x] 类别/状态/标签/价格权限/发布 readiness 校验。
+- [x] 短时单次 validationId。
+- [x] 一个事务原子写入、并发冲突全回滚。
+- [x] 审计和临时文件清理。
 
 P2 管理后台：
-- [ ] 新增菜单、权限、双语翻译。
-- [ ] 固定字段选择、模板下载、拖放上传、验证摘要、错误表和报告下载。
-- [ ] Loading/error/empty/disabled、二次确认、防重复提交。
-- [ ] 响应式和可访问性。
+- [x] 新增菜单、权限、双语翻译。
+- [x] 固定字段选择、模板下载、拖放上传、验证摘要、错误表和报告下载。
+- [x] Loading/error/empty/disabled、二次确认、防重复提交。
+- [x] 响应式和可访问性。
 
 P3 回归：
-- [ ] 权限/seed/审计检查。
-- [ ] 价格防泄漏检查。
-- [ ] 单元、集成、E2E。
-- [ ] 实际运行 lint/typecheck/test/build 并记录结果。
+- [x] 权限/seed/审计检查。
+- [x] 价格防泄漏检查。
+- [ ] E2E 与真实 200 MB 工作簿容量压测；单元和集成测试已通过。
+- [x] 实际运行 lint/typecheck/test/build 并记录结果。
+
+本次验收记录（2026-10-29）：
+
+- API 30 个测试文件 / 207 项，Admin 15 个测试文件 / 151 项，Worker 8 个测试文件 / 17 项；Storefront、contracts、product-import 测试通过。
+- 隔离库 `b2b_import_test` 真实导入 `docs/凡士林.xlsx` 通过：提取 2 张 WPS 图片并分别关联 2 条 SKU；两行合法时新增 2 个商品和 2 张图片，第二行错误时新增商品数为 0。
+- validation JSONB 为 1,508 bytes，不含 `bytes`、Base64 或 Buffer 序列化内容；图片真实存在于隔离本地对象目录。
+- 2026-10-29 修改版 `凡士林.xlsx` 回归：34,860,490 bytes 的合法工作簿通过 ZIP 中央目录校验；WPS `NULL` 残留关系被限定兼容，真实外部 URL 与引用 `NULL` 占位图片仍被拒绝；两张图片继续关联前两条 SKU。
+- `pnpm test`、`pnpm lint`、`pnpm typecheck`、`pnpm build` 均通过。构建在静态生成阶段记录过受沙箱网络限制的 `fetch failed EPERM` 日志，但进程退出码为 0。
 
 ## 12. Definition of Done
 
@@ -424,5 +470,5 @@ P3 回归：
 2. Category/Publish Status/Lifecycle/Default Tags 是任务级字段，适用于全部行。
 3. 图片支持 WPS DISPIMG 与标准浮动图片；如果无法确定图片对应商品行，整批失败。发布规则要求封面时，缺图产品不能发布。
 4. 内部价格可导入；价格列公式仅允许安全算术白名单解析，且操作者必须有 product.cost.update 权限。
-5. 10 MB、1,000 行为初始建议值，需基于部署环境压测调整。
+5. 单张图片上限 10 MB；整份 Excel 当前上限 300 MB，可在 200 MB 左右规模导入；1,000 行和 1 GB 解压上限仍需基于目标部署内存压测。
 6. Packing Quantity (PCS) 已确认映射为 Carton Quantity (pcs)。

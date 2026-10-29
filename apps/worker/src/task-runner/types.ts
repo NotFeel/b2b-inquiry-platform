@@ -2,6 +2,8 @@ import type {
   AnalyticsRollupJobPayload,
   FileDeleteJobPayload,
   ImageDerivativeJobPayload,
+  ProductImportCleanupJobPayload,
+  ProductImportValidateJobPayload,
   QuoteExportJobPayload,
 } from '@b2b/contracts';
 
@@ -24,6 +26,20 @@ export type ClaimedTask =
       attempts: number;
       eventType: 'image-derivatives';
       payload: ImageDerivativeJobPayload;
+    }
+  | {
+      source: 'outbox';
+      id: string;
+      attempts: number;
+      eventType: 'product-import-validate';
+      payload: ProductImportValidateJobPayload;
+    }
+  | {
+      source: 'outbox';
+      id: string;
+      attempts: number;
+      eventType: 'product-import-cleanup';
+      payload: ProductImportCleanupJobPayload;
     }
   | {
       source: 'outbox';

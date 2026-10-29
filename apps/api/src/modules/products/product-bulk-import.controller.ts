@@ -3,7 +3,9 @@ import {
   Controller,
   Get,
   HttpCode,
+  Param,
   Post,
+  Put,
   Res,
   UploadedFile,
   UseInterceptors,
@@ -13,14 +15,17 @@ import { PRODUCT_IMPORT_LIMITS } from '@b2b/contracts';
 import {
   productImportCommitSchema,
   productImportSettingsSchema,
+  productImportUploadInitSchema,
   type ProductImportCommitInput,
   type ProductImportSettingsInput,
+  type ProductImportUploadInitInput,
 } from '@b2b/validation';
 import type { Response } from 'express';
 import { ApiError } from '../../common/errors/api-error';
 import { CurrentActor, Permission, RequestId, RequirePermissions } from '../../common/decorators';
 import { zodPipe } from '../../common/pipes/zod.pipe';
 import type { AuthenticatedActor } from '../../common/request-context';
+import { ProductImportUploadService } from './product-import-upload.service';
 import { ProductBulkImportService } from './product-bulk-import.service';
 
 interface ImportMulterFile {
@@ -32,7 +37,10 @@ interface ImportMulterFile {
 
 @Controller('admin/products/bulk-import')
 export class ProductBulkImportController {
-  constructor(private readonly imports: ProductBulkImportService) {}
+  constructor(
+    private readonly imports: ProductBulkImportService,
+    private readonly uploads: ProductImportUploadService,
+  ) {}
 
   @RequirePermissions(Permission.productImport)
   @Get('template')
@@ -55,7 +63,10 @@ export class ProductBulkImportController {
   @HttpCode(200)
   @UseInterceptors(
     FileInterceptor('file', {
-      limits: { fileSize: PRODUCT_IMPORT_LIMITS.maxBytes },
+      // The legacy endpoint remains available for small workbooks only. Large
+      // workbooks use the chunked upload endpoints below so a request can never
+      // hit Next's 10MB middleware/proxy limit.
+      limits: { fileSize: PRODUCT_IMPORT_LIMITS.maxChunkBytes },
     }),
   )
   async validate(
@@ -77,6 +88,71 @@ export class ProductBulkImportController {
         requestId,
       ),
     };
+  }
+
+  @RequirePermissions(Permission.productImport)
+  @Post('uploads')
+  @HttpCode(201)
+  async initializeUpload(
+    @Body(zodPipe(productImportUploadInitSchema)) body: ProductImportUploadInitInput,
+    @CurrentActor() actor: AuthenticatedActor,
+    @RequestId() requestId: string,
+  ) {
+    return { data: await this.uploads.initialize(body, actor, requestId) };
+  }
+
+  @RequirePermissions(Permission.productImport)
+  @Put('uploads/:uploadId/chunks/:index')
+  @HttpCode(200)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: PRODUCT_IMPORT_LIMITS.maxChunkBytes },
+    }),
+  )
+  async uploadChunk(
+    @Param('uploadId') uploadId: string,
+    @Param('index') rawIndex: string,
+    @UploadedFile() file: ImportMulterFile | undefined,
+    @CurrentActor() actor: AuthenticatedActor,
+  ) {
+    if (!file) {
+      throw ApiError.validation('An upload chunk is required.', {
+        file: 'products.import.errors.fileRequired',
+      });
+    }
+    const index = Number(rawIndex);
+    return { data: await this.uploads.uploadChunk(uploadId, index, file.buffer, actor) };
+  }
+
+  @RequirePermissions(Permission.productImport)
+  @Post('uploads/:uploadId/complete')
+  @HttpCode(202)
+  async completeUpload(
+    @Param('uploadId') uploadId: string,
+    @CurrentActor() actor: AuthenticatedActor,
+    @RequestId() requestId: string,
+  ) {
+    return { data: await this.uploads.complete(uploadId, actor, requestId) };
+  }
+
+  @RequirePermissions(Permission.productImport)
+  @Get('uploads/:uploadId')
+  async uploadStatus(
+    @Param('uploadId') uploadId: string,
+    @CurrentActor() actor: AuthenticatedActor,
+  ) {
+    return { data: await this.uploads.status(uploadId, actor) };
+  }
+
+  @RequirePermissions(Permission.productImport)
+  @Post('uploads/:uploadId/cancel')
+  @HttpCode(200)
+  async cancelUpload(
+    @Param('uploadId') uploadId: string,
+    @CurrentActor() actor: AuthenticatedActor,
+    @RequestId() requestId: string,
+  ) {
+    return { data: await this.uploads.cancel(uploadId, actor, requestId) };
   }
 
   @RequirePermissions(Permission.productImport, Permission.productCreate)

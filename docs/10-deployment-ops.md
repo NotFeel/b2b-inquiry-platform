@@ -35,6 +35,29 @@ PostgreSQL task runner，生产 runtime 不再需要 Redis；SQLite 不在目标
 只访问前台同源路径，因此不会因 `x-session-id` 请求头触发跨域预检；生产环境需
 确保 Storefront 服务端可访问该目标，并验证代理后的客户端 IP 与限流行为。
 
+### 2.1 大文件商品导入
+
+商品 Excel 导入不使用单次整文件请求。Admin 将文件按服务端下发的 8 MB 块上传到
+`/api/v1/admin/products/bulk-import/uploads/*`，每个代理请求都低于 Next 默认 10 MB
+限制；API 只记录块元数据，块字节写入对象存储。Worker 合并并校验完整文件后异步生成
+validation token，commit 仍在一个 PostgreSQL 事务内创建全部商品。
+
+- 单份 XLSX 上限 300 MB，目标支持约 200 MB；单张图片上限由 `UPLOAD_MAX_BYTES`
+  控制，默认 10 MB。XLSX 解压总大小上限 1 GB，单次最多 1,000 条非空数据行。
+- 生产反向代理只需允许单块请求约 10 MB（例如 Nginx `client_max_body_size 10m`），
+  不需要把网关或 Next 的请求体上限提升到 200 MB。
+- 200 MB 导入建议 task runner 并发为 1、Node heap 2–4 GB，并为临时目录和对象存储预留
+  至少 2 GB；先做 staging 压测再提高并发。
+- `STORAGE_DRIVER=local`、`STORAGE_LOCAL_ROOT=./.data/uploads` 仅适用于本机单实例。
+  API 和 Worker 相对路径均从仓库根目录解析。生产多副本、容器重启后仍要保留图片或
+  Serverless 环境必须使用共享 S3/R2；不能让 API 与 Worker 各写一份本地磁盘。
+- 上传会话 1 小时过期、validation token 10 分钟过期。Worker 负责清理已消费分块；
+  `product-import-cleanup` 负责过期上传、validation 和未被商品引用的 staging 图片。
+  分块对象删除失败时先写入可重试的 `file_deletion_jobs`，再清理分块元数据；监控
+  QUEUED/VALIDATING 积压、FAILED 上传、分块删除任务和 cleanup 失败。
+- 旧 `/admin/products/bulk-import/validate` 仅用于小于 8 MB 的兼容/快速测试；出现
+  `Request body exceeded 10MB` 时检查 Admin 是否仍调用该旧端点，而不是调大网关上限。
+
 ## 3. 首次部署流程
 
 1. 创建 Neon database/branch、R2 public/private bucket 和最小权限服务账号。
@@ -74,7 +97,9 @@ Excel 导出失败率、对象存储访问错误、磁盘临时目录、登录�
 - API 不可用：查看入口/TLS、容器状态、readiness、数据库连接、最近部署版本；必要时回滚应用。
 - Excel 导出队列积压：检查 worker 健康、临时磁盘、内存和失败任务；暂停新任务
   避免资源耗尽。
-- 上传失败：检查签名 URL、Bucket 权限、大小限制、MIME 验证、存储配额。
+- 上传失败：检查签名 URL、Bucket 权限、大小限制、MIME 验证、存储配额。大文件导入
+  还须确认 Worker 已启动、`product_import_uploads.status` 是否停在 QUEUED、分块是否完整、
+  API/Worker 是否指向同一存储驱动与根目录。
 - 文件删除失败：查看 `file_deletion_jobs` 与错误码，重试幂等删除；不要通过手动删数据库记录掩盖残留对象。
 - 删除任务长期 `QUEUED`：确认 task runner 正在轮询同一数据库，检查 `runAfter`、
   `attempts`、`lockedBy`、`lockedUntil` 与 storage bucket 配置。租约过期的 PROCESSING

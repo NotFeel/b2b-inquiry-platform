@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DICTIONARY_TYPES,
   PRODUCT_LIFECYCLE_STATUSES,
@@ -25,7 +25,10 @@ import { AdminApiError } from '../../../../../lib/admin-api';
 import { categoriesApi } from '../../../../../lib/categories-api';
 import { useDictionaryOptions } from '../../../../../lib/dictionary-options';
 import { localeHref, translateError } from '../../../../../lib/i18n';
-import { productBulkImportApi } from '../../../../../lib/product-bulk-import-api';
+import {
+  productBulkImportApi,
+  type ProductImportUploadProgress,
+} from '../../../../../lib/product-bulk-import-api';
 import { useTagIdSelectOptions } from '../../../../../lib/tag-options';
 import { CategoryPicker } from '../../../../../components/category-picker';
 import { useBreadcrumb } from '../../../../../components/use-breadcrumb';
@@ -49,11 +52,15 @@ export default function ProductBulkImportPage() {
   const [categoryError, setCategoryError] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [validating, setValidating] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<ProductImportUploadProgress | null>(null);
   const [committing, setCommitting] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [validation, setValidation] = useState<ProductImportValidationResult | null>(null);
   const [committed, setCommitted] = useState<ProductImportCommitResult | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
+  const uploadAbort = useRef<AbortController | null>(null);
+  const activeUploadId = useRef<string | null>(null);
 
   const publish = useDictionaryOptions(DICTIONARY_TYPES.productPublishStatus, {
     locale,
@@ -87,6 +94,8 @@ export default function ProductBulkImportPage() {
     void loadCategories();
   }, [loadCategories]);
 
+  useEffect(() => () => uploadAbort.current?.abort(), []);
+
   const invalidate = useCallback(() => {
     setValidation(null);
     setCommitted(null);
@@ -105,26 +114,64 @@ export default function ProductBulkImportPage() {
 
   const validate = async () => {
     if (!file || !settings.categoryId) return;
+    uploadAbort.current?.abort();
+    const controller = new AbortController();
+    uploadAbort.current = controller;
     setValidating(true);
+    setUploadProgress(null);
     setRequestError(null);
     setCommitted(null);
     try {
-      const result = await productBulkImportApi.validate(file, settings);
+      const status = await productBulkImportApi.uploadAndValidate(file, settings, {
+        signal: controller.signal,
+        onProgress: (progress) => {
+          activeUploadId.current = progress.uploadId;
+          setUploadProgress(progress);
+        },
+      });
+      const result = status.validation;
       setValidation(result);
-      if (result.validationId) {
+      if (status.status === 'VALIDATED' && result?.validationId) {
         toast.success(t('productsImport.validationPassed'));
-      } else {
+      } else if (status.status === 'INVALID') {
         toast.error(t('productsImport.validationFailed'));
+      } else {
+        setRequestError(translateError(locale, status.errorCode ?? 'IMPORT_PROCESSING_FAILED'));
       }
     } catch (error) {
       setValidation(null);
+      if (error instanceof DOMException && error.name === 'AbortError') return;
       setRequestError(
         error instanceof AdminApiError
           ? translateError(locale, error.code)
           : t('productsImport.errors.validate'),
       );
     } finally {
+      if (uploadAbort.current === controller) {
+        uploadAbort.current = null;
+        activeUploadId.current = null;
+      }
+      setUploadProgress(null);
       setValidating(false);
+    }
+  };
+
+  const cancelUpload = async () => {
+    const uploadId = activeUploadId.current;
+    uploadAbort.current?.abort();
+    if (!uploadId) return;
+    setCancelling(true);
+    try {
+      await productBulkImportApi.cancelUpload(uploadId);
+      toast.info(t('productsImport.upload.cancelled'));
+    } catch (error) {
+      toast.error(
+        error instanceof AdminApiError
+          ? translateError(locale, error.code)
+          : t('productsImport.upload.cancelFailed'),
+      );
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -150,6 +197,9 @@ export default function ProductBulkImportPage() {
   };
 
   const summary = useMemo(() => validation?.summary ?? null, [validation]);
+  const uploadPercent = uploadProgress
+    ? Math.min(100, Math.round((uploadProgress.uploadedBytes / uploadProgress.totalBytes) * 100))
+    : 0;
 
   const downloadErrors = () => {
     if (!validation) return;
@@ -288,6 +338,7 @@ export default function ProductBulkImportPage() {
               id={inputId}
               aria-describedby={describedBy}
               type="file"
+              disabled={validating}
               accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
               onChange={(event) => {
                 setFile(event.target.files?.[0] ?? null);
@@ -298,13 +349,60 @@ export default function ProductBulkImportPage() {
         </Field>
         {file ? (
           <p className="small muted">
-            {file.name} · {(file.size / 1024).toFixed(1)} KB
+            {file.name} · {formatFileSize(file.size)}
           </p>
+        ) : null}
+        {validating ? (
+          <div className="stack-sm">
+            <div
+              className="upload-progress"
+              role="progressbar"
+              aria-label={t('productsImport.upload.progressLabel')}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={uploadPercent}
+            >
+              <span style={{ width: `${uploadPercent}%` }} />
+            </div>
+            <p className="small muted" role="status" aria-live="polite">
+              {uploadProgress
+                ? t(
+                    uploadProgress.phase === 'uploading'
+                      ? 'productsImport.upload.uploading'
+                      : 'productsImport.upload.validating',
+                    {
+                      uploaded: uploadProgress.uploadedChunks,
+                      total: uploadProgress.chunkCount,
+                      percent: uploadPercent,
+                    },
+                  )
+                : t('productsImport.upload.starting')}
+            </p>
+            {uploadProgress?.retryingChunkIndex !== null &&
+            uploadProgress?.retryingChunkIndex !== undefined ? (
+              <p className="small muted" role="status">
+                {t('productsImport.upload.retrying', {
+                  index: uploadProgress.retryingChunkIndex + 1,
+                })}
+              </p>
+            ) : null}
+            {uploadProgress?.phase === 'uploading' ? (
+              <div className="row">
+                <Button
+                  variant="secondary"
+                  loading={cancelling}
+                  onClick={() => void cancelUpload()}
+                >
+                  {t('productsImport.upload.cancel')}
+                </Button>
+              </div>
+            ) : null}
+          </div>
         ) : null}
         <div className="row">
           <Button
             loading={validating}
-            disabled={!file || !settings.categoryId}
+            disabled={!file || !settings.categoryId || validating}
             onClick={() => void validate()}
           >
             {t('productsImport.validate')}
@@ -404,4 +502,9 @@ export default function ProductBulkImportPage() {
       />
     </div>
   );
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / 1024).toFixed(1)} KB`;
 }

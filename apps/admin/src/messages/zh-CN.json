@@ -1430,7 +1430,17 @@
     "file": {
       "title": "Excel 工作簿",
       "label": "选择 .xlsx 文件",
-      "help": "支持标准浮动图片和 WPS DISPIMG 单元格图片；禁止宏与外部链接。"
+      "help": "最大 300 MB，浏览器会按 8 MB 分块上传；支持标准浮动图片和 WPS DISPIMG 单元格图片，单张图片最大 10 MB，禁止宏与外部链接。"
+    },
+    "upload": {
+      "progressLabel": "Excel 上传与校验进度",
+      "starting": "正在创建安全上传会话…",
+      "uploading": "正在分块上传：{{uploaded}} / {{total}} 块，{{percent}}%",
+      "validating": "上传完成，Worker 正在解析图片并校验全部商品行（{{percent}}%）",
+      "retrying": "第 {{index}} 块上传失败，正在自动重试…",
+      "cancel": "取消导入",
+      "cancelled": "已取消本次导入。",
+      "cancelFailed": "取消导入失败，请稍后重试。"
     },
     "summary": {
       "title": "预检结果",

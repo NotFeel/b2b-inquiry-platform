@@ -1430,7 +1430,17 @@
     "file": {
       "title": "Excel workbook",
       "label": "Choose an .xlsx file",
-      "help": "Standard floating images and WPS DISPIMG cell images are supported. Macros and external links are rejected."
+      "help": "Up to 300 MB. The browser uploads it in 8 MB chunks. Standard floating images and WPS DISPIMG cell images are supported; each image can be up to 10 MB. Macros and external links are rejected."
+    },
+    "upload": {
+      "progressLabel": "Excel upload and validation progress",
+      "starting": "Creating a secure upload session…",
+      "uploading": "Uploading chunks: {{uploaded}} / {{total}} ({{percent}}%)",
+      "validating": "Upload complete. A worker is extracting images and validating every product row ({{percent}}%).",
+      "retrying": "Chunk {{index}} failed and is being retried automatically…",
+      "cancel": "Cancel import",
+      "cancelled": "The import was cancelled.",
+      "cancelFailed": "The import could not be cancelled. Please try again."
     },
     "summary": {
       "title": "Validation result",

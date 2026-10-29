@@ -1,3 +1,4 @@
+import type { ProductImportCleanupJobPayload } from '@b2b/contracts';
 import type { PrismaClient } from '@b2b/database';
 import type { WorkerEnv } from '../env';
 import type { WorkerLogger } from '../logger';
@@ -5,6 +6,8 @@ import type { ObjectStorage } from '../storage';
 import { processAnalyticsRollup } from '../jobs/analytics-rollup';
 import { processFileDeletion } from '../jobs/file-delete';
 import { processImageDerivatives } from '../jobs/image-derivatives';
+import { processProductImportCleanup } from '../jobs/product-import-cleanup';
+import { processProductImportValidation } from '../jobs/product-import-validate';
 import { processQuoteExport } from '../jobs/quote-export';
 import { claimNextTask } from './claim';
 import type { ClaimedTask, TaskRunnerOptions } from './types';
@@ -150,6 +153,24 @@ export class PostgresTaskRunner {
           logger: this.logger,
         },
       );
+      return;
+    }
+    if (task.eventType === 'product-import-validate') {
+      await processProductImportValidation(task.payload, {
+        prisma: this.prisma,
+        storage: this.storage,
+        env: this.env,
+        logger: this.logger,
+      });
+      return;
+    }
+    if (task.eventType === 'product-import-cleanup') {
+      await processProductImportCleanup(task.payload, {
+        prisma: this.prisma,
+        storage: this.storage,
+        env: this.env,
+        logger: this.logger,
+      });
       return;
     }
     await processAnalyticsRollup(task.payload, {
@@ -306,6 +327,23 @@ async function ensureScheduledTasks(prisma: PrismaClient, env: WorkerEnv): Promi
       } as never,
       status: 'QUEUED',
       idempotencyKey: `analytics-rollup:${date}`,
+    },
+    update: {},
+  });
+
+  // Expired uploads, validation tokens and their private staging objects need a
+  // database-driven cleanup even when nobody polls their status API. A
+  // quarter-hour bucket provides one claimable job per interval across all
+  // worker instances without adding another scheduler dependency.
+  const cleanupBucket = Math.floor(Date.now() / (15 * 60_000));
+  const cleanupAt = new Date(cleanupBucket * 15 * 60_000).toISOString();
+  await prisma.outboxEvent.upsert({
+    where: { idempotencyKey: `product-import-cleanup:${cleanupAt}` },
+    create: {
+      eventType: 'product-import-cleanup',
+      payload: { scheduledAt: cleanupAt } satisfies ProductImportCleanupJobPayload as never,
+      status: 'QUEUED',
+      idempotencyKey: `product-import-cleanup:${cleanupAt}`,
     },
     update: {},
   });

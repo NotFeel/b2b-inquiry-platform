@@ -15,6 +15,7 @@
   "dependencies": {
     "@b2b/contracts": "workspace:*",
     "@b2b/database": "workspace:*",
+    "@b2b/product-import": "workspace:*",
     "decimal.js": "10.6.0",
     "dotenv": "18.0.8",
     "exceljs": "4.4.0",

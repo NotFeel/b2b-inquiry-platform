@@ -123,4 +123,47 @@ describe('ProductBulkImportParser', () => {
     expect(first.priceCny).toBe('4.7000');
     expect(first.sortOrder).toBe(10);
   });
+
+  it('rejects a real external WPS relationship instead of treating it as a placeholder', async () => {
+    const source = await firstTwoProductRows(await readFile(fixturePath));
+    const zip = await JSZip.loadAsync(source);
+    const relsPath = 'xl/_rels/cellimages.xml.rels';
+    const rels = zip.file(relsPath);
+    if (!rels) throw new Error('fixture cell image relationships missing');
+    zip.file(
+      relsPath,
+      (await rels.async('string')).replace(
+        'Target="NULL" TargetMode="External"',
+        'Target="https://example.com/product.png" TargetMode="External"',
+      ),
+    );
+
+    await expect(
+      new ProductBulkImportParser().parse(
+        Buffer.from(await zip.generateAsync({ type: 'nodebuffer' })),
+      ),
+    ).rejects.toThrow('products.import.errors.externalContent');
+  });
+
+  it('fails image mapping when a DISPIMG formula references the WPS NULL placeholder', async () => {
+    const source = await firstTwoProductRows(await readFile(fixturePath));
+    const zip = await JSZip.loadAsync(source);
+    const cellImagesPath = 'xl/cellimages.xml';
+    const cellImages = zip.file(cellImagesPath);
+    if (!cellImages) throw new Error('fixture cell images missing');
+    zip.file(
+      cellImagesPath,
+      (await cellImages.async('string')).replace('r:embed="rId1"', 'r:embed="rId10"'),
+    );
+
+    const parsed = await new ProductBulkImportParser().parse(
+      Buffer.from(await zip.generateAsync({ type: 'nodebuffer' })),
+    );
+
+    expect(parsed.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: ERROR_CODES.importImageMappingInvalid }),
+      ]),
+    );
+  });
 });

@@ -93,6 +93,63 @@ async function atomicRaceWorkbook(): Promise<Buffer> {
   return Buffer.from(await workbook.xlsx.writeBuffer());
 }
 
+interface AcceptanceStoredImport {
+  rows: Array<{
+    sku: string;
+    images: Array<{
+      fileAssetId: string;
+      storageKey: string;
+      sizeBytes: number;
+    }>;
+  }>;
+}
+
+async function cleanupFixtures(prisma: PrismaClient, storage: StorageService): Promise<void> {
+  const fixtureActors = await prisma.adminUser.findMany({
+    where: { username: 'bulk-import-acceptance' },
+    select: { id: true },
+  });
+  const actorIds = fixtureActors.map((actor) => actor.id);
+  const fixtureAssets =
+    actorIds.length > 0
+      ? await prisma.fileAsset.findMany({
+          where: { uploadedById: { in: actorIds } },
+          select: { id: true, storageKey: true },
+        })
+      : [];
+  const importedImageKeys =
+    actorIds.length > 0
+      ? (
+          await prisma.productImage.findMany({
+            where: { product: { createdById: { in: actorIds } } },
+            select: { storageKey: true },
+          })
+        ).map((image) => image.storageKey)
+      : [];
+  const storageKeys = [
+    ...new Set([...fixtureAssets.map((asset) => asset.storageKey), ...importedImageKeys]),
+  ];
+  await Promise.allSettled(storageKeys.map((key) => storage.delete(key)));
+
+  if (fixtureAssets.length > 0) {
+    const assetIds = fixtureAssets.map((asset) => asset.id);
+    await prisma.outboxEvent.deleteMany({
+      where: { idempotencyKey: { in: assetIds.map((id) => `image-derivatives:${id}`) } },
+    });
+    await prisma.fileDeletionJob.deleteMany({ where: { entityId: { in: assetIds } } });
+  }
+  await prisma.product.deleteMany();
+  await prisma.productImportValidation.deleteMany();
+  await prisma.productImportUpload.deleteMany();
+  if (fixtureAssets.length > 0) {
+    await prisma.fileAsset.deleteMany({
+      where: { id: { in: fixtureAssets.map((asset) => asset.id) } },
+    });
+  }
+  await prisma.adminUser.deleteMany({ where: { username: 'bulk-import-acceptance' } });
+  await prisma.category.deleteMany({ where: { code: 'bulk-import-acceptance' } });
+}
+
 async function main(): Promise<void> {
   const env = envSchema.parse(process.env);
   const prisma = new PrismaClient();
@@ -102,16 +159,18 @@ async function main(): Promise<void> {
   const crypto = new CryptoService(env);
   const dictionary = new DictionaryService(prisma as never, logger);
   const files = new FilesService(env, prisma as never, storage, crypto, audit, logger);
-  const importer = new ProductBulkImportService(env, prisma as never, dictionary, files, audit);
+  const importer = new ProductBulkImportService(
+    env,
+    prisma as never,
+    dictionary,
+    files,
+    storage,
+    audit,
+  );
 
   console.log('Bulk import acceptance: cleaning isolated fixtures');
   try {
-    await prisma.productImportValidation.deleteMany();
-    await prisma.product.deleteMany();
-    await prisma.adminUser.deleteMany({ where: { username: 'bulk-import-acceptance' } });
-    await prisma.category.deleteMany({
-      where: { code: 'bulk-import-acceptance' },
-    });
+    await cleanupFixtures(prisma, storage);
 
     const category = await prisma.category.create({
       data: {
@@ -180,6 +239,42 @@ async function main(): Promise<void> {
       console.error(JSON.stringify(validated.errors, null, 2));
       throw new Error('valid workbook did not produce a token');
     }
+    const stagedRecord = await prisma.productImportValidation.findUnique({
+      where: { id: validated.validationId },
+    });
+    const stagedPayload = stagedRecord?.payload as unknown as AcceptanceStoredImport | undefined;
+    const stagedImages = stagedPayload?.rows.flatMap((row) => row.images) ?? [];
+    const payloadMetrics = await prisma.$queryRaw<{ payloadText: string; payloadBytes: number }[]>`
+      SELECT payload::text AS "payloadText", pg_column_size(payload) AS "payloadBytes"
+      FROM product_import_validations
+      WHERE id = ${validated.validationId}::uuid
+    `;
+    const payloadText = payloadMetrics[0]?.payloadText ?? '';
+    check(
+      'validation JSONB contains metadata only',
+      !payloadText.includes('"bytes"') &&
+        !payloadText.includes('bytesBase64') &&
+        !payloadText.includes('"type":"Buffer"'),
+    );
+    check(
+      'validation JSONB stays compact',
+      (payloadMetrics[0]?.payloadBytes ?? Number.POSITIVE_INFINITY) < 100_000,
+      `${payloadMetrics[0]?.payloadBytes ?? 'missing'} bytes`,
+    );
+    check('validation payload stages two image assets', stagedImages.length === 2);
+    check(
+      'staged image bytes exist in local object storage',
+      (await Promise.all(stagedImages.map((image) => storage.exists(image.storageKey)))).every(
+        Boolean,
+      ),
+    );
+    check(
+      'staged image rows contain valid metadata only',
+      stagedImages.every(
+        (image) =>
+          image.fileAssetId.length > 0 && image.storageKey.length > 0 && image.sizeBytes > 0,
+      ),
+    );
     const committed = await importer.commit(
       validated.validationId,
       actorContext,
@@ -199,6 +294,18 @@ async function main(): Promise<void> {
     check(
       'each imported product has one cover image',
       imported.every((row) => row.images.length === 1 && row.images[0]?.isCover),
+    );
+    check(
+      'each image remains backed by a real local file',
+      (
+        await Promise.all(
+          imported.flatMap((row) => row.images.map((image) => storage.exists(image.storageKey))),
+        )
+      ).every(Boolean),
+    );
+    check(
+      'each SKU has its own image asset',
+      new Set(imported.flatMap((row) => row.images.map((image) => image.fileAssetId))).size === 2,
     );
     let duplicateCommitRejected = false;
     try {
@@ -245,6 +352,10 @@ async function main(): Promise<void> {
     console.log(`RESULT ${failures === 0 ? 'PASS' : 'FAIL'} ${checks - failures}/${checks}`);
     if (failures > 0) process.exitCode = 1;
   } finally {
+    await cleanupFixtures(prisma, storage).catch((error: unknown) => {
+      console.error('Acceptance cleanup failed:', error);
+      process.exitCode = 1;
+    });
     await prisma.$disconnect();
   }
 }

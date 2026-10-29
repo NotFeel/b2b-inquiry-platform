@@ -7,6 +7,7 @@ const PRIVATE_KEY_PREFIXES = [
   'product-image/',
   'quote-template/',
   'quote-exports/',
+  'product-import/',
   'pdf/',
   'category-cover/',
   'ad-image/',
@@ -34,6 +35,11 @@ export function storageVisibilityForKey(key: string): StorageVisibility {
     return 'public';
   }
   return 'private';
+}
+
+/** Deterministic private key for one browser upload chunk. Never user supplied. */
+export function productImportChunkKey(uploadId: string, index: number): string {
+  return `product-import/${uploadId}/chunks/${String(index).padStart(6, '0')}.part`;
 }
 
 export interface PresignedUploadResult {

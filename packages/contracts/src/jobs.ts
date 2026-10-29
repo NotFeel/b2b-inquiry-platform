@@ -38,8 +38,18 @@ export interface AnalyticsRollupJobPayload {
   targetDate?: string;
 }
 
+export interface ProductImportValidateJobPayload {
+  uploadId: string;
+}
+
+export interface ProductImportCleanupJobPayload {
+  scheduledAt: string;
+}
+
 export type JobPayload =
   | ImageDerivativeJobPayload
   | QuoteExportJobPayload
   | FileDeleteJobPayload
-  | AnalyticsRollupJobPayload;
+  | AnalyticsRollupJobPayload
+  | ProductImportValidateJobPayload
+  | ProductImportCleanupJobPayload;

@@ -80,6 +80,7 @@ model AdminUser {
   credentials         Credential[]         @relation("CredentialCreatedBy")
   // Import validation tokens are short-lived and cascade with their owner.
   productImportValidations ProductImportValidation[]
+  productImportUploads     ProductImportUpload[]
 
   @@index([status, username])
   @@map("admin_users")
@@ -1061,6 +1062,50 @@ model ProductImportValidation {
   @@map("product_import_validations")
 }
 
+/// Chunked, asynchronous import upload. The workbook binary lives only in
+/// private object storage; this row tracks its owner, lifecycle and validation
+/// outcome. ProductImportValidation remains the one-time commit capability.
+model ProductImportUpload {
+  id           String    @id @default(uuid()) @db.Uuid
+  actorId      String    @db.Uuid
+  status       String    @default("UPLOADING") @db.VarChar(32)
+  originalName String    @db.VarChar(255)
+  declaredSize BigInt
+  chunkSize    Int
+  chunkCount   Int
+  settings     Json
+  fileSha256   String?   @db.VarChar(64)
+  summary      Json?
+  errors       Json?
+  warnings     Json?
+  validationId String?   @db.Uuid
+  errorCode    String?   @db.VarChar(120)
+  expiresAt    DateTime  @db.Timestamptz(6)
+  completedAt  DateTime? @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
+
+  actor  AdminUser            @relation(fields: [actorId], references: [id], onDelete: Cascade)
+  chunks ProductImportChunk[]
+
+  @@index([actorId, createdAt(sort: Desc)])
+  @@index([status, expiresAt])
+  @@map("product_import_uploads")
+}
+
+model ProductImportChunk {
+  uploadId String   @db.Uuid
+  index    Int
+  sizeBytes BigInt
+  sha256   String?  @db.VarChar(64)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  upload ProductImportUpload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+
+  @@id([uploadId, index])
+  @@map("product_import_chunks")
+}
+
 // Object storage and the database have no shared transaction. Deleting produced
 // files therefore goes through an idempotent, retryable job (docs/04, docs/10).
 model FileDeletionJob {
@@ -1069,7 +1114,7 @@ model FileDeletionJob {
   /// the final `product` purge that runs after every image object is gone).
   storageKey     String?   @db.VarChar(500)
   /// `file_asset` | `quote_export_job` | `pdf_conversion_job` | `product_image`
-  /// | `product`. Never a client-supplied value.
+  /// | `product_import_chunk` | `product`. Never a client-supplied value.
   entityType     String?   @db.VarChar(100)
   entityId       String?   @db.VarChar(120)
   /// Owning product of the deleted object, so a product purge can wait for all

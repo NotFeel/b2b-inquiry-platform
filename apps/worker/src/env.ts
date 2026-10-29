@@ -48,6 +48,7 @@ const schema = z.object({
     .default(true)
     .transform((value) => value === true || value === 'true'),
   IMAGE_DERIVATIVE_WIDTHS: z.string().default('320,640,1280'),
+  UPLOAD_MAX_BYTES: z.coerce.number().int().min(1024).max(104_857_600).default(10_485_760),
   UPLOAD_MAX_PIXELS: z.coerce.number().int().min(1_000_000).max(500_000_000).default(50_000_000),
   IMAGE_PROCESSING_TIMEOUT_SECONDS: z.coerce.number().int().min(1).max(120).default(20),
   IMAGE_PROCESSING_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(1),

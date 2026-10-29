@@ -2,6 +2,8 @@ import type {
   AnalyticsRollupJobPayload,
   FileDeleteJobPayload,
   ImageDerivativeJobPayload,
+  ProductImportCleanupJobPayload,
+  ProductImportValidateJobPayload,
   QuoteExportJobPayload,
 } from '@b2b/contracts';
 import type { PrismaClient } from '@b2b/database';
@@ -130,7 +132,12 @@ async function claimOutboxEvent(
   const rows = await transaction.$queryRaw<OutboxRow[]>`
     SELECT id, "eventType", payload, attempts
     FROM outbox_events
-    WHERE "eventType" IN ('image-derivatives', 'analytics-rollup')
+    WHERE "eventType" IN (
+      'image-derivatives',
+      'product-import-validate',
+      'product-import-cleanup',
+      'analytics-rollup'
+    )
       AND (
         (status = 'QUEUED'::"JobStatus" AND "runAfter" <= now())
         OR (
@@ -163,6 +170,24 @@ async function claimOutboxEvent(
       attempts: claimed.attempts,
       eventType: 'analytics-rollup',
       payload: row.payload as AnalyticsRollupJobPayload,
+    };
+  }
+  if (row.eventType === 'product-import-validate') {
+    return {
+      source: 'outbox',
+      id: row.id,
+      attempts: claimed.attempts,
+      eventType: 'product-import-validate',
+      payload: row.payload as ProductImportValidateJobPayload,
+    };
+  }
+  if (row.eventType === 'product-import-cleanup') {
+    return {
+      source: 'outbox',
+      id: row.id,
+      attempts: claimed.attempts,
+      eventType: 'product-import-cleanup',
+      payload: row.payload as ProductImportCleanupJobPayload,
     };
   }
   return null;
