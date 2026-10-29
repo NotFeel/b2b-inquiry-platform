@@ -20,6 +20,8 @@
     "migrate:status": "node scripts/exec.mjs prisma migrate status",
     "studio": "node scripts/exec.mjs prisma studio",
     "seed": "node scripts/exec.mjs tsx prisma/seed.ts",
+    "seed:reference": "node scripts/exec.mjs tsx prisma/seed.ts --reference-only",
+    "check:production-reference-data": "node scripts/exec.mjs tsx scripts/check-production-reference-data.ts",
     "check:menu-translations": "node scripts/exec.mjs tsx scripts/check-menu-translations.ts",
     "bootstrap": "node scripts/exec.mjs tsx scripts/bootstrap-admin.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
