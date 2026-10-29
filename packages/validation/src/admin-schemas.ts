@@ -590,6 +590,34 @@ export const productListQuerySchema = paginationQuerySchema.extend({
 });
 export type ProductListQueryInput = z.infer<typeof productListQuerySchema>;
 
+const importTagIds = z.preprocess((value) => {
+  if (value === undefined || value === null || value === '') return [];
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : value.split(',').map((item) => item.trim());
+    } catch {
+      return value.split(',').map((item) => item.trim());
+    }
+  }
+  return value;
+}, z.array(uuidSchema).max(30).default([]));
+
+export const productImportSettingsSchema = z.object({
+  categoryId: uuidSchema,
+  publishStatus: z.enum(PUBLISH_STATUSES),
+  lifecycleStatus: z.enum(PRODUCT_LIFECYCLE_STATUSES),
+  tagIds: importTagIds,
+  templateVersion: z.enum(['optimized-v1', 'wps-price-list-v1']),
+});
+export type ProductImportSettingsInput = z.infer<typeof productImportSettingsSchema>;
+
+export const productImportCommitSchema = z.object({
+  validationId: z.string().trim().min(32).max(200),
+});
+export type ProductImportCommitInput = z.infer<typeof productImportCommitSchema>;
+
 export const productTranslationInputSchema = z.object({
   locale: localeSchema,
   name: nonEmptyText(240),

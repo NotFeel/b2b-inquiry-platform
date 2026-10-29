@@ -7,7 +7,8 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "pnpm run db:generate && pnpm -r --filter \"./packages/**\" build && pnpm -r --parallel --filter \"./apps/**\" dev",
+    "dev": "node scripts/dev.mjs",
+    "dev:run": "pnpm run db:generate && pnpm run db:deploy && pnpm -r --filter \"./packages/**\" build && pnpm -r --parallel --filter \"./apps/**\" dev",
     "build": "pnpm run db:generate && pnpm -r --filter \"./packages/**\" build && pnpm -r --filter \"./apps/**\" build",
     "build:workers": "pnpm -r --filter \"./packages/**\" build && pnpm --filter @b2b/storefront run build:worker && pnpm --filter @b2b/admin run build:worker",
     "lint": "eslint .",

@@ -56,6 +56,7 @@ const PERMISSIONS: { code: string; module: string; nameKey: string }[] = [
   ['product.update', 'product'],
   ['product.delete', 'product'],
   ['product.publish', 'product'],
+  ['product.import', 'product'],
   ['product.export', 'product'],
   // Gallery and internal-price capabilities are separate permissions, so a role
   // can maintain the catalogue without being able to delete stored objects or
@@ -145,6 +146,7 @@ const ROLES: {
       'product.update',
       'product.delete',
       'product.publish',
+      'product.import',
       'product.export',
       // The catalogue manager owns the gallery and the internal quotation price;
       // a read-only role keeps `product.read` without any of these.

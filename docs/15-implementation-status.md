@@ -39,17 +39,21 @@ pnpm install
 docker compose -f infra/docker-compose.dev.yml up -d postgres
 cp .env.example .env      # 修改 DATABASE_URL / SESSION_SECRET / WHATSAPP_BUSINESS_NUMBER
 
-pnpm db:generate
-pnpm db:deploy
 pnpm db:seed -- --demo            # 演示目录数据（明确标注 demo）
 BOOTSTRAP_ADMIN_USERNAME=admin pnpm bootstrap:admin
 
-pnpm build                        # 或 pnpm dev：构建 packages 后并行启动 api/worker/两个 Next 应用
+pnpm dev                          # 读取仓库 .env、生成 Client、应用迁移、构建 packages，再并行启动四个应用
+pnpm build                        # 生产构建；不会自动应用数据库迁移
 pnpm --filter @b2b/api start      # http://localhost:3002
 pnpm --filter @b2b/worker start
 pnpm --filter @b2b/storefront start   # http://localhost:3000
 pnpm --filter @b2b/admin start        # http://localhost:3001
 ```
+
+`pnpm dev` 在开发环境以仓库 `.env` 为准，避免终端残留的 Neon `DATABASE_URL` 覆盖本地配置。
+它会先执行 `prisma migrate deploy`；如果 PostgreSQL 未启动，命令会在 API 启动前以 P1001
+失败，而不是留下“Admin 已启动、API 未监听”的半启动状态。需要连接隔离测试库时，可显式
+指定 `ENV_FILE=/absolute/path/to/test.env`。
 
 ## 4. 环境注意事项
 

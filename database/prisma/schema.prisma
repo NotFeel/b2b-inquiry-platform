@@ -78,6 +78,8 @@ model AdminUser {
   factoryMedia        FactoryMedia[]       @relation("FactoryMediaCreatedBy")
   factoryProcessSteps FactoryProcessStep[] @relation("FactoryProcessStepCreatedBy")
   credentials         Credential[]         @relation("CredentialCreatedBy")
+  // Import validation tokens are short-lived and cascade with their owner.
+  productImportValidations ProductImportValidation[]
 
   @@index([status, username])
   @@map("admin_users")
@@ -1030,6 +1032,33 @@ model AuditLog {
   @@index([actorId, createdAt(sort: Desc)])
   @@index([action, createdAt(sort: Desc)])
   @@map("audit_logs")
+}
+
+/// Short-lived server-side result of a fully validated product workbook.
+///
+/// A commit consumes this row in the same transaction as every Product write,
+/// so the same validation cannot create a duplicate batch even with multiple
+/// API instances. Normalized rows are removed by expiry or first consumption.
+model ProductImportValidation {
+  id              String    @id @default(uuid()) @db.Uuid
+  tokenHash       String    @unique @db.VarChar(64)
+  actorId         String    @db.Uuid
+  fileSha256      String    @db.VarChar(64)
+  templateVersion String    @db.VarChar(32)
+  configHash      String    @db.VarChar(64)
+  payload         Json
+  rowCount        Int
+  imageCount      Int
+  expiresAt       DateTime  @db.Timestamptz(6)
+  consumedAt      DateTime? @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(6)
+
+  actor AdminUser @relation(fields: [actorId], references: [id], onDelete: Cascade)
+
+  @@index([actorId, expiresAt])
+  @@index([expiresAt])
+  @@map("product_import_validations")
 }
 
 // Object storage and the database have no shared transaction. Deleting produced
