@@ -19,6 +19,7 @@ import { MENU_SEED, type MenuSeed } from './menu-seed';
 
 const prisma = new PrismaClient();
 const withDemoData = process.argv.includes('--demo');
+const referenceOnly = process.argv.includes('--reference-only');
 
 /** Depth-first list of every menu declared by the seed, parents included. */
 function flattenMenuSeed(menus: MenuSeed[]): MenuSeed[] {
@@ -402,37 +403,76 @@ const CONTENT_PAGES = [
   },
 ];
 
-async function seedPermissionsAndRoles() {
-  for (const permission of PERMISSIONS) {
-    await prisma.permission.upsert({
-      where: { code: permission.code },
-      create: permission,
-      update: { module: permission.module, nameKey: permission.nameKey },
-    });
-  }
+async function seedPermissionsAndRoles(options: { referenceOnly?: boolean } = {}) {
+  const result = await prisma.$transaction(async (tx) => {
+    // Record which permissions do not exist before this atomic sync. In the
+    // production reference-only mode, only grants associated with newly added
+    // permission codes are added to existing non-super-admin roles. This lets
+    // a release grant a new feature to its default roles without rebuilding
+    // their complete permission sets or restoring previously removed grants.
+    const existingPermissionCodes = new Set(
+      (await tx.permission.findMany({ select: { code: true } })).map((permission) => permission.code),
+    );
+    const newPermissionCodes = new Set(
+      PERMISSIONS.filter((permission) => !existingPermissionCodes.has(permission.code)).map(
+        (permission) => permission.code,
+      ),
+    );
 
-  for (const role of ROLES) {
-    const codes = role.permissions === 'all' ? PERMISSIONS.map((p) => p.code) : role.permissions;
-    const record = await prisma.role.upsert({
-      where: { code: role.code },
-      create: {
-        code: role.code,
-        nameKey: role.nameKey,
-        description: role.description,
-        isSystem: role.code === 'super_admin',
-      },
-      update: { nameKey: role.nameKey, description: role.description },
-    });
-    await prisma.rolePermission.deleteMany({ where: { roleId: record.id } });
-    await prisma.rolePermission.createMany({
-      data: codes.map((code) => ({ roleId: record.id, permissionCode: code })),
-      skipDuplicates: true,
-    });
-  }
-  console.log(`seeded ${PERMISSIONS.length} permissions and ${ROLES.length} roles`);
+    for (const permission of PERMISSIONS) {
+      await tx.permission.upsert({
+        where: { code: permission.code },
+        create: permission,
+        update: { module: permission.module, nameKey: permission.nameKey },
+      });
+    }
+
+    let grantsAdded = 0;
+    for (const role of ROLES) {
+      const existingRole = await tx.role.findUnique({
+        where: { code: role.code },
+        select: { id: true },
+      });
+      const codes = role.permissions === 'all' ? PERMISSIONS.map((p) => p.code) : role.permissions;
+      const record = await tx.role.upsert({
+        where: { code: role.code },
+        create: {
+          code: role.code,
+          nameKey: role.nameKey,
+          description: role.description,
+          isSystem: role.code === 'super_admin',
+        },
+        update: { nameKey: role.nameKey, description: role.description },
+      });
+
+      if (!options.referenceOnly) {
+        // The full bootstrap/development seed keeps its original authoritative
+        // behaviour. Production releases use referenceOnly to avoid deleting
+        // manually assigned role permissions.
+        await tx.rolePermission.deleteMany({ where: { roleId: record.id } });
+      }
+
+      const roleCodes =
+        options.referenceOnly && existingRole && role.permissions !== 'all'
+          ? codes.filter((code) => newPermissionCodes.has(code))
+          : codes;
+      const created = await tx.rolePermission.createMany({
+        data: roleCodes.map((code) => ({ roleId: record.id, permissionCode: code })),
+        skipDuplicates: true,
+      });
+      grantsAdded += created.count;
+    }
+    return { newPermissions: newPermissionCodes.size, grantsAdded };
+  });
+
+  console.log(
+    `seeded ${PERMISSIONS.length} permissions and ${ROLES.length} roles; ${result.newPermissions} new permission codes, ${result.grantsAdded} role grants added`,
+  );
 }
 
-async function seedMenus() {
+async function seedMenus(
+  options: { preserveExistingTranslations?: boolean; disableStaleMenus?: boolean } = {},
+) {
   const seededCodes = new Set<string>();
 
   // Every seeded menu is part of the navigation skeleton and must be declared in
@@ -469,8 +509,15 @@ async function seedMenus() {
       },
     });
     for (const [locale, label] of Object.entries(menu.labels)) {
+      const where = { menuId_locale: { menuId: record.id, locale } };
+      if (options.preserveExistingTranslations) {
+        const existingTranslation = await prisma.menuTranslation.findUnique({ where });
+        // The release seed adds missing locale labels but does not overwrite a
+        // label an administrator has deliberately edited in the live database.
+        if (existingTranslation) continue;
+      }
       await prisma.menuTranslation.upsert({
-        where: { menuId_locale: { menuId: record.id, locale } },
+        where,
         create: { menuId: record.id, locale, label },
         update: { label },
       });
@@ -483,20 +530,24 @@ async function seedMenus() {
     await upsertMenu(menu, null);
   }
 
-  // Menu entries removed from the seed (for example when a flat item became part
-  // of a group) are disabled rather than left pointing at a stale structure.
-  const stale = await prisma.menu.findMany({ select: { id: true, code: true, enabled: true } });
-  const orphans = stale.filter((menu) => !seededCodes.has(menu.code) && menu.enabled);
-  for (const orphan of orphans) {
-    await prisma.menu.update({ where: { id: orphan.id }, data: { enabled: false } });
+  // Full bootstrap can disable stale seeded entries. Production reference sync
+  // leaves administrator-created/custom menu entries untouched.
+  let disabledCodes: string[] = [];
+  if (options.disableStaleMenus !== false) {
+    const stale = await prisma.menu.findMany({ select: { id: true, code: true, enabled: true } });
+    const orphans = stale.filter((menu) => !seededCodes.has(menu.code) && menu.enabled);
+    for (const orphan of orphans) {
+      await prisma.menu.update({ where: { id: orphan.id }, data: { enabled: false } });
+      disabledCodes.push(orphan.code);
+    }
   }
 
   console.log(
-    `seeded ${MENU_SEED.length} menu groups${orphans.length > 0 ? ` (disabled ${orphans.length} stale: ${orphans.map((menu) => menu.code).join(', ')})` : ''}`,
+    `seeded ${MENU_SEED.length} menu groups${disabledCodes.length > 0 ? ` (disabled ${disabledCodes.length} stale: ${disabledCodes.join(', ')})` : ''}`,
   );
 }
 
-async function seedDictionaries() {
+async function seedDictionaries(options: { systemLockedOnly?: boolean } = {}) {
   // The two product-status types must mirror the Prisma enums exactly, otherwise
   // the staged enum → dictionary migration could not backfill (docs/20 §7.4, §8).
   const enumParity: { type: string; codes: readonly string[] }[] = [
@@ -521,7 +572,11 @@ async function seedDictionaries() {
     }
   }
 
-  for (const type of DICTIONARIES) {
+  const dictionaries = options.systemLockedOnly
+    ? DICTIONARIES.filter((type) => type.systemLocked)
+    : DICTIONARIES;
+
+  for (const type of dictionaries) {
     const record = await prisma.dictionaryType.upsert({
       where: { code: type.code },
       create: {
@@ -529,7 +584,11 @@ async function seedDictionaries() {
         nameKey: type.nameKey,
         systemLocked: type.systemLocked,
       },
-      update: { nameKey: type.nameKey, systemLocked: type.systemLocked },
+      update: {
+        nameKey: type.nameKey,
+        systemLocked: type.systemLocked,
+        ...(type.systemLocked ? { enabled: true } : {}),
+      },
     });
     let sortOrder = 10;
     for (const item of type.items) {
@@ -544,7 +603,11 @@ async function seedDictionaries() {
           sortOrder,
           systemLocked: type.systemLocked,
         },
-        update: { value: item.value ?? null, systemLocked: type.systemLocked },
+        update: {
+          value: item.value ?? null,
+          systemLocked: type.systemLocked,
+          ...(type.systemLocked ? { enabled: true } : {}),
+        },
       });
       for (const [locale, label] of Object.entries(item.labels)) {
         await prisma.dictionaryItemTranslation.upsert({
@@ -561,13 +624,15 @@ async function seedDictionaries() {
   // field means "extra business payload" everywhere. Values an administrator
   // entered (or that the seed sets explicitly, such as payment terms) are left
   // alone (docs/20 §3.2).
-  const cleared = await prisma.$executeRaw`
-    UPDATE "dictionary_items" SET "value" = NULL
-    WHERE "value" IS NOT NULL AND "value" = "code"
-  `;
+  const cleared = options.systemLockedOnly
+    ? 0
+    : await prisma.$executeRaw`
+        UPDATE "dictionary_items" SET "value" = NULL
+        WHERE "value" IS NOT NULL AND "value" = "code"
+      `;
 
   console.log(
-    `seeded ${DICTIONARIES.length} dictionary types (cleared ${cleared} duplicated legacy values)`,
+    `seeded ${dictionaries.length} dictionary types (cleared ${cleared} duplicated legacy values)`,
   );
 }
 
@@ -956,6 +1021,21 @@ async function seedHomeSections() {
 }
 
 async function main() {
+  if (referenceOnly && withDemoData) {
+    throw new Error('--reference-only cannot be combined with --demo.');
+  }
+
+  if (referenceOnly) {
+    // Production deployment path: synchronize versioned authorization and
+    // system dictionary data only. Do not reseed administrator-managed page
+    // content, global setting values, tags, FAQs, home sections, or demo items.
+    await seedPermissionsAndRoles({ referenceOnly: true });
+    await seedMenus({ preserveExistingTranslations: true, disableStaleMenus: false });
+    await seedDictionaries({ systemLockedOnly: true });
+    console.log('production reference-data sync completed; business content and custom menu labels preserved');
+    return;
+  }
+
   await seedPermissionsAndRoles();
   await seedMenus();
   await seedDictionaries();
