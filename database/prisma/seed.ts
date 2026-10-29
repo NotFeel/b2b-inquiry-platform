@@ -411,7 +411,9 @@ async function seedPermissionsAndRoles(options: { referenceOnly?: boolean } = {}
     // a release grant a new feature to its default roles without rebuilding
     // their complete permission sets or restoring previously removed grants.
     const existingPermissionCodes = new Set(
-      (await tx.permission.findMany({ select: { code: true } })).map((permission) => permission.code),
+      (await tx.permission.findMany({ select: { code: true } })).map(
+        (permission) => permission.code,
+      ),
     );
     const newPermissionCodes = new Set(
       PERMISSIONS.filter((permission) => !existingPermissionCodes.has(permission.code)).map(
