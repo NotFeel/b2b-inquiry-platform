@@ -78,7 +78,7 @@ async function main(): Promise<void> {
       },
     },
   });
-  const dictionaryByCode = new Map(dictionaries.map((dictionary) => [dictionary.code, dictionary]));
+  const dictionaryByCode = new Map(dictionaries.map((dictionary) => [dictionary.code, dictionary] as const));
   for (const [typeCode, expectedItems] of Object.entries(REQUIRED_DICTIONARIES)) {
     const dictionary = dictionaryByCode.get(typeCode);
     if (!dictionary) {
@@ -87,7 +87,7 @@ async function main(): Promise<void> {
     }
     if (!dictionary.enabled) problems.push('dictionary type ' + typeCode + ' is disabled');
     if (!dictionary.systemLocked) problems.push('dictionary type ' + typeCode + ' must be system-locked');
-    const itemsByCode = new Map(dictionary.items.map((item) => [item.code, item]));
+    const itemsByCode = new Map(dictionary.items.map((item) => [item.code, item] as const));
     for (const itemCode of expectedItems) {
       const item = itemsByCode.get(itemCode);
       if (!item) {
