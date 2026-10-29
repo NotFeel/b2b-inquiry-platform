@@ -24,6 +24,17 @@ jobs:
       - name: Capture checked-out source SHA
         id: source
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Verify database release tooling is included in this source ref
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -f database/prisma/seed.ts
+          test -f database/scripts/check-menu-translations.ts
+          test -f database/scripts/check-production-reference-data.ts
+          test -f database/scripts/exec.mjs
+          test -d database/prisma/migrations
+          test -f infra/production/deploy.sh
+          echo "Database migrations, production reference seed/verification, and deploy script are present."
       - uses: pnpm/action-setup@v4
         with:
           version: 11.25.0
