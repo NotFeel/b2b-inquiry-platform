@@ -37,7 +37,7 @@ Do not expose API or PostgreSQL publicly.
 
 ## 3. Build and publish only
 
-Merge the files after review. **Actions → Publish production images** builds on GitHub-hosted infrastructure and pushes the four SHA-tagged images. It does not deploy to the server. Record the full SHA and verify all four images exist in GHCR.
+Merge the files after review. **Actions → Publish production images** builds on GitHub-hosted infrastructure and pushes the four SHA-tagged images. It does not connect to or write to the production database. The workflow also verifies that the selected source contains the Prisma migrations, reference seeder, read-only reference-data checks, and deploy script. Record the full SHA and verify all four images exist in GHCR.
 
 ## 4. Start runner and test
 
@@ -58,21 +58,34 @@ Create GitHub Environment `production`, restrict deployments to `main`, require 
 
 ## 6. Manual deploy
 
-Actions → **Manual production deployment** → Run workflow. Supply the exact 40-character SHA with published images and type `DEPLOY`. Check job logs and on the server run:
+Actions → **Manual production deployment** → Run workflow. Supply the exact 40-character SHA whose four images are already published, and type `DEPLOY`. The workflow checks that the commit is reachable from `main`, packages only that commit's `infra/production/deploy.sh` on a GitHub-hosted runner, and transfers only the script artifact to the self-hosted runner. It does not check out the application source on the production host.
+
+The release script then performs this order:
+
+1. Pull the four immutable images and ensure PostgreSQL is healthy.
+2. Create a compressed pre-migration database backup.
+3. Run `prisma migrate deploy` using the release image.
+4. Run the production-safe reference sync: `tsx prisma/seed.ts --reference-only`.
+5. Run `check-menu-translations.ts` and `check-production-reference-data.ts`; if either gate fails, do not switch the application images.
+6. Update Storefront, Admin, API, and Worker images and require all health checks to pass.
+
+The production reference-only seed synchronizes code-owned permissions, menu route/permission metadata, missing menu translations, and system-locked dictionaries. It does **not** run `--demo`, import local products, overwrite global setting values, rewrite administrator-managed content/FAQ/tag/home-section data, overwrite existing menu labels, disable custom menu rows, or delete existing grants from non-super-admin roles. It adds default grants for permission codes newly introduced by this release to existing roles; it does not recreate those roles' complete grant lists. The full `pnpm db:seed` remains a bootstrap/development command and must not be used as an automatic production release step.
+
+Check job logs and on the server run:
 
 ```bash
 docker compose --env-file /opt/b2b-inquiry-platform/deploy/.env -f /opt/b2b-inquiry-platform/deploy/compose.yaml ps
 ```
 
-On the first successful deployment only, seed baseline permissions/content and create the initial super administrator:
+On the first successful deployment only, run the bootstrap script to create initial baseline content and the super administrator:
 
 ```bash
 /opt/b2b-inquiry-platform/deploy/bootstrap-admin.sh
 ```
 
-This reads the separate `.env.bootstrap` file. After logging in, change the initial password, then securely delete `.env.bootstrap`. Do not run the bootstrap script again unless intentionally provisioning a new super administrator.
+This first-install bootstrap runs the full seed and creates an initial account, so perform it **before** administrators customize seeded content, labels, and built-in role permissions. It reads the separate `.env.bootstrap` file. After logging in, change the initial password, then securely delete `.env.bootstrap`. Do not run the bootstrap script again unless intentionally provisioning a new super administrator and accepting the full-seed effects.
 
-Verify storefront, admin login, product catalogue, image upload/read, and WhatsApp inquiry flow.
+Verify the new menu at `/zh-CN/products/bulk-import` and `/en-US/products/bulk-import`, user permissions, the target status dictionaries, storefront, admin login, product catalogue, image upload/read, and WhatsApp inquiry flow.
 
 ## 7. Rollback test
 

@@ -16,7 +16,51 @@ concurrency:
   group: production-deploy
   cancel-in-progress: false
 jobs:
+  prepare-deploy-script:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.confirm_production == 'DEPLOY' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate exact commit SHA
+        shell: bash
+        env:
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: |
+          [[ "$COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "commit_sha must be exactly 40 lowercase hexadecimal characters" >&2
+            exit 1
+          }
+      - name: Checkout selected release source on GitHub-hosted runner
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 0
+      - name: Verify selected SHA is on main and package the deployment script
+        shell: bash
+        env:
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$COMMIT_SHA"
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$COMMIT_SHA" origin/main || {
+            echo "Production deployment only accepts commits reachable from main." >&2
+            exit 1
+          }
+          test -f infra/production/deploy.sh
+          bash -n infra/production/deploy.sh
+          # Only this small deployment script is sent to the self-hosted runner.
+          # The application source tree is never checked out on the production host.
+          tar -czf "$RUNNER_TEMP/production-deploy-script.tar.gz" -C infra/production deploy.sh
+      - name: Upload versioned deployment script
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-deploy-script-${{ inputs.commit_sha }}
+          path: ${{ runner.temp }}/production-deploy-script.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
   deploy:
+    needs: prepare-deploy-script
     if: ${{ github.ref == 'refs/heads/main' && inputs.confirm_production == 'DEPLOY' }}
     runs-on: [self-hosted, linux, x64, local-deploy]
     environment: production
@@ -31,7 +75,27 @@ jobs:
             echo "commit_sha must be exactly 40 lowercase hexadecimal characters" >&2
             exit 1
           }
-      # Intentionally no checkout: the server never downloads application source.
+      - name: Download matching deployment script
+        uses: actions/download-artifact@v4
+        with:
+          name: production-deploy-script-${{ inputs.commit_sha }}
+          path: ${{ runner.temp }}/production-release-tooling
+      - name: Install deployment script from selected SHA
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          TOOLING_DIR="$RUNNER_TEMP/production-release-tooling"
+          tar -xzf "$TOOLING_DIR/production-deploy-script.tar.gz" -C "$TOOLING_DIR"
+          test -f "$TOOLING_DIR/deploy.sh"
+          install -m 700 "$TOOLING_DIR/deploy.sh" /opt/b2b-inquiry-platform/deploy/deploy.sh
+          bash -n /opt/b2b-inquiry-platform/deploy/deploy.sh
+          grep -q -- '--reference-only' /opt/b2b-inquiry-platform/deploy/deploy.sh || {
+            echo "Selected deployment script does not include production reference-data sync." >&2
+            exit 1
+          }
+      # The server never checks out the application source. The selected commit's
+      # deploy.sh runs migration + reference sync + verification before switching
+      # the four immutable GHCR images.
       - name: Deploy immutable images
         shell: bash
         env:

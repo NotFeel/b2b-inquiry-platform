@@ -20,6 +20,8 @@
     "db:migrate": "pnpm --filter @b2b/database run migrate:dev",
     "db:deploy": "pnpm --filter @b2b/database run migrate:deploy",
     "db:seed": "pnpm --filter @b2b/database run seed",
+    "db:seed:reference": "pnpm --filter @b2b/database run seed:reference",
+    "check:production-reference-data": "pnpm --filter @b2b/database run check:production-reference-data",
     "check:menu-translations": "pnpm --filter @b2b/database run check:menu-translations",
     "bootstrap:admin": "pnpm --filter @b2b/database run bootstrap"
   },
