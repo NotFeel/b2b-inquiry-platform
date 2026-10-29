@@ -19,6 +19,19 @@ const nextConfig = {
         source: '/api/v1/public/inquiry-intents',
         destination: `${target}/api/v1/public/inquiry-intents`,
       },
+      {
+        // Browser telemetry must stay on the storefront origin. The Next server
+        // forwards it to the private API over the Docker application network.
+        source: '/api/v1/public/analytics/events',
+        destination: `${target}/api/v1/public/analytics/events`,
+      },
+      {
+        // Public product images may use this path when local storage is enabled
+        // or an object does not have a published CDN variant. Never expose the
+        // internal API_BASE_URL in an <img src>.
+        source: '/api/v1/files/:path*',
+        destination: `${target}/api/v1/files/:path*`,
+      },
     ];
   },
   async headers() {
