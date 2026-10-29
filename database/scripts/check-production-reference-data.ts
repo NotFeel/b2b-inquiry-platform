@@ -78,7 +78,9 @@ async function main(): Promise<void> {
       },
     },
   });
-  const dictionaryByCode = new Map(dictionaries.map((dictionary) => [dictionary.code, dictionary] as const));
+  const dictionaryByCode = new Map(
+    dictionaries.map((dictionary) => [dictionary.code, dictionary] as const),
+  );
   for (const [typeCode, expectedItems] of Object.entries(REQUIRED_DICTIONARIES)) {
     const dictionary = dictionaryByCode.get(typeCode);
     if (!dictionary) {
@@ -96,9 +98,13 @@ async function main(): Promise<void> {
       }
       if (!item.enabled) problems.push('dictionary option is disabled: ' + typeCode + '.' + itemCode);
       for (const locale of ['zh-CN', 'en-US']) {
-        const label = item.translations.find((translation) => translation.locale === locale)?.label.trim();
+        const label = item.translations
+          .find((translation) => translation.locale === locale)
+          ?.label.trim();
         if (!label) {
-          problems.push('missing dictionary option translation: ' + typeCode + '.' + itemCode + ':' + locale);
+          problems.push(
+            'missing dictionary option translation: ' + typeCode + '.' + itemCode + ':' + locale,
+          );
         }
       }
     }
@@ -145,7 +151,9 @@ async function main(): Promise<void> {
   }
 
   if (problems.length > 0) {
-    console.error('Production reference-data verification failed (' + problems.length + ' issue(s)):');
+    console.error(
+      'Production reference-data verification failed (' + problems.length + ' issue(s)):',
+    );
     for (const problem of problems) console.error('  - ' + problem);
     process.exitCode = 1;
     return;
