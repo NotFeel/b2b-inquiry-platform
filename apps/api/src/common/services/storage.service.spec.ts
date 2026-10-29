@@ -47,9 +47,9 @@ describe('R2 bucket routing', () => {
     );
   });
 
-  it('does not expose private keys through the public CDN base URL', () => {
+  it('keeps non-CDN file URLs same-origin and does not expose private keys via the CDN', () => {
     expect(service().publicUrl('quote-exports/2026/10/job.xlsx')).toBe(
-      'https://api.example.com/api/v1/files/quote-exports/2026/10/job.xlsx',
+      '/api/v1/files/quote-exports/2026/10/job.xlsx',
     );
     expect(service().publicUrl('public/products/asset/version/640.webp')).toBe(
       'https://images.example.com/public/products/asset/version/640.webp',
