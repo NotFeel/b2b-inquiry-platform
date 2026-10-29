@@ -227,7 +227,7 @@ export async function sendAnalyticsEvent(payload: {
   context?: Record<string, unknown>;
 }): Promise<void> {
   try {
-    await fetch(`${API_BASE_URL}/api/v1/public/analytics/events`, {
+    await fetch('/api/v1/public/analytics/events', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
