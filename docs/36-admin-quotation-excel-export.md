@@ -116,3 +116,8 @@
 本功能按品类筛选商品，默认勾选整个筛选结果，支持取消部分商品；操作员填写公司名称、联系人、邮箱、电话、报价单标题、加价率、目标币种和汇率后导出 Excel。报价价格以后台 CNY 成本为基准，统一由后端 Decimal 计算：成本 × (1 + markup%) × 汇率，最终目标币金额向上取整到两位。汇率口径固定为“1 CNY = X 目标币”。商品图片必须从当前商品主图对应的原始文件读取并嵌入 XLSX；不得写入 URL、缩略图或 WPS DISPIMG 公式。
 
 实现时必须复用现有 Product、Category、ProductImage、FileAsset、RBAC、菜单、审计、i18n 和 Storage adapter；public API/SSR 不得暴露内部成本价。完整 UI、API、权限、图片处理、Excel 布局、测试、部署和回滚要求见上述实施规格。本文链接仅做导航，不表示功能代码已完成。
+
+
+## 报价单导出实施文档
+
+完整开发规格请阅读 [`docs/36-admin-quotation-excel-export-implementation.md`](36-admin-quotation-excel-export-implementation.md)。配套 Excel 模板请下载本对话提供的 `B2B_Quotation_Template.xlsx`。该文档是实施要求，不代表代码已实现。
