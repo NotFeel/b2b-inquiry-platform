@@ -11,3 +11,4 @@ export * from './slug';
 export * from './images';
 export * from './storage';
 export * from './product-import';
+export * from './quotation-export';

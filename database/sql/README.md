@@ -19,3 +19,21 @@
 3. staging 应先执行；生产执行前确认备份、窗口、告警和回滚/前向修复方案。
 4. 不把生产连接串放在 SQL 文件、截图或命令历史里。
 5. 初始化权限和字典的脚本用 `INSERT ... ON CONFLICT` 或等价幂等写法，并保留系统锁定标识。
+
+## 报价单导出菜单与权限增量数据
+
+`database/sql/seeds/20261030_quotation_export_menu_permissions.sql` 用于修复已有数据库尚未同步
+`products.quotation-export` 菜单、双语翻译和报价单导出权限的问题。它属于可重复执行的数据脚本，
+不是 schema migration；脚本会校验父菜单、系统角色、路由冲突和最终授权数量，任一检查失败时整笔事务回滚。
+
+本地 PostgreSQL 容器启动后，可直接进入开发容器执行：
+
+```bash
+docker compose -f infra/docker-compose.dev.yml up -d postgres
+docker compose -f infra/docker-compose.dev.yml exec -T postgres \
+  psql -v ON_ERROR_STOP=1 -U app -d b2b_catalog \
+  < database/sql/seeds/20261030_quotation_export_menu_permissions.sql
+```
+
+执行后刷新 Admin 页面即可重新读取导航；当前权限守卫每次请求都读取数据库，不依赖进程内权限缓存。
+如需回滚，先确认没有其他功能引用这些记录，再按 SQL 文件末尾列出的语句单独执行。

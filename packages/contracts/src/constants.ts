@@ -170,6 +170,14 @@ export const PERMISSIONS = {
    */
   productCostRead: 'product.cost.read',
   productCostUpdate: 'product.cost.update',
+  /**
+   * Dynamic quotation XLSX export (docs/36). Read and create are deliberately
+   * separate: a reviewer can open the selection screen without being able to
+   * generate a customer-facing price file.
+   */
+  quotationExportRead: 'quotation.export.read',
+  quotationExportCreate: 'quotation.export.create',
+  quotationExportUnpublished: 'quotation.export.unpublished',
   tagRead: 'tag.read',
   tagCreate: 'tag.create',
   tagUpdate: 'tag.update',
@@ -338,6 +346,9 @@ export const ERROR_CODES = {
   quoteTemplateInvalid: 'QUOTE_TEMPLATE_INVALID',
   quoteExportEmpty: 'QUOTE_EXPORT_EMPTY',
   quoteExportTooLarge: 'QUOTE_EXPORT_TOO_LARGE',
+  quotationExportValidationFailed: 'QUOTATION_EXPORT_VALIDATION_FAILED',
+  quotationExportPricingInvalid: 'QUOTATION_EXPORT_PRICING_INVALID',
+  quotationExportImageUnavailable: 'QUOTATION_EXPORT_IMAGE_UNAVAILABLE',
   quoteTemplateInUse: 'QUOTE_TEMPLATE_IN_USE',
   piNotEditable: 'PI_NOT_EDITABLE',
   piRevisionRequired: 'PI_REVISION_REQUIRED',
@@ -469,6 +480,7 @@ export const PROTECTED_MENU_CODES: readonly string[] = [
   'catalog',
   'products',
   'products.bulk-import',
+  'products.quotation-export',
   'categories',
   'tags',
   'leads-analytics',
@@ -541,6 +553,18 @@ export type ContentPageType = (typeof CONTENT_PAGE_TYPES)[number];
 
 export const QUOTE_TEMPLATE_TYPES = ['product_quote', 'pi'] as const;
 export type QuoteTemplateType = (typeof QUOTE_TEMPLATE_TYPES)[number];
+
+/** Server-owned currency allow-list for the dynamic quotation export (docs/36 §3.4). */
+export const QUOTATION_EXPORT_CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'CNY'] as const;
+export type QuotationExportCurrency = (typeof QUOTATION_EXPORT_CURRENCIES)[number];
+
+export const QUOTATION_EXPORT_LIMITS = {
+  maxProducts: 200,
+  maxImageBytes: 8 * 1024 * 1024,
+  maxTotalImageBytes: 40 * 1024 * 1024,
+  imageReadConcurrency: 4,
+  maxImagePixels: 20_000_000,
+} as const;
 
 export const PI_STATUSES = ['draft', 'review', 'issued', 'superseded', 'cancelled'] as const;
 export type PiStatus = (typeof PI_STATUSES)[number];

@@ -15,6 +15,8 @@ import {
   PRODUCT_SLUG_STRATEGIES,
   PUBLISH_STATUSES,
   PUBLIC_LOCALE,
+  QUOTATION_EXPORT_CURRENCIES,
+  QUOTATION_EXPORT_LIMITS,
   QUOTE_TEMPLATE_TYPES,
   SETTING_GROUPS,
   SETTING_VALUE_TYPES,
@@ -669,6 +671,110 @@ export const productImageUpdateSchema = z.object({
 });
 export type ProductImageUpdateInput = z.infer<typeof productImageUpdateSchema>;
 
+// ------------------------------------------------------- quotation export
+
+const quotationDecimalSchema = (fractionDigits: number, maxIntegerDigits: number) =>
+  z
+    .string()
+    .trim()
+    .min(1)
+    .max(maxIntegerDigits + fractionDigits + 1)
+    .regex(new RegExp(`^\\d{1,${maxIntegerDigits}}(?:\\.\\d{1,${fractionDigits}})?$`), {
+      message: 'validation.decimal.invalid',
+    });
+
+const quotationMarkupSchema = quotationDecimalSchema(2, 3).refine((value) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 && numeric <= 500;
+}, 'validation.decimal.outOfRange');
+
+const quotationExchangeRateSchema = quotationDecimalSchema(10, 12).refine((value) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0;
+}, 'validation.decimal.positive');
+
+const quotationCategoryIdSchema = uuidSchema;
+const quotationProductIdsSchema = z
+  .array(uuidSchema)
+  .min(1)
+  .max(QUOTATION_EXPORT_LIMITS.maxProducts)
+  .transform((ids) => [...new Set(ids)]);
+
+const quotationIncludeDescendantsSchema = z
+  .union([z.boolean(), z.enum(['true', 'false'])])
+  .transform((value) => value === true || value === 'true');
+
+export const quotationExportProductListQuerySchema = z
+  .object({
+    categoryId: quotationCategoryIdSchema,
+    includeDescendants: quotationIncludeDescendantsSchema.default(true),
+    search: z.string().trim().max(120).optional().default(''),
+    locale: localeSchema.default(DEFAULT_ADMIN_LOCALE),
+  })
+  .strict();
+export type QuotationExportProductListQueryInput = z.infer<
+  typeof quotationExportProductListQuerySchema
+>;
+
+const quotationExportSelectionShape = {
+  categoryId: quotationCategoryIdSchema,
+  includeDescendants: quotationIncludeDescendantsSchema,
+  productIds: quotationProductIdsSchema,
+} as const;
+
+export const quotationExportPreviewSchema = z
+  .object({
+    ...quotationExportSelectionShape,
+    markupPercent: quotationMarkupSchema,
+    currencyCode: z.enum(QUOTATION_EXPORT_CURRENCIES),
+    exchangeRate: quotationExchangeRateSchema,
+  })
+  .strict();
+export type QuotationExportPreviewInput = z.infer<typeof quotationExportPreviewSchema>;
+
+const quotationHeaderText = (max: number) =>
+  z
+    .string()
+    .trim()
+    .min(1)
+    .max(max)
+    .refine(
+      // Excel and HTTP headers must never receive control characters from a
+      // customer-entered field.
+      // eslint-disable-next-line no-control-regex
+      (value) => !/[\u0000-\u001f\u007f]/.test(value),
+      'validation.text.controlCharacters',
+    );
+
+export const quotationExportSchema = z
+  .object({
+    templateId: uuidSchema,
+    ...quotationExportSelectionShape,
+    header: z
+      .object({
+        companyName: quotationHeaderText(120),
+        contactPerson: quotationHeaderText(80),
+        email: emailSchema,
+        phone: z
+          .string()
+          .trim()
+          .min(3)
+          .max(40)
+          .regex(/^[+()\d\s-]+$/, 'validation.phone.characters'),
+        quotationTitle: quotationHeaderText(160),
+      })
+      .strict(),
+    pricing: z
+      .object({
+        markupPercent: quotationMarkupSchema,
+        currencyCode: z.enum(QUOTATION_EXPORT_CURRENCIES),
+        exchangeRate: quotationExchangeRateSchema,
+      })
+      .strict(),
+  })
+  .strict();
+export type QuotationExportInput = z.infer<typeof quotationExportSchema>;
+
 /**
  * Product master data (docs/24 §3.3 A-C).
  *
@@ -1107,11 +1213,19 @@ export const quoteTemplateUploadSchema = z.object({
   templateType: z.enum(QUOTE_TEMPLATE_TYPES),
   fileAssetId: uuidSchema,
   sheetName: z.string().trim().max(120).nullable().optional(),
-  headerRow: z.coerce.number().int().min(1).max(200).default(1),
-  itemStartRow: z.coerce.number().int().min(1).max(500).default(2),
-  fieldMapping: z.record(z.string(), z.string().max(200)).default({}),
+  // Omit these fields to let the server inspect the workbook. Explicit values
+  // remain available for an advanced import flow, but must never silently
+  // override auto-detection with schema defaults.
+  headerRow: z.coerce.number().int().min(1).max(200).optional(),
+  itemStartRow: z.coerce.number().int().min(1).max(500).optional(),
+  fieldMapping: z.record(z.string(), z.string().max(200)).optional(),
 });
 export type QuoteTemplateUploadInput = z.infer<typeof quoteTemplateUploadSchema>;
+
+export const quoteTemplateStatusSchema = z.object({
+  status: z.enum(['draft', 'active', 'disabled']),
+});
+export type QuoteTemplateStatusInput = z.infer<typeof quoteTemplateStatusSchema>;
 
 export const quoteExportCreateSchema = z.object({
   templateId: uuidSchema,

@@ -1113,8 +1113,8 @@ model FileDeletionJob {
   /// Object-storage key to remove. Null only for aggregate tasks (for example
   /// the final `product` purge that runs after every image object is gone).
   storageKey     String?   @db.VarChar(500)
-  /// `file_asset` | `quote_export_job` | `pdf_conversion_job` | `product_image`
-  /// | `product_import_chunk` | `product`. Never a client-supplied value.
+  /// `file_asset` | `quote_template` | `quote_export_job` | `pdf_conversion_job`
+  /// | `product_image` | `product_import_chunk` | `product`. Never a client-supplied value.
   entityType     String?   @db.VarChar(100)
   entityId       String?   @db.VarChar(120)
   /// Owning product of the deleted object, so a product purge can wait for all

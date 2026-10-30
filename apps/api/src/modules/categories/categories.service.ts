@@ -566,6 +566,23 @@ export class CategoriesService {
     return category?.id ?? null;
   }
 
+  /**
+   * Resolves the administrator-visible category scope used by quotation
+   * export. Unlike the public variant this includes hidden/disabled branches;
+   * authorization is enforced by the quotation endpoint itself.
+   */
+  async resolveAdminCategoryScope(
+    categoryId: string,
+    includeDescendants: boolean,
+  ): Promise<string[] | null> {
+    const rows = await this.loadRefs();
+    const category = rows.find((row) => row.id === categoryId);
+    if (!category) return null;
+    return includeDescendants
+      ? [category.id, ...collectDescendantIds(rows, category.id)]
+      : [category.id];
+  }
+
   // ---------------------------------------------------------------- helpers
 
   private async loadRows(): Promise<(CategoryRow & { cover: { storageKey: string } | null })[]> {

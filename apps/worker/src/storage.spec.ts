@@ -1,6 +1,9 @@
+import { promises as fs } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { WorkerEnv } from './env';
-import { createStorage, RoutedObjectStorage } from './storage';
+import { createStorage, LocalObjectStorage, RoutedObjectStorage } from './storage';
 
 function env(overrides: Record<string, unknown>): WorkerEnv {
   return {
@@ -39,5 +42,23 @@ describe('createStorage', () => {
     expect(() => createStorage(env({ STORAGE_DRIVER: 's3' }))).toThrow(
       /STORAGE_DRIVER=s3 requires/,
     );
+  });
+
+  it('physically removes a local object and makes repeated deletion idempotent', async () => {
+    const root = await fs.mkdtemp(join(tmpdir(), 'b2b-worker-storage-'));
+    const storage = new LocalObjectStorage(root);
+    const key = 'quote-template/2026/10/template.xlsx';
+
+    try {
+      await storage.put(key, Buffer.from('private workbook'), 'application/octet-stream');
+      expect(await storage.exists(key)).toBe(true);
+
+      await storage.delete(key);
+      expect(await storage.exists(key)).toBe(false);
+
+      await expect(storage.delete(key)).resolves.toBeUndefined();
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 });

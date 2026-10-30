@@ -120,6 +120,99 @@ export const adminApi = {
   delete: <T>(path: string) => request<T>('DELETE', path),
 };
 
+/** Parses RFC 5987 `filename*` first, then a quoted ASCII filename fallback. */
+export function parseContentDispositionFilename(
+  disposition: string | null,
+  fallback = 'download.bin',
+): string {
+  if (!disposition) return fallback;
+  const encoded = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(disposition)?.[1];
+  const quoted = /filename\s*=\s*"([^"]+)"/i.exec(disposition)?.[1];
+  const bare = /filename\s*=\s*([^;]+)/i.exec(disposition)?.[1]?.trim();
+  let candidate = encoded ?? quoted ?? bare ?? fallback;
+  if (encoded) {
+    try {
+      candidate = decodeURIComponent(encoded);
+    } catch {
+      candidate = quoted ?? bare ?? fallback;
+    }
+  }
+  const safe = candidate
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .replace(/[\\/]/g, '_')
+    .trim()
+    .slice(0, 180);
+  return safe.length > 0 ? safe : fallback;
+}
+
+export interface AdminFileDownload {
+  blob: Blob;
+  filename: string;
+  requestId: string | null;
+}
+
+/** Downloads a generated file without treating its binary response as JSON. */
+export async function downloadAdminFilePost(
+  path: string,
+  body: unknown,
+): Promise<AdminFileDownload> {
+  const response = await fetch(buildApiUrl(path), {
+    method: 'POST',
+    credentials: 'include',
+    cache: 'no-store',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return readAdminFileResponse(response, 'Quotation.xlsx');
+}
+
+/** Downloads an existing private file through an authenticated GET endpoint. */
+export async function downloadAdminFileGet(
+  path: string,
+  fallbackFilename = 'download.bin',
+): Promise<AdminFileDownload> {
+  const response = await fetch(buildApiUrl(path), {
+    method: 'GET',
+    credentials: 'include',
+    cache: 'no-store',
+  });
+  return readAdminFileResponse(response, fallbackFilename);
+}
+
+async function readAdminFileResponse(
+  response: Response,
+  fallbackFilename: string,
+): Promise<AdminFileDownload> {
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => ({}))) as {
+      error?: {
+        code?: string;
+        message?: string;
+        requestId?: string;
+        details?: Record<string, unknown>;
+      };
+    };
+    const error = payload.error;
+    throw new AdminApiError(
+      response.status,
+      error?.code ?? 'INTERNAL_ERROR',
+      error?.message ?? 'The request failed.',
+      error?.requestId ?? response.headers.get('x-request-id') ?? undefined,
+      error?.details,
+    );
+  }
+  const blob = await response.blob();
+  return {
+    blob,
+    filename: parseContentDispositionFilename(
+      response.headers.get('content-disposition'),
+      fallbackFilename,
+    ),
+    requestId: response.headers.get('x-request-id'),
+  };
+}
+
 /** Uploads a file with the session cookie attached (multipart/form-data). */
 export async function uploadFile(
   file: File,

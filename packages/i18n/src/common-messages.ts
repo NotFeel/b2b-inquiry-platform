@@ -113,6 +113,12 @@ export const commonMessages: Record<'en-US' | 'zh-CN', Messages> = {
       QUOTE_TEMPLATE_INVALID: 'The template failed validation.',
       QUOTE_EXPORT_EMPTY: 'No products match the selected filters.',
       QUOTE_EXPORT_TOO_LARGE: 'The export exceeds the configured product limit.',
+      QUOTATION_EXPORT_VALIDATION_FAILED:
+        'One or more selected products are not ready for quotation. No file was generated.',
+      QUOTATION_EXPORT_PRICING_INVALID:
+        'The markup, currency or exchange rate is invalid. No file was generated.',
+      QUOTATION_EXPORT_IMAGE_UNAVAILABLE:
+        'A product image could not be read safely. No file was generated.',
       QUOTE_TEMPLATE_IN_USE: 'This template version is referenced by previous exports.',
       PI_NOT_EDITABLE: 'An issued PI cannot be edited. Create a revision instead.',
       PI_REVISION_REQUIRED: 'Create a revision before changing an issued PI.',
@@ -365,6 +371,9 @@ export const commonMessages: Record<'en-US' | 'zh-CN', Messages> = {
       QUOTE_TEMPLATE_INVALID: '模板预检未通过。',
       QUOTE_EXPORT_EMPTY: '所选筛选条件下没有商品。',
       QUOTE_EXPORT_TOO_LARGE: '导出商品数量超过配置上限。',
+      QUOTATION_EXPORT_VALIDATION_FAILED: '一个或多个所选商品不满足报价条件，未生成任何文件。',
+      QUOTATION_EXPORT_PRICING_INVALID: '加价率、币种或汇率无效，未生成任何文件。',
+      QUOTATION_EXPORT_IMAGE_UNAVAILABLE: '无法安全读取商品主图，未生成任何文件。',
       QUOTE_TEMPLATE_IN_USE: '该模板版本已被历史导出引用。',
       PI_NOT_EDITABLE: '已正式发出的 PI 不能直接编辑，请创建修订版本。',
       PI_REVISION_REQUIRED: '修改已发出的 PI 前请先创建修订版本。',

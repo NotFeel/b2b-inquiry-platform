@@ -20,6 +20,7 @@ import { LeadsModule } from './modules/leads/leads.module';
 import { MenusModule } from './modules/menus/menus.module';
 import { PiModule } from './modules/pi/pi.module';
 import { ProductsModule } from './modules/products/products.module';
+import { QuotationExportModule } from './modules/quotation-export/quotation-export.module';
 import { QuoteModule } from './modules/quote/quote.module';
 import { RbacModule } from './modules/rbac/rbac.module';
 import { SettingsModule } from './modules/settings/settings.module';
@@ -42,6 +43,7 @@ import { UsersModule } from './modules/users/users.module';
     SiteModule,
     CategoriesModule,
     ProductsModule,
+    QuotationExportModule,
     TagsModule,
     FilesModule,
     AdsModule,

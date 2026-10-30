@@ -67,6 +67,9 @@ const PERMISSIONS: { code: string; module: string; nameKey: string }[] = [
   ['product.image.delete', 'product'],
   ['product.cost.read', 'product'],
   ['product.cost.update', 'product'],
+  ['quotation.export.read', 'quotation'],
+  ['quotation.export.create', 'quotation'],
+  ['quotation.export.unpublished', 'quotation'],
   ['tag.read', 'tag'],
   ['tag.create', 'tag'],
   ['tag.update', 'tag'],
@@ -156,6 +159,10 @@ const ROLES: {
       'product.image.delete',
       'product.cost.read',
       'product.cost.update',
+      // Catalogue managers can prepare and download quotations. Unpublished
+      // products remain a separate, intentionally ungranted capability.
+      'quotation.export.read',
+      'quotation.export.create',
       // Business forms (product status, payment terms) read their options from
       // the shared dictionary endpoint (docs/20 §10).
       'dictionary.option.read',

@@ -41,9 +41,45 @@ function transactionMock() {
     category: { count: vi.fn(async () => 0) },
     ad: { count: vi.fn(async () => 0) },
     pdfConversionJob: { count: vi.fn(async () => 0) },
+    quoteTemplate: { deleteMany: vi.fn(async () => ({ count: 1 })) },
     fileAsset: { deleteMany: vi.fn(async () => ({ count: 1 })) },
     fileDeletionJob: { updateMany: vi.fn(async () => ({ count: 1 })) },
     auditLog: { create: vi.fn(async () => ({})) },
+  };
+}
+
+function quoteTemplateDepsWith(
+  deleteImpl: (key: string) => Promise<void>,
+  references: { exports?: number; sharedVersions?: number } = {},
+) {
+  const transaction = transactionMock();
+  const storageKey = 'quote-template/2026/10/B2B_Quotation_Template.xlsx';
+  const prisma = {
+    quoteTemplate: {
+      findUnique: vi.fn(async () => ({ id: 'template-1', storageKey })),
+      count: vi.fn(async () => references.sharedVersions ?? 0),
+    },
+    quoteExportJob: { count: vi.fn(async () => references.exports ?? 0) },
+    $transaction: vi.fn(async (callback: (tx: typeof transaction) => unknown) =>
+      callback(transaction),
+    ),
+  };
+  const logger = {
+    info: vi.fn(),
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
+  return {
+    deps: {
+      prisma: prisma as unknown as PrismaClient,
+      storage: { delete: vi.fn(deleteImpl) } as unknown as ObjectStorage,
+      logger: logger as unknown as WorkerLogger,
+      env: null,
+    },
+    storageKey,
+    transaction,
+    logger,
   };
 }
 
@@ -129,5 +165,103 @@ describe('physical product-image deletion', () => {
     expect(transaction.productImage.deleteMany).not.toHaveBeenCalled();
     expect(transaction.productImage.updateMany).toHaveBeenCalled();
     expect(logger.error).toHaveBeenCalled();
+  });
+});
+
+describe('physical quote-template deletion', () => {
+  it('deletes the private object before removing the template, asset and durable task', async () => {
+    const { deps, storageKey, transaction, logger } = quoteTemplateDepsWith(async () => undefined);
+
+    await processFileDeletion(
+      {
+        jobId: 'template-job-1',
+        storageKey,
+        entityType: 'quote_template',
+        entityId: 'template-1',
+      },
+      deps,
+    );
+
+    expect(deps.storage.delete).toHaveBeenCalledWith(storageKey);
+    expect(transaction.quoteTemplate.deleteMany).toHaveBeenCalledWith({
+      where: { id: 'template-1' },
+    });
+    expect(transaction.fileAsset.deleteMany).toHaveBeenCalledWith({ where: { storageKey } });
+    expect(transaction.fileDeletionJob.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'template-job-1' },
+        data: expect.objectContaining({ status: 'SUCCEEDED' }),
+      }),
+    );
+    expect(transaction.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: 'quote_template.permanent_delete_succeeded',
+        entityType: 'quote_template',
+        entityId: 'template-1',
+      }),
+    });
+    expect(JSON.stringify(logger.info.mock.calls)).not.toContain(storageKey);
+  });
+
+  it('keeps the retryable task and database rows when physical storage deletion fails', async () => {
+    const { deps, storageKey, transaction } = quoteTemplateDepsWith(async () => {
+      throw new Error('storage.delete_failed');
+    });
+
+    await expect(
+      processFileDeletion(
+        {
+          jobId: 'template-job-2',
+          storageKey,
+          entityType: 'quote_template',
+          entityId: 'template-1',
+        },
+        deps,
+      ),
+    ).rejects.toThrow('storage.delete_failed');
+
+    expect(transaction.fileDeletionJob.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'template-job-2' },
+        data: expect.objectContaining({ status: 'FAILED' }),
+      }),
+    );
+    expect(transaction.quoteTemplate.deleteMany).not.toHaveBeenCalled();
+    expect(transaction.fileAsset.deleteMany).not.toHaveBeenCalled();
+    expect(transaction.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: 'quote_template.permanent_delete_failed',
+        entityType: 'quote_template',
+        entityId: 'template-1',
+      }),
+    });
+  });
+
+  it('does not touch storage when a stale task has become referenced again', async () => {
+    const { deps, storageKey, transaction } = quoteTemplateDepsWith(async () => undefined, {
+      exports: 1,
+    });
+
+    await expect(
+      processFileDeletion(
+        {
+          jobId: 'template-job-3',
+          storageKey,
+          entityType: 'quote_template',
+          entityId: 'template-1',
+        },
+        deps,
+      ),
+    ).rejects.toThrow('quote_template.in_use');
+
+    expect(deps.storage.delete).not.toHaveBeenCalled();
+    expect(transaction.quoteTemplate.deleteMany).not.toHaveBeenCalled();
+    expect(transaction.fileAsset.deleteMany).not.toHaveBeenCalled();
+    expect(transaction.fileDeletionJob.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'template-job-3' },
+        data: expect.objectContaining({ status: 'FAILED' }),
+      }),
+    );
   });
 });

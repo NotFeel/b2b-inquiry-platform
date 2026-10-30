@@ -34,6 +34,11 @@ export async function processFileDeletion(
   const { logger } = deps;
 
   try {
+    if (payload.entityType === 'quote_template') {
+      // Do a preflight before touching storage. A stale task must not destroy a
+      // file that has since become referenced by an export or another version.
+      await assertQuoteTemplateDeletable(payload, deps);
+    }
     if (payload.storageKey) {
       await deps.storage.delete(payload.storageKey);
     }
@@ -54,7 +59,7 @@ export async function processFileDeletion(
   }
 
   logger.info('file.deleted', {
-    storageKey: payload.storageKey ?? null,
+    storageScope: payload.storageKey ? scopeOf(payload.storageKey) : null,
     entityType: payload.entityType ?? null,
     entityId: payload.entityId ?? null,
   });
@@ -286,6 +291,10 @@ async function finaliseLegacyJob(payload: Payload, deps: Deps): Promise<void> {
     await finaliseProductPurge(payload, deps);
     return;
   }
+  if (payload.entityType === 'quote_template') {
+    await finaliseQuoteTemplateDeletion(payload, deps);
+    return;
+  }
 
   if (payload.jobId) {
     await prisma.fileDeletionJob.updateMany({
@@ -315,6 +324,70 @@ async function finaliseLegacyJob(payload: Payload, deps: Deps): Promise<void> {
       where: { id: payload.entityId },
       data: { outputKey: null },
     });
+  }
+}
+
+/**
+ * A quote template version remains queryable while its physical delete is
+ * pending. Only after storage confirms removal do we delete the template,
+ * its exclusive FileAsset metadata and the durable job together. Reference
+ * checks are repeated here because an export may have been requested while the
+ * delete was queued.
+ */
+async function finaliseQuoteTemplateDeletion(payload: Payload, deps: Deps): Promise<void> {
+  const { prisma } = deps;
+  const templateId = payload.entityId;
+  const storageKey = payload.storageKey;
+  if (!templateId || !storageKey) return;
+
+  // The request was validated before queuing, but exports or version sharing
+  // may have changed while the task waited. Repeat the check before the final
+  // database purge as well.
+  await assertQuoteTemplateDeletable(payload, deps);
+
+  await prisma.$transaction(async (transaction) => {
+    await transaction.quoteTemplate.deleteMany({ where: { id: templateId } });
+    await transaction.fileAsset.deleteMany({ where: { storageKey } });
+    if (payload.jobId) {
+      await transaction.fileDeletionJob.updateMany({
+        where: { id: payload.jobId },
+        data: {
+          status: 'SUCCEEDED',
+          lockedBy: null,
+          lockedUntil: null,
+          heartbeatAt: null,
+          lastErrorCode: null,
+          completedAt: new Date(),
+        },
+      });
+    }
+    await transaction.auditLog.create({
+      data: {
+        action: 'quote_template.permanent_delete_succeeded',
+        entityType: 'quote_template',
+        entityId: templateId,
+        metadata: { storageScope: scopeOf(storageKey) } as never,
+      },
+    });
+  });
+}
+
+async function assertQuoteTemplateDeletable(payload: Payload, deps: Deps): Promise<void> {
+  const { prisma } = deps;
+  const templateId = payload.entityId;
+  const storageKey = payload.storageKey;
+  if (!templateId || !storageKey) return;
+
+  const template = await prisma.quoteTemplate.findUnique({ where: { id: templateId } });
+  if (template && template.storageKey !== storageKey) {
+    throw new Error('quote_template.storage_key_changed');
+  }
+  const [exportReferences, sharedVersions] = await Promise.all([
+    prisma.quoteExportJob.count({ where: { templateId } }),
+    prisma.quoteTemplate.count({ where: { storageKey, id: { not: templateId } } }),
+  ]);
+  if (exportReferences > 0 || sharedVersions > 0) {
+    throw new Error('quote_template.in_use');
   }
 }
 
@@ -354,7 +427,9 @@ async function recordFailure(payload: Payload, deps: Deps, error: unknown): Prom
           action:
             payload.entityType === 'product'
               ? 'product.permanent_delete_blocked'
-              : 'product.image.permanent_delete_failed',
+              : payload.entityType === 'quote_template'
+                ? 'quote_template.permanent_delete_failed'
+                : 'product.image.permanent_delete_failed',
           entityType: payload.entityType ?? 'file',
           entityId: payload.entityId ?? null,
           metadata: { errorCode: code, attemptRecorded: true } as never,

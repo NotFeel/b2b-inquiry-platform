@@ -686,3 +686,95 @@
   color: var(--color-primary);
   font-weight: var(--weight-semibold);
 }
+
+/* Quote template versions: authenticated spreadsheet preview. */
+.quote-template-actions {
+  max-width: 360px;
+}
+
+.quote-preview-meta {
+  gap: var(--space-2);
+}
+
+.quote-preview-scroll {
+  max-height: min(62vh, 680px);
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
+  overscroll-behavior: contain;
+}
+
+.quote-preview-scroll:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.quote-preview-sheet {
+  position: relative;
+  min-width: min-content;
+  background: var(--color-surface);
+}
+
+.quote-preview-table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  font-size: var(--text-xs);
+}
+
+.quote-preview-table th,
+.quote-preview-table td {
+  overflow: hidden;
+  padding: 2px 5px;
+  border-right: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+  text-overflow: clip;
+}
+
+.quote-preview-corner,
+.quote-preview-column-heading,
+.quote-preview-row-heading {
+  position: sticky;
+  color: var(--color-text-muted);
+  background: var(--color-surface-sunken);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  text-align: center;
+}
+
+.quote-preview-column-heading {
+  top: 0;
+  z-index: 2;
+}
+
+.quote-preview-row-heading {
+  left: 0;
+  z-index: 1;
+}
+
+.quote-preview-corner {
+  top: 0;
+  left: 0;
+  z-index: 3;
+}
+
+.quote-preview-image {
+  position: absolute;
+  z-index: 4;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+@media (max-width: 640px) {
+  .quote-template-actions {
+    max-width: 240px;
+    justify-content: flex-start;
+  }
+
+  .quote-preview-scroll {
+    max-height: 58vh;
+    margin-inline: calc(var(--space-2) * -1);
+  }
+}

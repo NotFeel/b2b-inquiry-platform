@@ -696,8 +696,71 @@ export interface QuoteTemplateSummary {
   sheetName: string | null;
   fieldMapping: Record<string, unknown>;
   validationReport: Record<string, unknown> | null;
+  fileAssetId: string | null;
+  fileName: string | null;
+  fileSizeBytes: string | null;
+  /** Present only when the latest physical-file deletion attempt failed. */
+  deletionState: 'failed' | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface QuoteTemplatePreviewCellStyle {
+  bold: boolean;
+  italic: boolean;
+  fontSize: number | null;
+  fontColor: string | null;
+  fillColor: string | null;
+  horizontal: 'left' | 'center' | 'right' | 'justify' | null;
+  vertical: 'top' | 'middle' | 'bottom' | null;
+  wrapText: boolean;
+  border: boolean;
+}
+
+export interface QuoteTemplatePreviewCell {
+  address: string;
+  row: number;
+  column: number;
+  value: string;
+  kind: 'empty' | 'text' | 'number' | 'date' | 'boolean' | 'formula';
+  style: QuoteTemplatePreviewCellStyle;
+}
+
+export interface QuoteTemplatePreviewRow {
+  index: number;
+  height: number;
+  hidden: boolean;
+  cells: QuoteTemplatePreviewCell[];
+}
+
+export interface QuoteTemplatePreviewColumn {
+  index: number;
+  letter: string;
+  width: number;
+  hidden: boolean;
+}
+
+export interface QuoteTemplatePreviewImage {
+  row: number;
+  column: number;
+  width: number;
+  height: number;
+  mimeType: string;
+  dataUrl: string;
+}
+
+export interface QuoteTemplatePreview {
+  templateId: string;
+  name: string;
+  version: number;
+  sheetName: string;
+  rowCount: number;
+  columnCount: number;
+  truncated: boolean;
+  merges: string[];
+  columns: QuoteTemplatePreviewColumn[];
+  rows: QuoteTemplatePreviewRow[];
+  images: QuoteTemplatePreviewImage[];
 }
 
 export interface QuoteExportJobSummary {
