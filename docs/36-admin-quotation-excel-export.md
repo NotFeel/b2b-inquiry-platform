@@ -107,3 +107,12 @@
 ## 商品 Slug 与后台导航国际化修复
 
 详见 `docs/26-product-slug-and-admin-navigation-i18n.md` 和 `.agents/skills/product-slug-and-admin-navigation-i18n/SKILL.md`。商品 slug 提供英文名称、名称 + 六位随机数字两种生成策略，随机值由后端安全生成且仍保留数据库唯一约束。后台 locale 以 URL 为准；侧栏、分组、面包屑都使用 `MenuTranslation` 与统一 locale 资源，禁止在英文界面静默显示中文。
+
+## 36. Admin 报价单 Excel 导出
+
+> 实施规格见 [docs/36-admin-quotation-excel-export-implementation.md](36-admin-quotation-excel-export-implementation.md)。  
+> 配套 Excel 布局模板： [B2B_Quotation_Template.xlsx](../assets/templates/B2B_Quotation_Template.xlsx)。
+
+本功能按品类筛选商品，默认勾选整个筛选结果，支持取消部分商品；操作员填写公司名称、联系人、邮箱、电话、报价单标题、加价率、目标币种和汇率后导出 Excel。报价价格以后台 CNY 成本为基准，统一由后端 Decimal 计算：成本 × (1 + markup%) × 汇率，最终目标币金额向上取整到两位。汇率口径固定为“1 CNY = X 目标币”。商品图片必须从当前商品主图对应的原始文件读取并嵌入 XLSX；不得写入 URL、缩略图或 WPS DISPIMG 公式。
+
+实现时必须复用现有 Product、Category、ProductImage、FileAsset、RBAC、菜单、审计、i18n 和 Storage adapter；public API/SSR 不得暴露内部成本价。完整 UI、API、权限、图片处理、Excel 布局、测试、部署和回滚要求见上述实施规格。本文链接仅做导航，不表示功能代码已完成。
