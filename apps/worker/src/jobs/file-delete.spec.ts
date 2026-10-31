@@ -40,9 +40,18 @@ function transactionMock() {
     },
     category: { count: vi.fn(async () => 0) },
     ad: { count: vi.fn(async () => 0) },
-    pdfConversionJob: { count: vi.fn(async () => 0) },
+    pdfConversionJob: {
+      count: vi.fn(async () => 0),
+      findMany: vi.fn(async () => []),
+      findUnique: vi.fn(async () => null),
+      update: vi.fn(async () => ({})),
+    },
     quoteTemplate: { deleteMany: vi.fn(async () => ({ count: 1 })) },
-    fileAsset: { deleteMany: vi.fn(async () => ({ count: 1 })) },
+    fileAsset: {
+      deleteMany: vi.fn(async () => ({ count: 1 })),
+      findUnique: vi.fn(async () => null),
+      update: vi.fn(async () => ({})),
+    },
     fileDeletionJob: { updateMany: vi.fn(async () => ({ count: 1 })) },
     auditLog: { create: vi.fn(async () => ({})) },
   };
@@ -263,5 +272,28 @@ describe('physical quote-template deletion', () => {
         data: expect.objectContaining({ status: 'FAILED' }),
       }),
     );
+  });
+});
+
+describe('Excel-to-PDF compensating output deletion', () => {
+  it('completes when the failed database transaction never created an output asset row', async () => {
+    const { deps, transaction } = depsWith(async () => undefined);
+
+    await processFileDeletion(
+      {
+        jobId: 'excel-pdf-compensation-1',
+        storageKey: 'private/excel-pdf/outputs/orphan.pdf',
+        entityType: 'excel_pdf_asset',
+        entityId: '77777777-7777-4777-8777-777777777777',
+      },
+      deps,
+    );
+
+    expect(deps.storage.delete).toHaveBeenCalledWith('private/excel-pdf/outputs/orphan.pdf');
+    expect(transaction.fileAsset.deleteMany).not.toHaveBeenCalled();
+    expect(transaction.fileDeletionJob.updateMany).toHaveBeenCalledWith({
+      where: { id: 'excel-pdf-compensation-1' },
+      data: expect.objectContaining({ status: 'SUCCEEDED' }),
+    });
   });
 });

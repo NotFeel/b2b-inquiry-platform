@@ -37,3 +37,25 @@ docker compose -f infra/docker-compose.dev.yml exec -T postgres \
 
 执行后刷新 Admin 页面即可重新读取导航；当前权限守卫每次请求都读取数据库，不依赖进程内权限缓存。
 如需回滚，先确认没有其他功能引用这些记录，再按 SQL 文件末尾列出的语句单独执行。
+
+## Excel 转 PDF 菜单与权限增量数据
+
+`database/sql/seeds/20261030_excel_pdf_menu_permissions.sql` 为已有数据库补齐
+`excel-pdf` 菜单、双语翻译和 `excel_pdf.*` 五项权限。脚本只给 `super_admin` 授权，
+不会默认授予普通业务角色重试或删除能力。
+
+正常情况下不再需要手工执行此文件：本地 `pnpm dev`、测试/staging 和生产 API 启动时都会以
+`--reference-only` 自动、幂等地同步 reference data；生产发布脚本也会在切换应用前执行同一同步。
+进程级启动失败会阻止 API 监听端口。下面的 SQL 仅用于 API 无法启动时的受控诊断/恢复兜底，
+执行方式与上方 SQL 相同：
+
+```bash
+docker compose -f infra/docker-compose.dev.yml up -d postgres
+docker compose -f infra/docker-compose.dev.yml exec -T postgres \
+  psql -v ON_ERROR_STOP=1 -U app -d b2b_catalog \
+  < database/sql/seeds/20261030_excel_pdf_menu_permissions.sql
+```
+
+脚本在单个事务内校验父菜单、系统角色、路由冲突和最终记录数；任一断言失败都会
+回滚。回滚和生产前检查要求见文件末尾，功能停用应优先关闭
+`EXCEL_PDF_ENABLED`，保留任务、审计和私有文件历史。

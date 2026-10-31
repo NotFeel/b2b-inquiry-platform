@@ -1370,6 +1370,13 @@
     },
     "job": {
       "read": "查看任务"
+    },
+    "excel_pdf": {
+      "read": "查看 Excel 转 PDF 记录",
+      "create": "上传并转换 Excel",
+      "download": "下载或预览 PDF",
+      "retry": "重试 PDF 转换",
+      "delete": "删除 PDF 转换记录"
     }
   },
   "permissionModules": {
@@ -1392,7 +1399,8 @@
     "customer": "客户",
     "analytics": "分析",
     "audit": "审计日志",
-    "job": "后台任务"
+    "job": "后台任务",
+    "excel-pdf": "Excel 转 PDF"
   },
   "roles": {
     "title": "角色与权限",
@@ -1675,6 +1683,99 @@
       "externalContent": "工作簿包含宏、嵌入对象或外部链接。",
       "mergedCells": "工作簿包含合并单元格。",
       "dimensions": "箱规尺寸必须是三个非负整数。"
+    }
+  },
+  "excelPdf": {
+    "title": "Excel 转 PDF",
+    "description": "上传报价单或 PI 的 .xlsx 工作簿并转换为 PDF。文件分块上传，最大 {{maxSize}}。",
+    "refresh": "刷新记录",
+    "noPermission": "无权查看 Excel 转 PDF",
+    "noPermissionHelp": "当前账号缺少 excel_pdf.read 权限，请联系管理员分配。",
+    "disabledTitle": "Excel 转 PDF 尚未启用",
+    "disabledHelp": "当前部署未启用转换功能。启用前需在 Worker 主机安装 LibreOffice 与 PDF 检查工具。",
+    "conversionSucceeded": "Excel 已成功转换为 PDF。",
+    "conversionFailed": "Excel 转换失败，请查看记录中的错误信息。",
+    "cancelled": "上传已取消。",
+    "downloadStarted": "PDF 下载已开始。",
+    "retryQueued": "转换已重新排队。",
+    "deleteRequested": "删除请求已提交，系统将继续清理私有文件。",
+    "pages": "{{count}} 页",
+    "businessType": {
+      "quotation": "报价单",
+      "pi": "PI",
+      "other": "其他"
+    },
+    "status": {
+      "queued": "排队中",
+      "processing": "转换中",
+      "succeeded": "已完成",
+      "failed": "失败",
+      "cancelled": "已取消",
+      "expired": "已过期"
+    },
+    "upload": {
+      "title": "选择 Excel 文件",
+      "businessType": "文件类型",
+      "limits": "转换限制",
+      "limitDetail": "分块大小 {{chunkSize}}；PDF 最大 {{outputSize}}、{{pages}} 页；文件保留 {{days}} 天。",
+      "dropLabel": "拖放或选择 XLSX 文件",
+      "dropTitle": "拖放 .xlsx 文件到这里",
+      "dropHelp": "仅支持无宏 .xlsx；扩展名、ZIP 结构和外部链接会在服务端再次校验。",
+      "choose": "选择文件",
+      "start": "上传并转换",
+      "createDenied": "当前账号无上传和转换权限。",
+      "progressLabel": "Excel 上传与转换进度",
+      "starting": "正在创建分块上传…",
+      "progress": "已上传 {{uploaded}} / {{total}} 个分块（{{percent}}%）",
+      "converting": "文件已上传，转换状态：{{status}}。页面会继续查询结果。",
+      "retrying": "第 {{index}} 个分块上传失败，正在重试…",
+      "cancel": "取消上传",
+      "stopWaiting": "停止等待"
+    },
+    "filters": {
+      "status": "状态",
+      "businessType": "文件类型"
+    },
+    "table": {
+      "file": "文件",
+      "status": "状态",
+      "output": "PDF 信息",
+      "created": "创建时间",
+      "expires": "过期时间",
+      "actions": "操作"
+    },
+    "actions": {
+      "download": "下载",
+      "preview": "预览",
+      "retry": "重试",
+      "delete": "删除",
+      "downloadFile": "下载 {{fileName}} 的 PDF",
+      "previewFile": "预览 {{fileName}} 的 PDF"
+    },
+    "history": {
+      "title": "转换记录",
+      "empty": "暂无转换记录",
+      "emptyHelp": "上传一份 .xlsx 工作簿后，转换结果会显示在这里。",
+      "retentionHelp": "成功或失败的输入和输出文件会在 {{days}} 天后自动过期并清理。",
+      "backDashboard": "返回工作台"
+    },
+    "deleteConfirm": {
+      "title": "删除该转换记录？",
+      "body": "将删除 {{fileName}} 的转换记录，并异步物理删除输入、输出和分块文件。该操作不可恢复。",
+      "confirm": "确认删除"
+    },
+    "errors": {
+      "extension": "请选择 .xlsx 工作簿；不支持 .xls、.xlsm、.ods 或 .csv。",
+      "empty": "所选文件为空。",
+      "tooLarge": "文件超过当前部署允许的最大上传大小。",
+      "configTitle": "无法读取转换配置",
+      "config": "无法确认 Excel 转 PDF 功能状态。",
+      "loadJobs": "转换记录加载失败。",
+      "convert": "上传或转换失败，请稍后重试。",
+      "cancel": "取消上传失败。",
+      "download": "PDF 下载失败。",
+      "retry": "重新转换失败。",
+      "delete": "删除转换记录失败。"
     }
   },
   "auditActions": {

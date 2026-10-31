@@ -54,6 +54,28 @@ const schema = z.object({
   IMAGE_PROCESSING_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(1),
   IMAGE_WEBP_QUALITY: z.coerce.number().int().min(40).max(100).default(82),
   QUOTE_EXPORT_MAX_PRODUCTS: z.coerce.number().int().min(1).max(100_000).default(5_000),
+  EXCEL_PDF_ENABLED: z
+    .union([z.boolean(), z.enum(['true', 'false', '1', '0'])])
+    .default(false)
+    .transform((value) => value === true || value === 'true' || value === '1'),
+  EXCEL_PDF_MAX_UPLOAD_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1_048_576)
+    .max(209_715_200)
+    .default(209_715_200),
+  EXCEL_PDF_CHUNK_BYTES: z.coerce.number().int().min(524_288).max(9_437_184).default(8_388_608),
+  EXCEL_PDF_MAX_OUTPUT_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1_048_576)
+    .max(524_288_000)
+    .default(52_428_800),
+  EXCEL_PDF_MAX_PAGES: z.coerce.number().int().min(1).max(2_000).default(200),
+  EXCEL_PDF_TIMEOUT_MS: z.coerce.number().int().min(10_000).max(1_800_000).default(300_000),
+  EXCEL_PDF_RETENTION_DAYS: z.coerce.number().int().min(1).max(90).default(7),
+  EXCEL_PDF_CONVERTER_PATH: z.string().trim().default('/usr/bin/soffice'),
+  EXCEL_PDF_PDFINFO_PATH: z.string().trim().default('/usr/bin/pdfinfo'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 });
 

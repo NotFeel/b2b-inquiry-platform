@@ -1,6 +1,8 @@
 // Queue names and payload contracts shared by the API (producer) and the worker
 // (consumer). Keeping them in one place stops the two apps drifting apart.
 
+import type { ExcelPdfCleanupJobPayload, ExcelPdfConvertJobPayload } from './excel-pdf';
+
 export interface ImageDerivativeJobPayload {
   fileAssetId: string;
   storageKey: string;
@@ -52,4 +54,6 @@ export type JobPayload =
   | FileDeleteJobPayload
   | AnalyticsRollupJobPayload
   | ProductImportValidateJobPayload
-  | ProductImportCleanupJobPayload;
+  | ProductImportCleanupJobPayload
+  | ExcelPdfConvertJobPayload
+  | ExcelPdfCleanupJobPayload;

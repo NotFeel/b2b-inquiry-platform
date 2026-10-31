@@ -12,3 +12,4 @@ export * from './images';
 export * from './storage';
 export * from './product-import';
 export * from './quotation-export';
+export * from './excel-pdf';

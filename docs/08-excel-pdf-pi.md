@@ -41,16 +41,19 @@ flowchart TD
 4. 删除成功后硬删除导出记录或保留最小审计元数据；失败则记录错误并重试，超过次数告警。
 5. UI 说明“删除请求已提交/删除失败，可重试”，不能显示成功后仍允许下载旧文件。
 
-## 4. Excel 转 PDF 已下线
+## 4. Excel 转 PDF 当前状态
 
-- Excel 转 PDF 不再是目标功能，不提供后台入口、API、队列任务或 Worker
-  处理器。
-- 商品报价单 `.xlsx` 与 PI `.xlsx` 导出继续复用现有 `quote-export` 队列和
-  ExcelJS Worker。
-- 历史 `pdf_conversion_jobs`、对象存储文件和审计记录保留；本次不执行批量
-  文件删除或破坏性数据库迁移。
-- 发布本变更前必须暂停创建新的 PDF 转换任务，并处理或标记已在途的旧队列
-  任务；不得清空历史队列或删除业务记录。
+- Excel 转 PDF 已按 `docs/38-admin-excel-to-pdf-conversion-implementation.md`
+  重新引入，提供受 RBAC 保护的后台入口、8 MiB 分块上传 API、PostgreSQL durable
+  task、隔离 Worker 中的 LibreOffice 转换、私有 PDF 下载与删除。
+- 单份 `.xlsx` 上限 200 MiB；仅接受无宏工作簿，宏、外链、OLE/ActiveX、加密 ZIP、
+  zip bomb 和不合规 OOXML 均拒绝。输入与输出不得进入公开对象存储或 CDN。
+- 商品报价单 `.xlsx` 与 PI `.xlsx` 仍由现有 `quote-export` 和 ExcelJS Worker 生成；
+  Excel 转 PDF 不修改报价/PI 业务数据、金额快照和原始工作簿。
+- 历史 `pdf_conversion_jobs`、对象存储文件和审计记录继续保留；重新引入使用
+  additive migration，不执行破坏性数据删除。
+- 生产启用前须完成迁移、Worker LibreOffice/字体/临时盘检查、金样本视觉回归和
+  接近 200 MiB 工作簿的 staging 容量验收。
 
 ## 5. PI（Proforma Invoice）内部制作细节优化
 

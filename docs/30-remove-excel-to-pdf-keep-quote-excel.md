@@ -1,5 +1,9 @@
 # 30. 移除 Excel 转 PDF，保留商品报价单 Excel 导出——AI 可执行实施方案
 
+> 历史状态说明（2026-10-30）：本文记录当时的“下线 Excel 转 PDF”决策，历史内容
+> 原样保留。业务方后续重新引入该功能，当前实现、限制、发布与回滚以
+> `docs/38-admin-excel-to-pdf-conversion-implementation.md` 为准；本文不再代表当前功能状态。
+
 > 文档版本：1.0  
 > 目标仓库：`NotFeel/b2b-inquiry-platform`  
 > 适用对象：AI 编码助手、前后端开发、测试、运维  

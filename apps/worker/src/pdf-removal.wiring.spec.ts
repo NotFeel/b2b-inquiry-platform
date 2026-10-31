@@ -12,12 +12,14 @@ const packageJson = JSON.parse(
   readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'),
 ) as { dependencies?: Record<string, string> };
 
-describe('worker after Excel-to-PDF removal', () => {
-  it('does not register a PDF converter or PDF-only configuration', () => {
-    expect(indexSource).not.toContain('processPdfConversion');
-    expect(indexSource).not.toContain('pdfConvert');
-    expect(envSource).not.toContain('PDF_CONVERTER_PATH');
-    expect(envSource).not.toContain('PDF_MAX_OUTPUT_PAGES');
+describe('worker Excel-to-PDF wiring after docs/38 reintroduction', () => {
+  it('registers the isolated converter and outbox dispatch', () => {
+    expect(indexSource).toContain('PostgresTaskRunner');
+    expect(envSource).toContain('EXCEL_PDF_CONVERTER_PATH');
+    expect(envSource).toContain('EXCEL_PDF_TIMEOUT_MS');
+    expect(runnerSource).toContain("task.eventType === 'excel-pdf-convert'");
+    expect(runnerSource).toContain('processExcelPdfConversion');
+    expect(runnerSource).toContain("task.eventType === 'excel-pdf-cleanup'");
   });
 
   it('keeps the shared Excel quote and PI worker and its dependency', () => {

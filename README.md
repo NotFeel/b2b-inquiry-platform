@@ -6,7 +6,7 @@
 
 ## 1. 项目目标
 
-建设一个面向海外客户的响应式 B2B 产品展示网站。访客可以浏览、搜索、按多级品类筛选产品、查看产品和包装信息、批量选择产品，并通过 WhatsApp 发起询盘。**前台任何页面、接口、SEO 数据、结构化数据和前端资源都不得泄漏产品价格。** 后台负责品类、产品、广告、系统设置、商品报价单 Excel 导出、PI（Proforma Invoice，形式发票）、询盘客户记录与访问分析；Excel 转 PDF 不属于目标功能范围。
+建设一个面向海外客户的响应式 B2B 产品展示网站。访客可以浏览、搜索、按多级品类筛选产品、查看产品和包装信息、批量选择产品，并通过 WhatsApp 发起询盘。**前台任何页面、接口、SEO 数据、结构化数据和前端资源都不得泄漏产品价格。** 后台负责品类、产品、广告、系统设置、商品报价单 Excel 导出、PI（Proforma Invoice，形式发票）、Excel 转 PDF、询盘客户记录与访问分析。
 
 ## 2. 推荐默认技术方案
 
@@ -18,8 +18,9 @@
 - 异步任务：代码已切换为 PostgreSQL 持久化任务 + 单并发 task runner，使用原子 claim、租约、
   heartbeat、幂等和有限重试；生产不再依赖 Redis/BullMQ。
 - 文件：开发环境可本地存储；生产环境优先 S3 兼容对象存储，数据库只保存文件元数据和 object key。
-- Excel：ExcelJS；商品报价单和 PI 的 `.xlsx` 由 Worker 异步生成。Excel 转
-  PDF 不属于目标功能。
+- Excel：ExcelJS；商品报价单和 PI 的 `.xlsx` 由 Worker 异步生成。Excel 转 PDF 使用
+  Admin 8 MiB 分块上传、PostgreSQL durable task 和隔离 Worker 中的 LibreOffice
+  headless，输入/输出均为私有文件，单份 XLSX 上限 200 MiB。
 - 目标生产部署：Cloudflare Workers（前后台 UI，先做兼容性 POC）+ Neon PostgreSQL + Cloudflare R2 + 单台 2C/1G NestJS API；完整执行方案见 `docs/33-lightweight-cloudflare-neon-r2-implementation.md`。旧服务器全栈方案仅作为迁移期间/回滚路径。
 
 具体版本必须在仓库 package.json / lockfile / Docker 镜像中固定；不得让 AI 根据“latest”临时升级核心依赖。
@@ -47,8 +48,9 @@
 | `docs/25-product-category-picker-selectability.md` | 商品品类选择器不可选故障排查、紧凑 Popover/树形选择器、受控 categoryId、编辑回填、列表筛选、国际化、响应式与端到端验收 |
 | `docs/26-product-slug-and-admin-navigation-i18n.md` | 商品 URL slug 名称/随机数字生成、唯一性冲突处理、后台 en-US 菜单/分组/面包屑翻译、MenuTranslation 数据补齐、locale 缓存与语言切换修复 |
 | `docs/07-backend-standard.md` | 后端开发规范 |
-| `docs/08-excel-pdf-pi.md` | 商品报价单 Excel 与 PI 制作规则 |
-| `docs/30-remove-excel-to-pdf-keep-quote-excel.md` | 移除 Excel 转 PDF、保留商品报价单 Excel 导出的 AI 可执行实施、测试、部署与回滚方案 |
+| `docs/08-excel-pdf-pi.md` | 商品报价单 Excel、PI 与 Excel 转 PDF 当前状态 |
+| `docs/30-remove-excel-to-pdf-keep-quote-excel.md` | Excel 转 PDF 的历史下线决策记录（后续重新引入方式见 `docs/38`） |
+| `docs/38-admin-excel-to-pdf-conversion-implementation.md` | Admin Excel 转 PDF：200 MiB 分块上传、安全校验、Worker 转换、RBAC、部署、测试与回滚 |
 | `docs/31-lightweight-deployment-sqlite-redis-image-optimization.md` | 轻量化部署、SQLite/Redis 取舍、数据库任务表、图片优化与旧架构评估（补充文档） |
 | `docs/32-cloudflare-frontend-server-api-deployment.md` | Cloudflare 前后台、Next.js 兼容性、认证/缓存安全与迁移路线（专题文档） |
 | `docs/33-lightweight-cloudflare-neon-r2-implementation.md` | **当前目标架构实施基线**：Cloudflare Workers + Neon PostgreSQL + R2 + 单台 2C/1G NestJS、PG 任务队列替代 Redis、部署、测试、验收和回滚 |

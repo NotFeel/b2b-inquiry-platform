@@ -120,3 +120,109 @@
     justify-content: flex-end;
   }
 }
+
+.excel-pdf-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  min-height: 190px;
+  margin-block: var(--space-4);
+  padding: var(--space-5);
+  border: 2px dashed var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-sunken);
+  text-align: center;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease;
+}
+
+.excel-pdf-dropzone:focus-visible,
+.excel-pdf-dropzone.is-dragging {
+  border-color: var(--color-primary);
+  outline: 2px solid var(--color-primary-soft);
+  outline-offset: 2px;
+  background: var(--color-primary-soft);
+}
+
+.excel-pdf-selected-file,
+.excel-pdf-row-actions,
+.excel-pdf-filters {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.excel-pdf-selected-file {
+  justify-content: space-between;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.excel-pdf-file-name {
+  display: block;
+  max-width: 36rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.excel-pdf-row-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.excel-pdf-filters {
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+}
+
+.excel-pdf-filters .field {
+  min-width: min(100%, 220px);
+}
+
+.upload-progress.is-indeterminate span {
+  width: 35% !important;
+  animation: excel-pdf-indeterminate 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes excel-pdf-indeterminate {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(285%);
+  }
+}
+
+@media (max-width: 767px) {
+  .excel-pdf-dropzone {
+    min-height: 160px;
+    padding: var(--space-4);
+  }
+
+  .excel-pdf-selected-file {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .excel-pdf-row-actions {
+    justify-content: flex-start;
+  }
+
+  .excel-pdf-file-name {
+    max-width: min(72vw, 22rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .upload-progress.is-indeterminate span {
+    animation: none;
+    width: 100% !important;
+  }
+}

@@ -37,6 +37,23 @@
   过期可恢复；达到最大次数后进入 FAILED 并保留人工重试能力。
 
 ### Excel/PI
+- Excel 转 PDF 页面在中英文 Admin Shell 中可用；`excel_pdf.create/read/download/retry/delete`
+  逐接口由服务端 RBAC 校验，未登录 401、无权限 403，菜单隐藏不能替代授权。
+- Admin 按 8 MiB 分块上传；恰好 200 MiB 可初始化，超过 1 字节被拒绝。缺块、长度或完整
+  SHA-256 不匹配、并发重复初始化时不会创建重复任务；单块请求始终低于 Next.js 10 MiB 限制。
+- 上传仅接受无宏 `.xlsx`；伪装扩展名、损坏 ZIP、宏/外链/OLE/ActiveX/外部数据连接、
+  加密工作簿、entry 数/单 entry/展开总量/压缩比超限均明确拒绝，且不调用 LibreOffice。
+- Worker 使用固定参数和无 shell 的隔离 LibreOffice profile；任务持久化在 PostgreSQL，
+  使用 attemptId/leaseOwner 条件更新。双 Worker 竞争、Worker 重启和过期租约恢复不会产生
+  重复成功状态，旧 attempt 不能覆盖新任务结果。
+- 成功 PDF 通过文件签名、大小、页数、EOF 和 `pdfinfo` 校验；失败或超时任务不产生可下载
+  文件。下载必须 owner/data scope 与 `excel_pdf.download` 双重校验，响应为 private/no-store，
+  Storage 对象缺失或大小不一致时不能成功下载。
+- 删除会撤销下载并持久化输入、输出和分块的物理删除任务；失败可重试，审计不含 storageKey、
+  工作簿内容、客户资料或完整临时路径。过期任务由 cleanup 幂等清理。
+- 验证报价单与 PI 金样本的打印区域、分页、图片、字体、合并单元格和金额；记录 LibreOffice
+  版本/镜像 digest。接近 200 MiB 的脱敏 XLSX 需在 staging 完成上传、转换、RSS/CPU/磁盘和
+  300 秒超时容量验收，不能用自动化单测替代真实转换压测。
 - 模板字段缺失会阻止启用或导出并显示错误位置。
 - 按品类导出包含正确后代；模板版本和筛选快照保存在记录中。
 - 导出任务失败可重试；删除时文件和记录最终均不存在，临时失败可自动重试并可监控。

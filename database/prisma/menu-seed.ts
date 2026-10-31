@@ -134,6 +134,14 @@ export const MENU_SEED: MenuSeed[] = [
         labels: { 'zh-CN': '导出记录', 'en-US': 'Exports' },
       },
       {
+        code: 'excel-pdf',
+        route: '/tools/excel-to-pdf',
+        icon: 'file',
+        permissionCode: 'excel_pdf.read',
+        sortOrder: 43,
+        labels: { 'zh-CN': 'Excel 转 PDF', 'en-US': 'Excel to PDF' },
+      },
+      {
         code: 'pi-documents',
         route: '/pi-documents',
         icon: 'invoice',

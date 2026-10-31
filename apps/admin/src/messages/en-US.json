@@ -1370,6 +1370,13 @@
     },
     "job": {
       "read": "View jobs"
+    },
+    "excel_pdf": {
+      "read": "View Excel-to-PDF jobs",
+      "create": "Upload and convert Excel",
+      "download": "Download or preview PDFs",
+      "retry": "Retry PDF conversion",
+      "delete": "Delete PDF conversion records"
     }
   },
   "permissionModules": {
@@ -1392,7 +1399,8 @@
     "customer": "Customers",
     "analytics": "Analytics",
     "audit": "Audit log",
-    "job": "Background jobs"
+    "job": "Background jobs",
+    "excel-pdf": "Excel to PDF"
   },
   "roles": {
     "title": "Roles & permissions",
@@ -1675,6 +1683,99 @@
       "externalContent": "The workbook contains macros, embedded objects or external links.",
       "mergedCells": "The workbook contains merged cells.",
       "dimensions": "Carton dimensions must contain three non-negative integers."
+    }
+  },
+  "excelPdf": {
+    "title": "Excel to PDF",
+    "description": "Upload a quotation or PI .xlsx workbook and convert it to PDF. Files use chunked uploads up to {{maxSize}}.",
+    "refresh": "Refresh records",
+    "noPermission": "You cannot view Excel to PDF",
+    "noPermissionHelp": "This account does not have excel_pdf.read. Ask an administrator to assign it.",
+    "disabledTitle": "Excel to PDF is not enabled",
+    "disabledHelp": "Conversion is disabled on this deployment. The Worker host must provide LibreOffice and the PDF inspection utility before it is enabled.",
+    "conversionSucceeded": "The workbook was converted to PDF.",
+    "conversionFailed": "The conversion failed. Review the error shown on the record.",
+    "cancelled": "Upload cancelled.",
+    "downloadStarted": "PDF download started.",
+    "retryQueued": "The conversion was queued again.",
+    "deleteRequested": "Deletion requested. Private files will continue to be cleaned up.",
+    "pages": "{{count}} page(s)",
+    "businessType": {
+      "quotation": "Quotation",
+      "pi": "PI",
+      "other": "Other"
+    },
+    "status": {
+      "queued": "Queued",
+      "processing": "Converting",
+      "succeeded": "Succeeded",
+      "failed": "Failed",
+      "cancelled": "Cancelled",
+      "expired": "Expired"
+    },
+    "upload": {
+      "title": "Choose an Excel file",
+      "businessType": "File type",
+      "limits": "Conversion limits",
+      "limitDetail": "Chunk size {{chunkSize}}; PDF up to {{outputSize}} and {{pages}} pages; files retained for {{days}} days.",
+      "dropLabel": "Drop or choose an XLSX workbook",
+      "dropTitle": "Drop an .xlsx file here",
+      "dropHelp": "Only macro-free .xlsx files are accepted. The server rechecks the extension, ZIP structure and external links.",
+      "choose": "Choose file",
+      "start": "Upload and convert",
+      "createDenied": "This account cannot upload and convert workbooks.",
+      "progressLabel": "Excel upload and conversion progress",
+      "starting": "Creating chunked upload…",
+      "progress": "Uploaded {{uploaded}} of {{total}} chunks ({{percent}}%)",
+      "converting": "Upload complete. Conversion status: {{status}}. This page will keep checking for the result.",
+      "retrying": "Chunk {{index}} failed and is being retried…",
+      "cancel": "Cancel upload",
+      "stopWaiting": "Stop waiting"
+    },
+    "filters": {
+      "status": "Status",
+      "businessType": "File type"
+    },
+    "table": {
+      "file": "File",
+      "status": "Status",
+      "output": "PDF details",
+      "created": "Created",
+      "expires": "Expires",
+      "actions": "Actions"
+    },
+    "actions": {
+      "download": "Download",
+      "preview": "Preview",
+      "retry": "Retry",
+      "delete": "Delete",
+      "downloadFile": "Download the PDF for {{fileName}}",
+      "previewFile": "Preview the PDF for {{fileName}}"
+    },
+    "history": {
+      "title": "Conversion records",
+      "empty": "No conversions yet",
+      "emptyHelp": "Upload an .xlsx workbook and its conversion result will appear here.",
+      "retentionHelp": "Successful and failed input and output files expire and are cleaned up after {{days}} days.",
+      "backDashboard": "Back to workspace"
+    },
+    "deleteConfirm": {
+      "title": "Delete this conversion record?",
+      "body": "This removes the conversion record for {{fileName}} and asynchronously deletes the input, output and chunk files. It cannot be undone.",
+      "confirm": "Delete record"
+    },
+    "errors": {
+      "extension": "Choose an .xlsx workbook. .xls, .xlsm, .ods and .csv are not supported.",
+      "empty": "The selected file is empty.",
+      "tooLarge": "The file exceeds the maximum upload size configured for this deployment.",
+      "configTitle": "Conversion settings are unavailable",
+      "config": "The Excel to PDF feature state could not be confirmed.",
+      "loadJobs": "Conversion records could not be loaded.",
+      "convert": "The upload or conversion failed. Try again later.",
+      "cancel": "The upload could not be cancelled.",
+      "download": "The PDF could not be downloaded.",
+      "retry": "The conversion could not be retried.",
+      "delete": "The conversion record could not be deleted."
     }
   },
   "auditActions": {

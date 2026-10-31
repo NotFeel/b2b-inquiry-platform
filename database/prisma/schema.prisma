@@ -73,6 +73,7 @@ model AdminUser {
   quoteExports        QuoteExportJob[]
   quoteTemplates      QuoteTemplate[]
   pdfConversions      PdfConversionJob[]
+  excelPdfUploads     ExcelPdfUpload[]
   piDocuments         PiDocument[]
   inquiryActivities   InquiryActivity[]    @relation("InquirySalespersonUser")
   factoryMedia        FactoryMedia[]       @relation("FactoryMediaCreatedBy")
@@ -505,6 +506,7 @@ model FileAsset {
   adDesktopFor            Ad[]                 @relation("AdDesktopAsset")
   adMobileFor             Ad[]                 @relation("AdMobileAsset")
   pdfSources              PdfConversionJob[]   @relation("PdfSourceAsset")
+  pdfOutputs              PdfConversionJob[]   @relation("PdfOutputAsset")
   factoryMediaAssets      FactoryMedia[]       @relation("FactoryMediaAsset")
   factoryMediaCovers      FactoryMedia[]       @relation("FactoryMediaCover")
   factoryProcessAssets    FactoryProcessStep[] @relation("FactoryProcessAsset")
@@ -811,15 +813,33 @@ model QuoteExportJob {
 model PdfConversionJob {
   id              String    @id @default(uuid()) @db.Uuid
   sourceAssetId   String    @db.Uuid
+  /// Set for chunked uploads introduced by docs/38. Kept nullable so legacy
+  /// conversion rows remain valid without a destructive backfill.
+  uploadId        String?   @unique @db.Uuid
+  outputAssetId   String?   @unique @db.Uuid
   sourceFileName  String    @db.VarChar(255)
   sheetName       String?   @db.VarChar(120)
+  businessType    String    @default("other") @db.VarChar(32)
+  options         Json?
   status          JobStatus @default(QUEUED)
   attempts        Int       @default(0)
+  attemptId       String?   @db.Uuid
+  /// Conversion-attempt lease. A second worker may reclaim a PROCESSING job
+  /// only after the lease expires; writes must match both attemptId and owner.
+  leaseOwner      String?   @db.VarChar(120)
+  leaseUntil      DateTime? @db.Timestamptz(6)
+  inputSizeBytes  BigInt?
+  inputSha256     String?   @db.VarChar(64)
   outputKey       String?   @db.VarChar(500)
   outputSizeBytes BigInt?
   outputSha256    String?   @db.VarChar(64)
   pageCount       Int?
   errorCode       String?   @db.VarChar(100)
+  errorMessageKey String?   @db.VarChar(160)
+  purgeState      PurgeState @default(NONE)
+  purgeRequestedAt DateTime? @db.Timestamptz(6)
+  startedAt       DateTime? @db.Timestamptz(6)
+  completedAt     DateTime? @db.Timestamptz(6)
   expiresAt       DateTime? @db.Timestamptz(6)
   requestedById   String?   @db.Uuid
 
@@ -827,10 +847,13 @@ model PdfConversionJob {
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
 
   sourceAsset FileAsset  @relation("PdfSourceAsset", fields: [sourceAssetId], references: [id], onDelete: Restrict)
+  outputAsset FileAsset? @relation("PdfOutputAsset", fields: [outputAssetId], references: [id], onDelete: SetNull)
   requestedBy AdminUser? @relation(fields: [requestedById], references: [id], onDelete: SetNull)
 
   @@index([status, createdAt])
+  @@index([status, leaseUntil])
   @@index([requestedById, createdAt(sort: Desc)])
+  @@index([expiresAt, purgeState])
   @@map("pdf_conversion_jobs")
 }
 
@@ -1104,6 +1127,48 @@ model ProductImportChunk {
 
   @@id([uploadId, index])
   @@map("product_import_chunks")
+}
+
+/// Chunked 200 MiB XLSX staging for Excel-to-PDF (docs/38). The chunks are
+/// private storage objects; completing this upload creates the durable job and
+/// outbox event. The Worker is the only component that merges and validates the
+/// complete OOXML package.
+model ExcelPdfUpload {
+  id             String    @id @default(uuid()) @db.Uuid
+  actorId        String    @db.Uuid
+  idempotencyKey String    @unique @db.VarChar(128)
+  status         String    @default("UPLOADING") @db.VarChar(32)
+  originalName   String    @db.VarChar(255)
+  declaredSize   BigInt
+  chunkSize      Int
+  chunkCount     Int
+  businessType   String    @default("other") @db.VarChar(32)
+  options        Json
+  jobId          String?   @unique @db.Uuid
+  errorCode      String?   @db.VarChar(120)
+  expiresAt      DateTime  @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+
+  actor  AdminUser           @relation(fields: [actorId], references: [id], onDelete: Cascade)
+  chunks ExcelPdfUploadChunk[]
+
+  @@index([actorId, createdAt(sort: Desc)])
+  @@index([status, expiresAt])
+  @@map("excel_pdf_uploads")
+}
+
+model ExcelPdfUploadChunk {
+  uploadId  String   @db.Uuid
+  index     Int
+  sizeBytes BigInt
+  sha256    String   @db.VarChar(64)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  upload ExcelPdfUpload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+
+  @@id([uploadId, index])
+  @@map("excel_pdf_upload_chunks")
 }
 
 // Object storage and the database have no shared transaction. Deleting produced

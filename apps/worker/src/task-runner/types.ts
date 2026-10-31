@@ -1,5 +1,7 @@
 import type {
   AnalyticsRollupJobPayload,
+  ExcelPdfCleanupJobPayload,
+  ExcelPdfConvertJobPayload,
   FileDeleteJobPayload,
   ImageDerivativeJobPayload,
   ProductImportCleanupJobPayload,
@@ -47,6 +49,20 @@ export type ClaimedTask =
       attempts: number;
       eventType: 'analytics-rollup';
       payload: AnalyticsRollupJobPayload;
+    }
+  | {
+      source: 'outbox';
+      id: string;
+      attempts: number;
+      eventType: 'excel-pdf-convert';
+      payload: ExcelPdfConvertJobPayload;
+    }
+  | {
+      source: 'outbox';
+      id: string;
+      attempts: number;
+      eventType: 'excel-pdf-cleanup';
+      payload: ExcelPdfCleanupJobPayload;
     };
 
 export interface TaskRunnerOptions {
@@ -55,4 +71,6 @@ export interface TaskRunnerOptions {
   leaseSeconds: number;
   pollIntervalMs: number;
   retryBaseDelayMs: number;
+  /** When false, conversion events remain queued until the feature is re-enabled. */
+  excelPdfEnabled?: boolean;
 }

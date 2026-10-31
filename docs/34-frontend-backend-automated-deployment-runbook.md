@@ -20,7 +20,9 @@
 | NestJS API | `apps/api` 及工作区依赖 | Linux VPS，由 systemd 管理 | GitHub Actions 构建发布包，通过 SSH 上传并在服务器切换版本 | `https://api.wuxuanglobal.com` |
 | Task Runner | 仓库中对应 Worker/Runner 应用（以当前实际 package 为准） | Linux VPS，由 systemd 管理；不监听公网 | 与 API 同一发布版本或单独 workflow 发布 | 不对公网提供地址 |
 
-API 发布必须与数据库迁移分开控制。不要让每次前端发布都自动执行生产数据库迁移；也不要让 API 发布时无条件 seed 数据。
+API 发布必须与数据库迁移分开控制。不要让每次前端发布都自动执行生产数据库迁移；也不要让 API
+发布时执行包含 demo/业务数据的完整 seed。API 启动会在监听端口前自动执行带事务锁的
+`--reference-only` 同步，只补齐版本化权限、菜单、翻译和系统字典。
 
 ## 2. 部署前核对仓库基线
 
@@ -291,7 +293,7 @@ pnpm --filter @b2b/api run build
 4. 检查迁移状态。
 5. 再部署应用包。
 
-数据库迁移遵循 expand → backfill → verify → switch → contract。应用回滚不代表数据库可以回滚；迁移不兼容旧应用时，不要自动切回旧版本。禁止生产执行 `prisma migrate dev`、无审查的 `db push` 或自动 seed。
+数据库迁移遵循 expand → backfill → verify → switch → contract。应用回滚不代表数据库可以回滚；迁移不兼容旧应用时，不要自动切回旧版本。禁止生产执行 `prisma migrate dev`、无审查的 `db push` 或完整 `db:seed`。允许的自动同步仅限 API 启动时的 `--reference-only` reference data，且失败必须阻断启动。
 
 ### 4.7 SSH 发布与服务器端切换
 

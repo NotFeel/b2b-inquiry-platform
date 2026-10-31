@@ -55,6 +55,22 @@ export const envSchema = z
     UPLOAD_MAX_PIXELS: z.coerce.number().int().min(1_000_000).max(500_000_000).default(50_000_000),
     IMAGE_DERIVATIVE_WIDTHS: z.string().trim().default('320,640,1280'),
     QUOTE_EXPORT_MAX_PRODUCTS: z.coerce.number().int().min(1).max(100_000).default(5_000),
+    EXCEL_PDF_ENABLED: booleanish.default(false),
+    EXCEL_PDF_MAX_UPLOAD_BYTES: z.coerce
+      .number()
+      .int()
+      .min(1_048_576)
+      .max(209_715_200)
+      .default(209_715_200),
+    EXCEL_PDF_CHUNK_BYTES: z.coerce.number().int().min(524_288).max(9_437_184).default(8_388_608),
+    EXCEL_PDF_MAX_OUTPUT_BYTES: z.coerce
+      .number()
+      .int()
+      .min(1_048_576)
+      .max(524_288_000)
+      .default(52_428_800),
+    EXCEL_PDF_MAX_PAGES: z.coerce.number().int().min(1).max(2_000).default(200),
+    EXCEL_PDF_RETENTION_DAYS: z.coerce.number().int().min(1).max(90).default(7),
 
     JOB_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(3),
     JOB_RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(30),

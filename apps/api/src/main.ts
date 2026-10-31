@@ -24,8 +24,14 @@ import { APP_ENV, type AppEnv } from './config/config.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { RequestContextInterceptor } from './common/interceptors/request-context.interceptor';
 import { JsonLogger } from './common/logger.service';
+import { syncReferenceDataAtStartup } from './reference-data-startup';
 
 async function bootstrap(): Promise<void> {
+  // Keep authorization and navigation reference data versioned together with
+  // the API. This runs in every environment before the HTTP port opens and is
+  // idempotent/serialized by the database synchronizer.
+  await syncReferenceDataAtStartup();
+
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   const env = app.get<AppEnv>(APP_ENV);
   const logger = new JsonLogger(env);

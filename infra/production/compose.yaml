@@ -53,10 +53,12 @@ services:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
       DIRECT_DATABASE_URL: ${DIRECT_DATABASE_URL:-}
       STORAGE_LOCAL_ROOT: /data/uploads
+      WORKER_TMP_DIR: /data/tmp
       GEOIP_DATABASE_PATH: /data/geoip/GeoLite2-Country.mmdb
       LOG_PRETTY: "false"
     volumes:
       - /opt/b2b-inquiry-platform/data/uploads:/data/uploads
+      - /opt/b2b-inquiry-platform/data/tmp:/data/tmp
       - /opt/b2b-inquiry-platform/data/geoip:/data/geoip:ro
     depends_on:
       postgres: {condition: service_healthy}
@@ -68,6 +70,17 @@ services:
       timeout: 5s
       retries: 3
       start_period: 45s
+    # LibreOffice memory/disk use is workload-dependent. These limits protect
+    # the host; they do not guarantee that every 200 MiB workbook will finish.
+    cpus: "2.0"
+    mem_limit: "4g"
+    pids_limit: 256
+    shm_size: "1gb"
+    stop_grace_period: 6m
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    ulimits:
+      nofile: { soft: 4096, hard: 8192 }
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
 
   storefront:
