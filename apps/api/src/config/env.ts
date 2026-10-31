@@ -70,7 +70,7 @@ export const envSchema = z
       .max(524_288_000)
       .default(52_428_800),
     EXCEL_PDF_MAX_PAGES: z.coerce.number().int().min(1).max(2_000).default(200),
-    EXCEL_PDF_RETENTION_DAYS: z.coerce.number().int().min(1).max(90).default(7),
+    EXCEL_PDF_RETENTION_DAYS: z.coerce.number().int().min(1).max(90).default(1),
 
     JOB_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(3),
     JOB_RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(30),

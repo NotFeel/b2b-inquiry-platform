@@ -8,6 +8,10 @@ ENV_FILE="$DEPLOY/.env"
 STATE="$DEPLOY/current-image-tag"
 BACKUPS="$ROOT/backups/database"
 mkdir -p "$BACKUPS" "$ROOT/logs"
+# The Worker image runs as node:node (UID/GID 1000). A host bind mount replaces
+# the image directory permissions, so prepare the temp volume explicitly before
+# Compose starts. Keep it private; LibreOffice needs write access, not world access.
+install -d -m 0700 -o 1000 -g 1000 "$ROOT/data/tmp"
 [[ -f "$ENV_FILE" && -f "$ROOT/.env.api" && -f "$COMPOSE" ]] || { echo "Missing production config" >&2; exit 2; }
 NEW_TAG="${IMAGE_TAG:-}"
 [[ "$NEW_TAG" =~ ^sha-[0-9a-f]{40}$ ]] || { echo "IMAGE_TAG must be sha-<40 lowercase hex>" >&2; exit 2; }

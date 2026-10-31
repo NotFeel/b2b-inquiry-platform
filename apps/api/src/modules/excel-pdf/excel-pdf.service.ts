@@ -295,6 +295,9 @@ export class ExcelPdfService {
   async uploadStatus(uploadId: string, actor: AuthenticatedActor): Promise<ExcelPdfUploadStatus> {
     this.assertEnabled();
     const upload = await this.ownedUpload(uploadId, actor, true);
+    if (upload.jobId) {
+      await this.finalizeStaleProcessingJobs({ jobId: upload.jobId, requestedById: actor.id });
+    }
     const expired =
       upload.expiresAt.getTime() <= Date.now() &&
       (ACTIVE_UPLOAD_STATUSES as readonly string[]).includes(upload.status);
@@ -357,23 +360,34 @@ export class ExcelPdfService {
     actor: AuthenticatedActor,
   ): Promise<ExcelPdfJobListResult> {
     this.assertEnabled('read');
+    await this.finalizeStaleProcessingJobs({ requestedById: actor.id });
     const now = new Date();
+    const retentionCutoff = this.retentionCutoff(now);
+    const withinRetention: Prisma.PdfConversionJobWhereInput = {
+      createdAt: { gt: retentionCutoff },
+      AND: [{ OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] }],
+    };
     const where: Prisma.PdfConversionJobWhereInput = {
       requestedById: actor.id,
       ...(query.businessType === 'all' ? {} : { businessType: query.businessType }),
       ...(query.status === 'all'
         ? {}
         : query.status === 'queued'
-          ? { status: 'QUEUED', OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] }
+          ? { status: 'QUEUED', ...withinRetention }
           : query.status === 'processing'
-            ? { status: 'PROCESSING', OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] }
+            ? { status: 'PROCESSING', ...withinRetention }
             : query.status === 'succeeded'
-              ? { status: 'SUCCEEDED', OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] }
+              ? { status: 'SUCCEEDED', ...withinRetention }
               : query.status === 'failed'
-                ? { status: 'FAILED', OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] }
+                ? { status: 'FAILED', ...withinRetention }
                 : query.status === 'cancelled'
                   ? { status: { in: ['CANCELLED', 'CANCEL_REQUESTED'] } }
-                  : { expiresAt: { lte: now }, status: { not: 'CANCELLED' } }),
+                  : query.status === 'expired'
+                    ? {
+                        OR: [{ expiresAt: { lte: now } }, { createdAt: { lte: retentionCutoff } }],
+                        status: { not: 'CANCELLED' },
+                      }
+                    : { status: { in: ['CANCELLED', 'CANCEL_REQUESTED'] } }),
     };
     const [rows, total] = await Promise.all([
       this.prisma.pdfConversionJob.findMany({
@@ -393,6 +407,7 @@ export class ExcelPdfService {
 
   async getJob(jobId: string, actor: AuthenticatedActor): Promise<ExcelPdfJobSummary> {
     this.assertEnabled('read');
+    await this.finalizeStaleProcessingJobs({ jobId, requestedById: actor.id });
     const job = await this.ownedJob(jobId, actor);
     return this.toSummary(job);
   }
@@ -410,7 +425,8 @@ export class ExcelPdfService {
   }> {
     this.assertEnabled('download');
     const job = await this.ownedJob(jobId, actor);
-    const status = effectiveExcelPdfJobStatus(job);
+    const effectiveExpiresAt = this.effectiveExpiresAt(job);
+    const status = effectiveExcelPdfJobStatus({ ...job, expiresAt: effectiveExpiresAt });
     if (status !== 'succeeded' || job.purgeState !== 'NONE' || !job.outputAsset || !job.outputKey) {
       throw new ApiError(
         ERROR_CODES.excelPdfJobNotDownloadable,
@@ -454,7 +470,7 @@ export class ExcelPdfService {
         'Only a failed conversion with a verified input can be retried.',
       );
     }
-    if (job.expiresAt && job.expiresAt.getTime() <= Date.now()) {
+    if ((this.effectiveExpiresAt(job)?.getTime() ?? Infinity) <= Date.now()) {
       throw new ApiError(
         ERROR_CODES.excelPdfJobNotRetryable,
         'The conversion retention period has expired.',
@@ -516,7 +532,11 @@ export class ExcelPdfService {
     requestId: string,
   ): Promise<{ id: string; status: 'deletion_pending' | 'deleted' }> {
     this.assertEnabled('delete');
-    const job = await this.ownedJob(jobId, actor);
+    let job = await this.ownedJob(jobId, actor);
+    if (job.status === 'PROCESSING') {
+      await this.finalizeStaleProcessingJobs({ jobId: job.id, requestedById: actor.id });
+      job = await this.ownedJob(jobId, actor);
+    }
     if (job.status === 'PROCESSING') {
       throw new ApiError(
         ERROR_CODES.excelPdfUploadStateInvalid,
@@ -556,31 +576,34 @@ export class ExcelPdfService {
           where: { id: asset.id },
           data: { status: 'delete_pending' },
         });
-        await transaction.fileDeletionJob.upsert({
-          where: { idempotencyKey: `excel-pdf-asset:${asset.id}` },
-          create: {
-            storageKey: asset.storageKey,
-            entityType: 'excel_pdf_asset',
-            entityId: asset.id,
-            requestedBy: actor.id,
-            idempotencyKey: `excel-pdf-asset:${asset.id}`,
-          },
-          update: {},
+        await this.queueFileDeletion(transaction, {
+          storageKey: asset.storageKey,
+          entityType: 'excel_pdf_asset',
+          entityId: asset.id,
+          requestedBy: actor.id,
+          idempotencyKey: `excel-pdf-asset:${asset.id}`,
         });
       }
       for (const chunk of uploadChunks) {
         const key = excelPdfChunkKey(job.uploadId!, chunk.index);
-        await transaction.fileDeletionJob.upsert({
-          where: { idempotencyKey: `excel-pdf-chunk:${job.uploadId}:${chunk.index}` },
-          create: {
-            storageKey: key,
-            entityType: 'excel_pdf_chunk',
-            entityId: `${job.uploadId}:${chunk.index}`,
-            requestedBy: actor.id,
-            idempotencyKey: `excel-pdf-chunk:${job.uploadId}:${chunk.index}`,
-          },
-          update: {},
+        await this.queueFileDeletion(transaction, {
+          storageKey: key,
+          entityType: 'excel_pdf_chunk',
+          entityId: `${job.uploadId}:${chunk.index}`,
+          requestedBy: actor.id,
+          idempotencyKey: `excel-pdf-chunk:${job.uploadId}:${chunk.index}`,
         });
+      }
+      if (keys.length === 0 && uploadChunks.length === 0) {
+        await transaction.pdfConversionJob.deleteMany({ where: { id: job.id } });
+        await transaction.fileAsset.deleteMany({
+          where: { id: { in: [job.sourceAssetId, job.outputAssetId].filter(Boolean) as string[] } },
+        });
+        if (job.uploadId) {
+          await transaction.excelPdfUpload.deleteMany({
+            where: { id: job.uploadId, jobId: job.id },
+          });
+        }
       }
     });
     await this.audit.record({
@@ -590,7 +613,10 @@ export class ExcelPdfService {
       entityId: job.id,
       requestId,
     });
-    return { id: job.id, status: 'deletion_pending' };
+    return {
+      id: job.id,
+      status: keys.length > 0 || uploadChunks.length > 0 ? 'deletion_pending' : 'deleted',
+    };
   }
 
   private assertEnabled(
@@ -701,18 +727,106 @@ export class ExcelPdfService {
     requestedBy: string,
   ): Promise<void> {
     for (const chunk of chunks) {
-      await this.prisma.fileDeletionJob.upsert({
-        where: { idempotencyKey: `excel-pdf-chunk:${uploadId}:${chunk.index}` },
-        create: {
-          storageKey: excelPdfChunkKey(uploadId, chunk.index),
-          entityType: 'excel_pdf_chunk',
-          entityId: `${uploadId}:${chunk.index}`,
-          requestedBy,
-          idempotencyKey: `excel-pdf-chunk:${uploadId}:${chunk.index}`,
-        },
-        update: {},
+      await this.queueFileDeletion(this.prisma, {
+        storageKey: excelPdfChunkKey(uploadId, chunk.index),
+        entityType: 'excel_pdf_chunk',
+        entityId: `${uploadId}:${chunk.index}`,
+        requestedBy,
+        idempotencyKey: `excel-pdf-chunk:${uploadId}:${chunk.index}`,
       });
     }
+  }
+
+  private async queueFileDeletion(
+    transaction: Pick<Prisma.TransactionClient, 'fileDeletionJob'>,
+    input: {
+      storageKey: string;
+      entityType: 'excel_pdf_asset' | 'excel_pdf_chunk';
+      entityId: string;
+      requestedBy: string;
+      idempotencyKey: string;
+    },
+  ): Promise<void> {
+    await transaction.fileDeletionJob.updateMany({
+      where: { idempotencyKey: input.idempotencyKey, status: 'FAILED' },
+      data: {
+        status: 'QUEUED',
+        attempts: 0,
+        runAfter: new Date(),
+        lockedBy: null,
+        lockedUntil: null,
+        heartbeatAt: null,
+        lastErrorCode: null,
+        completedAt: null,
+      },
+    });
+    await transaction.fileDeletionJob.upsert({
+      where: { idempotencyKey: input.idempotencyKey },
+      create: input,
+      update: {},
+    });
+  }
+
+  private async finalizeStaleProcessingJobs(scope: {
+    jobId?: string;
+    requestedById?: string;
+  }): Promise<void> {
+    const now = new Date();
+    const stale = await this.prisma.pdfConversionJob.findMany({
+      where: {
+        ...(scope.jobId ? { id: scope.jobId } : {}),
+        ...(scope.requestedById ? { requestedById: scope.requestedById } : {}),
+        status: 'PROCESSING',
+        OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }],
+      },
+      select: { id: true, uploadId: true },
+      take: 100,
+    });
+    for (const job of stale) {
+      await this.prisma.$transaction(async (transaction) => {
+        const changed = await transaction.pdfConversionJob.updateMany({
+          where: {
+            id: job.id,
+            status: 'PROCESSING',
+            OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }],
+          },
+          data: {
+            status: 'FAILED',
+            errorCode: ERROR_CODES.excelPdfConversionInterrupted,
+            completedAt: now,
+            leaseOwner: null,
+            leaseUntil: null,
+          },
+        });
+        if (changed.count !== 1) return;
+        if (job.uploadId) {
+          await transaction.excelPdfUpload.updateMany({
+            where: { id: job.uploadId, jobId: job.id, status: 'CONVERTING' },
+            data: { status: 'FAILED', errorCode: ERROR_CODES.excelPdfConversionInterrupted },
+          });
+        }
+        await transaction.auditLog.create({
+          data: {
+            action: 'excel_pdf.conversion_interrupted',
+            entityType: 'pdf_conversion_job',
+            entityId: job.id,
+            metadata: { leaseExpired: true },
+          },
+        });
+      });
+    }
+  }
+
+  private retentionCutoff(now: Date): Date {
+    return new Date(now.getTime() - this.env.EXCEL_PDF_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  }
+
+  private effectiveExpiresAt(job: { createdAt: Date; expiresAt: Date | null }): Date | null {
+    const retentionExpiry = new Date(
+      job.createdAt.getTime() + this.env.EXCEL_PDF_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+    );
+    if (!job.expiresAt) return retentionExpiry;
+    return job.expiresAt.getTime() < retentionExpiry.getTime() ? job.expiresAt : retentionExpiry;
   }
 
   private initResult(upload: {
@@ -745,7 +859,8 @@ export class ExcelPdfService {
     purgeState: 'NONE' | 'PENDING' | 'PURGED' | 'FAILED';
     requestedBy?: { displayName: string; username: string } | null;
   }): ExcelPdfJobSummary {
-    const status = effectiveExcelPdfJobStatus(job);
+    const expiresAt = this.effectiveExpiresAt(job);
+    const status = effectiveExcelPdfJobStatus({ ...job, expiresAt });
     return {
       id: job.id,
       fileName: job.sourceFileName,
@@ -760,9 +875,10 @@ export class ExcelPdfService {
       createdAt: job.createdAt.toISOString(),
       startedAt: job.startedAt?.toISOString() ?? null,
       completedAt: job.completedAt?.toISOString() ?? null,
-      expiresAt: job.expiresAt?.toISOString() ?? null,
+      expiresAt: expiresAt?.toISOString() ?? null,
       createdBy: job.requestedBy?.displayName ?? job.requestedBy?.username ?? null,
       canDownload: status === 'succeeded' && job.purgeState === 'NONE',
+      deletionPending: !['NONE', 'FAILED'].includes(job.purgeState),
     };
   }
 }

@@ -1,5 +1,5 @@
 import { constants as fsConstants, promises as fs } from 'node:fs';
-import { inflateRawSync } from 'node:zlib';
+import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import { ERROR_CODES, EXCEL_PDF_LIMITS } from '@b2b/contracts';
 import { ExcelPdfProcessingError } from './excel-pdf-errors';
 
@@ -14,11 +14,17 @@ const MAX_METADATA_TOTAL_BYTES = 8 * 1024 * 1024;
 
 interface ZipEntry {
   name: string;
+  versionMadeBy: number;
+  versionNeeded: number;
   flags: number;
   method: number;
+  modifiedTime: number;
+  modifiedDate: number;
   crc32: number;
   compressedBytes: number;
   uncompressedBytes: number;
+  internalAttributes: number;
+  externalAttributes: number;
   localHeaderOffset: number;
 }
 
@@ -107,6 +113,313 @@ export async function validateXlsxArchive(path: string): Promise<XlsxValidationR
   }
 }
 
+/**
+ * Produces a temporary print-optimised XLSX without loading the workbook into
+ * ExcelJS or another object model. Unchanged media and relationship entries are
+ * copied as their original compressed bytes; only workbook/sheet XML entries
+ * that control print titles and page setup are inflated and rewritten.
+ */
+export async function normaliseXlsxForPdf(
+  inputPath: string,
+  outputPath: string,
+): Promise<XlsxValidationResult> {
+  const validation = await validateXlsxArchive(inputPath);
+  let input: Awaited<ReturnType<typeof fs.open>> | null = null;
+  let output: Awaited<ReturnType<typeof fs.open>> | null = null;
+  try {
+    input = await fs.open(inputPath, fsConstants.O_RDONLY);
+    const stat = await input.stat();
+    const eocd = await findEndOfCentralDirectory(input, stat.size);
+    const central = Buffer.alloc(eocd.centralDirectorySize);
+    await readExactly(input, central, 0, central.byteLength, eocd.centralDirectoryOffset);
+    const entries = parseCentralDirectory(central, eocd.entryCount);
+
+    output = await fs.open(outputPath, 'wx', 0o600);
+    const centralParts: Buffer[] = [];
+    let outputOffset = 0;
+
+    for (const entry of entries) {
+      const name = Buffer.from(entry.name, 'utf8');
+      let method = entry.method;
+      let crc = entry.crc32;
+      let compressedBytes = entry.compressedBytes;
+      let uncompressedBytes = entry.uncompressedBytes;
+      let rewritten: Buffer | null = null;
+
+      if (shouldNormaliseEntry(entry.name)) {
+        const original = await readEntry(input, entry);
+        const xml =
+          entry.name.toLowerCase() === 'xl/workbook.xml'
+            ? normaliseWorkbookXml(original.toString('utf8'))
+            : normaliseSheetXml(original.toString('utf8'), /chartsheets\//i.test(entry.name));
+        rewritten = deflateRawSync(Buffer.from(xml, 'utf8'));
+        method = 8;
+        uncompressedBytes = Buffer.byteLength(xml);
+        compressedBytes = rewritten.byteLength;
+        crc = crc32(Buffer.from(xml, 'utf8'));
+      }
+
+      // Data descriptors are unnecessary because the central directory gives
+      // us CRCs and sizes. Clearing bit 3 also keeps the rewritten archive
+      // straightforward for older spreadsheet/PDF engines.
+      const flags = (entry.flags | 0x0800) & ~0x0008;
+      const localHeader = Buffer.alloc(30);
+      localHeader.writeUInt32LE(LOCAL_SIGNATURE, 0);
+      localHeader.writeUInt16LE(entry.versionNeeded, 4);
+      localHeader.writeUInt16LE(flags, 6);
+      localHeader.writeUInt16LE(method, 8);
+      localHeader.writeUInt16LE(entry.modifiedTime, 10);
+      localHeader.writeUInt16LE(entry.modifiedDate, 12);
+      localHeader.writeUInt32LE(crc, 14);
+      localHeader.writeUInt32LE(compressedBytes, 18);
+      localHeader.writeUInt32LE(uncompressedBytes, 22);
+      localHeader.writeUInt16LE(name.byteLength, 26);
+      localHeader.writeUInt16LE(0, 28);
+
+      await writeAll(output, localHeader, localHeader.byteLength, outputOffset);
+      outputOffset += localHeader.byteLength;
+      await writeAll(output, name, name.byteLength, outputOffset);
+      outputOffset += name.byteLength;
+
+      if (rewritten) {
+        await writeAll(output, rewritten, rewritten.byteLength, outputOffset);
+      } else {
+        const local = Buffer.alloc(30);
+        await readExactly(input, local, 0, local.byteLength, entry.localHeaderOffset);
+        if (local.readUInt32LE(0) !== LOCAL_SIGNATURE) throw invalidFile();
+        const localNameLength = local.readUInt16LE(26);
+        const localExtraLength = local.readUInt16LE(28);
+        await copyRange(
+          input,
+          output,
+          entry.localHeaderOffset + 30 + localNameLength + localExtraLength,
+          outputOffset,
+          compressedBytes,
+        );
+      }
+
+      const centralHeader = Buffer.alloc(46);
+      centralHeader.writeUInt32LE(CENTRAL_SIGNATURE, 0);
+      centralHeader.writeUInt16LE(entry.versionMadeBy, 4);
+      centralHeader.writeUInt16LE(entry.versionNeeded, 6);
+      centralHeader.writeUInt16LE(flags, 8);
+      centralHeader.writeUInt16LE(method, 10);
+      centralHeader.writeUInt16LE(entry.modifiedTime, 12);
+      centralHeader.writeUInt16LE(entry.modifiedDate, 14);
+      centralHeader.writeUInt32LE(crc, 16);
+      centralHeader.writeUInt32LE(compressedBytes, 20);
+      centralHeader.writeUInt32LE(uncompressedBytes, 24);
+      centralHeader.writeUInt16LE(name.byteLength, 28);
+      centralHeader.writeUInt16LE(0, 30);
+      centralHeader.writeUInt16LE(0, 32);
+      centralHeader.writeUInt16LE(0, 34);
+      centralHeader.writeUInt16LE(entry.internalAttributes, 36);
+      centralHeader.writeUInt32LE(entry.externalAttributes, 38);
+      centralHeader.writeUInt32LE(outputOffset - localHeader.byteLength - name.byteLength, 42);
+      centralParts.push(centralHeader, name);
+      outputOffset += compressedBytes;
+    }
+
+    const centralDirectory = Buffer.concat(centralParts);
+    await writeAll(output, centralDirectory, centralDirectory.byteLength, outputOffset);
+    outputOffset += centralDirectory.byteLength;
+
+    const ending = Buffer.alloc(EOCD_SIZE);
+    ending.writeUInt32LE(EOCD_SIGNATURE, 0);
+    ending.writeUInt16LE(0, 4);
+    ending.writeUInt16LE(0, 6);
+    ending.writeUInt16LE(entries.length, 8);
+    ending.writeUInt16LE(entries.length, 10);
+    ending.writeUInt32LE(centralDirectory.byteLength, 12);
+    ending.writeUInt32LE(outputOffset - centralDirectory.byteLength, 16);
+    ending.writeUInt16LE(0, 20);
+    await writeAll(output, ending, ending.byteLength, outputOffset);
+    await output.sync();
+    return validation;
+  } catch (error) {
+    if (output) await output.close().catch(() => undefined);
+    output = null;
+    await fs.rm(outputPath, { force: true }).catch(() => undefined);
+    throw error;
+  } finally {
+    await input?.close().catch(() => undefined);
+    await output?.close().catch(() => undefined);
+  }
+}
+
+function shouldNormaliseEntry(name: string): boolean {
+  const lower = name.toLowerCase();
+  return (
+    lower === 'xl/workbook.xml' ||
+    /^xl\/worksheets\/sheet[^/]*\.xml$/.test(lower) ||
+    /^xl\/chartsheets\/sheet[^/]*\.xml$/.test(lower)
+  );
+}
+
+function normaliseWorkbookXml(xml: string): string {
+  return xml
+    .replace(/<definedName\b(?=[^>]*\bname\s*=\s*["']_xlnm\.Print_Titles["'])[^>]*\/>/gi, '')
+    .replace(
+      /<definedName\b(?=[^>]*\bname\s*=\s*["']_xlnm\.Print_Titles["'])[^>]*>[\s\S]*?<\/definedName>/gi,
+      '',
+    );
+}
+
+function normaliseSheetXml(xml: string, chartsheet: boolean): string {
+  const withFitToPage = chartsheet ? xml : enableFitToPage(xml);
+  const root = chartsheet ? 'chartsheet' : 'worksheet';
+  const pageSetup = /<pageSetup\b[^>]*\/?>/i;
+  const existing = pageSetup.exec(withFitToPage)?.[0];
+  const pageSetupTag = existing
+    ? normalisePageSetupTag(existing)
+    : '<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/>';
+  const withoutPageSetup = existing ? withFitToPage.replace(pageSetup, '') : withFitToPage;
+  const closing = new RegExp(`</${root}\\s*>`, 'i');
+  if (!closing.test(withoutPageSetup)) throw invalidFile();
+
+  // OOXML has a sequence-sensitive worksheet schema. pageSetup must precede
+  // print headers, drawings, table parts and the worksheet-level extLst. Scan
+  // only direct worksheet children: real WPS/Excel templates may contain a
+  // nested <extLst/> inside autoFilter, which must not be mistaken for the
+  // worksheet-level successor.
+  const insertionPoint = findTopLevelElementStart(withoutPageSetup, PAGE_SETUP_SUCCESSORS);
+  if (insertionPoint >= 0) {
+    return `${withoutPageSetup.slice(0, insertionPoint)}${pageSetupTag}${withoutPageSetup.slice(
+      insertionPoint,
+    )}`;
+  }
+  return withoutPageSetup.replace(closing, (tag) => `${pageSetupTag}${tag}`);
+}
+
+const PAGE_SETUP_SUCCESSORS = new Set([
+  'headerfooter',
+  'rowbreaks',
+  'colbreaks',
+  'customproperties',
+  'cellwatches',
+  'ignorederrors',
+  'smarttags',
+  'drawing',
+  'legacydrawing',
+  'legacydrawinghf',
+  'picture',
+  'oleobjects',
+  'controls',
+  'webpublishitems',
+  'tableparts',
+  'extlst',
+]);
+
+function findTopLevelElementStart(xml: string, elementNames: ReadonlySet<string>): number {
+  let depth = 0;
+  let index = 0;
+  while (index < xml.length) {
+    const tagStart = xml.indexOf('<', index);
+    if (tagStart < 0) return -1;
+    if (xml.startsWith('<!--', tagStart)) {
+      index = skipMarkup(xml, tagStart, '-->');
+      continue;
+    }
+    if (xml.startsWith('<![CDATA[', tagStart)) {
+      index = skipMarkup(xml, tagStart, ']]>');
+      continue;
+    }
+    if (xml.startsWith('<?', tagStart)) {
+      index = skipMarkup(xml, tagStart, '?>');
+      continue;
+    }
+    if (xml.startsWith('<!', tagStart)) {
+      const declarationEnd = findTagEnd(xml, tagStart);
+      if (declarationEnd < 0) throw invalidFile();
+      index = declarationEnd + 1;
+      continue;
+    }
+
+    const tag = /^<\s*(\/?)\s*([A-Za-z_][\w:.-]*)\b/.exec(xml.slice(tagStart));
+    const tagEnd = findTagEnd(xml, tagStart);
+    const qualifiedName = tag?.[2];
+    if (!qualifiedName || tagEnd < 0) throw invalidFile();
+
+    const closing = tag[1] === '/';
+    const name = qualifiedName.split(':').pop()?.toLowerCase() ?? '';
+    const selfClosing = /\/\s*>$/.test(xml.slice(tagStart, tagEnd + 1));
+    if (closing) {
+      depth -= 1;
+      if (depth < 0) throw invalidFile();
+    } else {
+      if (depth === 1 && elementNames.has(name)) return tagStart;
+      if (!selfClosing) depth += 1;
+    }
+    index = tagEnd + 1;
+  }
+  return -1;
+}
+
+function skipMarkup(xml: string, start: number, terminator: string): number {
+  const end = xml.indexOf(terminator, start + 2);
+  if (end < 0) throw invalidFile();
+  return end + terminator.length;
+}
+
+function findTagEnd(xml: string, start: number): number {
+  let quote = '';
+  for (let index = start + 1; index < xml.length; index += 1) {
+    const char = xml[index];
+    if (quote) {
+      if (char === quote) quote = '';
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+    } else if (char === '>') {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function enableFitToPage(xml: string): string {
+  const selfClosing = /<sheetPr\b[^>]*\/>/i;
+  if (selfClosing.test(xml)) {
+    return xml.replace(
+      selfClosing,
+      (tag) => `${tag.replace(/\/>$/, '>')}<pageSetUpPr fitToPage="1"/></sheetPr>`,
+    );
+  }
+
+  const block = /<sheetPr\b[^>]*>[\s\S]*?<\/sheetPr>/i;
+  const blockMatch = block.exec(xml);
+  if (blockMatch) {
+    const existing = /<pageSetUpPr\b[^>]*\/?>/i;
+    // CT_SheetPr requires tabColor, then outlinePr, then pageSetUpPr. Preserve
+    // existing author formatting while inserting fitToPage in schema order.
+    const replacement = existing.test(blockMatch[0])
+      ? blockMatch[0].replace(existing, (tag) => upsertTagAttribute(tag, 'fitToPage', '1'))
+      : blockMatch[0].replace(/<\/sheetPr\s*>/i, (tag) => `<pageSetUpPr fitToPage="1"/>${tag}`);
+    return xml.replace(block, replacement);
+  }
+
+  const worksheetOpen = /<worksheet\b[^>]*>/i;
+  if (!worksheetOpen.test(xml)) throw invalidFile();
+  return xml.replace(
+    worksheetOpen,
+    (tag) => `${tag}<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>`,
+  );
+}
+
+function normalisePageSetupTag(tag: string): string {
+  let result = upsertTagAttribute(tag, 'paperSize', '9');
+  result = upsertTagAttribute(result, 'orientation', 'landscape');
+  result = upsertTagAttribute(result, 'fitToWidth', '1');
+  return upsertTagAttribute(result, 'fitToHeight', '0');
+}
+
+function upsertTagAttribute(tag: string, name: string, value: string): string {
+  const attribute = new RegExp(`\\b${name}\\s*=\\s*(["'])[^"']*\\1`, 'i');
+  if (attribute.test(tag)) return tag.replace(attribute, `${name}="${value}"`);
+  return tag.replace(/\s*\/?>$/, (ending) => ` ${name}="${value}"${ending}`);
+}
+
 async function findEndOfCentralDirectory(
   handle: Awaited<ReturnType<typeof fs.open>>,
   fileSize: number,
@@ -168,8 +481,12 @@ function parseCentralDirectory(buffer: Buffer, expectedEntries: number): ZipEntr
     if (offset + 46 > buffer.byteLength || buffer.readUInt32LE(offset) !== CENTRAL_SIGNATURE) {
       throw invalidFile();
     }
+    const versionMadeBy = buffer.readUInt16LE(offset + 4);
+    const versionNeeded = buffer.readUInt16LE(offset + 6);
     const flags = buffer.readUInt16LE(offset + 8);
     const method = buffer.readUInt16LE(offset + 10);
+    const modifiedTime = buffer.readUInt16LE(offset + 12);
+    const modifiedDate = buffer.readUInt16LE(offset + 14);
     const crc32 = buffer.readUInt32LE(offset + 16);
     const compressedBytes = buffer.readUInt32LE(offset + 20);
     const uncompressedBytes = buffer.readUInt32LE(offset + 24);
@@ -177,6 +494,8 @@ function parseCentralDirectory(buffer: Buffer, expectedEntries: number): ZipEntr
     const extraLength = buffer.readUInt16LE(offset + 30);
     const commentLength = buffer.readUInt16LE(offset + 32);
     const diskStart = buffer.readUInt16LE(offset + 34);
+    const internalAttributes = buffer.readUInt16LE(offset + 36);
+    const externalAttributes = buffer.readUInt32LE(offset + 38);
     const localHeaderOffset = buffer.readUInt32LE(offset + 42);
     const end = offset + 46 + nameLength + extraLength + commentLength;
     if (end > buffer.byteLength || diskStart !== 0) throw invalidFile();
@@ -185,11 +504,17 @@ function parseCentralDirectory(buffer: Buffer, expectedEntries: number): ZipEntr
     const name = rawName.toString((flags & 0x0800) !== 0 ? 'utf8' : 'latin1');
     entries.push({
       name,
+      versionMadeBy,
+      versionNeeded,
       flags,
       method,
+      modifiedTime,
+      modifiedDate,
       crc32,
       compressedBytes,
       uncompressedBytes,
+      internalAttributes,
+      externalAttributes,
       localHeaderOffset,
     });
     offset = end;
@@ -325,6 +650,37 @@ async function readExactly(
     const result = await handle.read(buffer, offset + read, length - read, position + read);
     if (result.bytesRead === 0) throw invalidFile();
     read += result.bytesRead;
+  }
+}
+
+async function writeAll(
+  handle: Awaited<ReturnType<typeof fs.open>>,
+  buffer: Buffer,
+  length: number,
+  position: number,
+): Promise<void> {
+  let written = 0;
+  while (written < length) {
+    const result = await handle.write(buffer, written, length - written, position + written);
+    if (result.bytesWritten === 0) throw invalidFile();
+    written += result.bytesWritten;
+  }
+}
+
+async function copyRange(
+  input: Awaited<ReturnType<typeof fs.open>>,
+  output: Awaited<ReturnType<typeof fs.open>>,
+  inputPosition: number,
+  outputPosition: number,
+  length: number,
+): Promise<void> {
+  const buffer = Buffer.allocUnsafe(Math.min(1024 * 1024, Math.max(1, length)));
+  let copied = 0;
+  while (copied < length) {
+    const bytes = Math.min(buffer.byteLength, length - copied);
+    await readExactly(input, buffer, 0, bytes, inputPosition + copied);
+    await writeAll(output, buffer, bytes, outputPosition + copied);
+    copied += bytes;
   }
 }
 

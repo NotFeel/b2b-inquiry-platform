@@ -18,7 +18,7 @@ export const EXCEL_PDF_LIMITS = {
   maxOutputBytes: 50 * MIB,
   maxPages: 200,
   defaultTimeoutMs: 300_000,
-  defaultRetentionDays: 7,
+  defaultRetentionDays: 1,
   maxPageSize: 50,
 } as const;
 
@@ -108,6 +108,8 @@ export interface ExcelPdfJobSummary {
   expiresAt: string | null;
   createdBy: string | null;
   canDownload: boolean;
+  /** Physical objects are being deleted; hide the row once record purge completes. */
+  deletionPending: boolean;
 }
 
 export interface ExcelPdfJobListResult {

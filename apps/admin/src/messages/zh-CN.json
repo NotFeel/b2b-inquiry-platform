@@ -1698,7 +1698,9 @@
     "cancelled": "上传已取消。",
     "downloadStarted": "PDF 下载已开始。",
     "retryQueued": "转换已重新排队。",
-    "deleteRequested": "删除请求已提交，系统将继续清理私有文件。",
+    "deleteRequested": "删除请求已提交，系统将继续清理私有文件和转换记录。",
+    "deleteCompleted": "转换记录和物理文件已删除。",
+    "deletePending": "正在彻底删除文件和记录…",
     "pages": "{{count}} 页",
     "businessType": {
       "quotation": "报价单",
@@ -1717,7 +1719,7 @@
       "title": "选择 Excel 文件",
       "businessType": "文件类型",
       "limits": "转换限制",
-      "limitDetail": "分块大小 {{chunkSize}}；PDF 最大 {{outputSize}}、{{pages}} 页；文件保留 {{days}} 天。",
+      "limitDetail": "分块大小 {{chunkSize}}；PDF 最大 {{outputSize}}、{{pages}} 页；物理文件和转换记录保留 {{days}} 天。",
       "dropLabel": "拖放或选择 XLSX 文件",
       "dropTitle": "拖放 .xlsx 文件到这里",
       "dropHelp": "仅支持无宏 .xlsx；扩展名、ZIP 结构和外部链接会在服务端再次校验。",
@@ -1749,6 +1751,7 @@
       "preview": "预览",
       "retry": "重试",
       "delete": "删除",
+      "deleting": "删除中",
       "downloadFile": "下载 {{fileName}} 的 PDF",
       "previewFile": "预览 {{fileName}} 的 PDF"
     },
@@ -1756,7 +1759,7 @@
       "title": "转换记录",
       "empty": "暂无转换记录",
       "emptyHelp": "上传一份 .xlsx 工作簿后，转换结果会显示在这里。",
-      "retentionHelp": "成功或失败的输入和输出文件会在 {{days}} 天后自动过期并清理。",
+      "retentionHelp": "输入、输出、分块文件和转换记录会在 {{days}} 天后自动过期并彻底删除。",
       "backDashboard": "返回工作台"
     },
     "deleteConfirm": {

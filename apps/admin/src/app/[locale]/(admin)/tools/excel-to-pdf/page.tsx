@@ -112,9 +112,9 @@ export default function ExcelToPdfPage() {
   useEffect(() => () => uploadAbort.current?.abort(), []);
 
   const loadJobs = useCallback(
-    async (signal?: AbortSignal) => {
+    async (signal?: AbortSignal, options: { background?: boolean } = {}) => {
       if (!canRead || !config?.enabled) return;
-      setJobsLoading(true);
+      if (!options.background) setJobsLoading(true);
       try {
         const result = await excelPdfApi.listJobs(
           { page, pageSize, status: statusFilter, businessType: businessFilter },
@@ -133,7 +133,7 @@ export default function ExcelToPdfPage() {
         );
         setJobsRequestId(error instanceof AdminApiError ? (error.requestId ?? null) : null);
       } finally {
-        setJobsLoading(false);
+        if (!options.background) setJobsLoading(false);
       }
     },
     [businessFilter, canRead, config?.enabled, locale, page, pageSize, statusFilter, t],
@@ -144,6 +144,24 @@ export default function ExcelToPdfPage() {
     void loadJobs(controller.signal);
     return () => controller.abort();
   }, [loadJobs]);
+
+  const hasLiveJobs = jobs.some((job) => job.status === 'processing' || job.deletionPending);
+  useEffect(() => {
+    if (!hasLiveJobs || !canRead || !config?.enabled) return;
+    const controller = new AbortController();
+    let timer: number | undefined;
+    let stopped = false;
+    const poll = async () => {
+      await loadJobs(controller.signal, { background: true });
+      if (!stopped) timer = window.setTimeout(() => void poll(), 4_000);
+    };
+    timer = window.setTimeout(() => void poll(), 2_000);
+    return () => {
+      stopped = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [canRead, config?.enabled, hasLiveJobs, loadJobs]);
 
   const selectFile = (selected: File | null) => {
     setFileError(null);
@@ -283,8 +301,10 @@ export default function ExcelToPdfPage() {
     if (!pendingDelete || !canDelete || deleteBusy) return;
     setDeleteBusy(true);
     try {
-      await excelPdfApi.delete(pendingDelete.id);
-      toast.success(t('excelPdf.deleteRequested'));
+      const result = await excelPdfApi.delete(pendingDelete.id);
+      toast.success(
+        t(result.status === 'deleted' ? 'excelPdf.deleteCompleted' : 'excelPdf.deleteRequested'),
+      );
       setPendingDelete(null);
       await loadJobs();
     } catch (error) {
@@ -326,6 +346,9 @@ export default function ExcelToPdfPage() {
               <span className="small muted" title={job.errorCode}>
                 {translateError(locale, job.errorCode)}
               </span>
+            ) : null}
+            {job.deletionPending ? (
+              <span className="small muted">{t('excelPdf.deletePending')}</span>
             ) : null}
           </div>
         ),
@@ -398,10 +421,10 @@ export default function ExcelToPdfPage() {
               <Button
                 variant="danger"
                 size="sm"
-                disabled={job.status === 'processing'}
+                disabled={job.status === 'processing' || job.deletionPending}
                 onClick={() => setPendingDelete(job)}
               >
-                {t('excelPdf.actions.delete')}
+                {t(job.deletionPending ? 'excelPdf.actions.deleting' : 'excelPdf.actions.delete')}
               </Button>
             ) : null}
           </div>

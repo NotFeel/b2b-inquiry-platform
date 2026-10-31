@@ -131,6 +131,10 @@ export const commonMessages: Record<'en-US' | 'zh-CN', Messages> = {
         'The PDF converter is unavailable. Contact an administrator.',
       EXCEL_PDF_CONVERSION_TIMEOUT:
         'The workbook took too long to convert. Try a smaller workbook.',
+      EXCEL_PDF_CONVERSION_INTERRUPTED:
+        'The conversion stopped before completion. It is marked failed and can be deleted or retried.',
+      EXCEL_PDF_WORKSPACE_UNAVAILABLE:
+        'The Worker temporary directory is not writable. Check WORKER_TMP_DIR permissions.',
       QUOTE_TEMPLATE_INVALID: 'The template failed validation.',
       QUOTE_EXPORT_EMPTY: 'No products match the selected filters.',
       QUOTE_EXPORT_TOO_LARGE: 'The export exceeds the configured product limit.',
@@ -407,6 +411,8 @@ export const commonMessages: Record<'en-US' | 'zh-CN', Messages> = {
       EXCEL_PDF_OUTPUT_INVALID: '生成的 PDF 未通过校验或已不存在。',
       EXCEL_PDF_CONVERTER_UNAVAILABLE: 'PDF 转换器不可用，请联系管理员。',
       EXCEL_PDF_CONVERSION_TIMEOUT: '工作簿转换超时，请尝试精简文件后重试。',
+      EXCEL_PDF_CONVERSION_INTERRUPTED: '转换任务在完成前中断，已标记为失败，可删除或重试。',
+      EXCEL_PDF_WORKSPACE_UNAVAILABLE: 'Worker 临时目录不可写，请检查 WORKER_TMP_DIR 的目录权限。',
       QUOTE_TEMPLATE_INVALID: '模板预检未通过。',
       QUOTE_EXPORT_EMPTY: '所选筛选条件下没有商品。',
       QUOTE_EXPORT_TOO_LARGE: '导出商品数量超过配置上限。',

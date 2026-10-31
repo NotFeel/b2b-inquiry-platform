@@ -16,7 +16,7 @@ import { ExcelPdfProcessingError } from './excel-pdf-errors';
 import { convertWorkbookWithLibreOffice } from './libreoffice.runner';
 import { validatePdfOutput } from './pdf-output-validator';
 import { createExcelPdfTempWorkspace } from './temp-workspace';
-import { validateXlsxArchive } from './xlsx-zip-validator';
+import { normaliseXlsxForPdf } from './xlsx-zip-validator';
 
 interface Dependencies {
   prisma: PrismaClient;
@@ -179,10 +179,11 @@ export async function processExcelPdfConversion(
     return;
   }
 
-  const workspace = await createExcelPdfTempWorkspace(deps.env.WORKER_TMP_DIR);
+  let workspace: Awaited<ReturnType<typeof createExcelPdfTempWorkspace>> | null = null;
   let outputStorageKey: string | null = null;
   let outputAssetId: string | null = null;
   try {
+    workspace = await createExcelPdfTempWorkspace(deps.env.WORKER_TMP_DIR);
     assertExcelPdfChunkSet(upload.chunks, upload.chunkCount, Number(upload.declaredSize));
     const inputHash = await mergeExcelPdfChunks({
       chunks: upload.chunks,
@@ -196,7 +197,7 @@ export async function processExcelPdfConversion(
         'The merged workbook hash does not match the saved checksum.',
       );
     }
-    const archive = await validateXlsxArchive(workspace.inputPath);
+    const archive = await normaliseXlsxForPdf(workspace.inputPath, workspace.normalisedInputPath);
 
     await putFileFromDisk(
       deps.storage,
@@ -220,7 +221,7 @@ export async function processExcelPdfConversion(
 
     const converted = await convertWorkbookWithLibreOffice({
       executable: deps.env.EXCEL_PDF_CONVERTER_PATH,
-      inputPath: workspace.inputPath,
+      inputPath: workspace.normalisedInputPath,
       outputDir: workspace.outputDir,
       profileDir: workspace.profileDir,
       timeoutMs: deps.env.EXCEL_PDF_TIMEOUT_MS,
@@ -342,7 +343,7 @@ export async function processExcelPdfConversion(
     }
     if (processingError.retryable) throw processingError;
   } finally {
-    await workspace.cleanup().catch((cleanupError: unknown) => {
+    await workspace?.cleanup().catch((cleanupError: unknown) => {
       logger.warn('excel_pdf.temp_cleanup_failed', {
         jobId: job.id,
         errorCode: errorCodeOf(cleanupError),
@@ -518,6 +519,14 @@ async function scheduleConversionLeaseWakeup(
 
 function normalizeProcessingError(error: unknown): ExcelPdfProcessingError {
   if (error instanceof ExcelPdfProcessingError) return error;
+  const errorCode = (error as NodeJS.ErrnoException | null)?.code;
+  if (errorCode && ['EACCES', 'EPERM', 'ENOSPC', 'EROFS'].includes(errorCode)) {
+    return new ExcelPdfProcessingError(
+      ERROR_CODES.excelPdfWorkspaceUnavailable,
+      'The Worker temporary workspace is not writable or has insufficient space.',
+      true,
+    );
+  }
   return new ExcelPdfProcessingError(
     ERROR_CODES.storageUnavailable,
     error instanceof Error ? error.message : 'Excel-to-PDF processing failed.',
@@ -557,6 +566,22 @@ export async function queueChunkDeletions(
   requestedBy: string | null,
 ): Promise<void> {
   for (const chunk of chunks) {
+    await transaction.fileDeletionJob.updateMany({
+      where: {
+        idempotencyKey: `excel-pdf-chunk:${uploadId}:${chunk.index}`,
+        status: 'FAILED',
+      },
+      data: {
+        status: 'QUEUED',
+        attempts: 0,
+        runAfter: new Date(),
+        lockedBy: null,
+        lockedUntil: null,
+        heartbeatAt: null,
+        lastErrorCode: null,
+        completedAt: null,
+      },
+    });
     await transaction.fileDeletionJob.upsert({
       where: { idempotencyKey: `excel-pdf-chunk:${uploadId}:${chunk.index}` },
       create: {

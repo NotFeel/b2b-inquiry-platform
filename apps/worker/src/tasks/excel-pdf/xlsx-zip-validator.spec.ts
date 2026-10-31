@@ -1,10 +1,10 @@
-import { deflateRawSync } from 'node:zlib';
+import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { ERROR_CODES } from '@b2b/contracts';
 import { afterEach, describe, expect, it } from 'vitest';
-import { validateXlsxArchive } from './xlsx-zip-validator';
+import { normaliseXlsxForPdf, validateXlsxArchive } from './xlsx-zip-validator';
 
 interface ZipFixtureEntry {
   name: string;
@@ -153,6 +153,128 @@ describe('XLSX ZIP security validation', () => {
   });
 });
 
+describe('XLSX print normalisation', () => {
+  it('sets every sheet to A4 landscape and removes repeated print titles without changing media', async () => {
+    const workbook =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+      '<definedNames><definedName name="_xlnm.Print_Titles" localSheetId="0">' +
+      "'Products'!$1:$6</definedName></definedNames>" +
+      '<sheets><sheet name="Products" sheetId="1" r:id="rId1" ' +
+      'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>' +
+      '</sheets></workbook>';
+    const worksheet =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+      '<sheetPr/><dimension ref="A1:D20"/>' +
+      '<pageMargins left="0.3" right="0.3" top="0.4" bottom="0.4" header="0.2" footer="0.2"/>' +
+      '<pageSetup paperSize="1" orientation="portrait" fitToWidth="0" fitToHeight="2"/>' +
+      '<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Company</t></is></c></row>' +
+      '</sheetData></worksheet>';
+    const media = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02]);
+    const input = await fixture([
+      { name: '[Content_Types].xml', data: CONTENT_TYPES },
+      { name: 'xl/workbook.xml', data: workbook },
+      { name: 'xl/worksheets/sheet1.xml', data: worksheet },
+      { name: 'xl/styles.xml', data: '<styleSheet/>' },
+      { name: 'xl/media/image1.png', data: media },
+    ]);
+    const output = join(dirname(input), 'print.xlsx');
+
+    await normaliseXlsxForPdf(input, output);
+    const entries = await readZipEntries(output);
+
+    expect(entries.get('xl/workbook.xml')?.toString('utf8')).not.toContain('Print_Titles');
+    const normalisedWorksheet = entries.get('xl/worksheets/sheet1.xml')?.toString('utf8') ?? '';
+    expect(normalisedWorksheet).toContain('<pageSetUpPr fitToPage="1"/>');
+    expect(normalisedWorksheet).toContain(
+      'paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"',
+    );
+    expect(normalisedWorksheet).toContain('<t>Company</t>');
+    expect(entries.get('xl/styles.xml')?.toString('utf8')).toBe('<styleSheet/>');
+    expect(entries.get('xl/media/image1.png')).toEqual(media);
+    await expect(validateXlsxArchive(output)).resolves.toMatchObject({ entryCount: 5 });
+  });
+
+  it('inserts page setup in schema order when sheetPr and pageSetup are absent', async () => {
+    const worksheet =
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+      '<dimension ref="A1:D20"/><sheetData/>' +
+      '<drawing r:id="rId1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>' +
+      '<tableParts count="1"><tablePart r:id="rId2"/></tableParts></worksheet>';
+    const input = await fixture([
+      { name: '[Content_Types].xml', data: CONTENT_TYPES },
+      { name: 'xl/workbook.xml', data: WORKBOOK },
+      { name: 'xl/worksheets/sheet1.xml', data: worksheet },
+    ]);
+    const output = join(dirname(input), 'print.xlsx');
+
+    await normaliseXlsxForPdf(input, output);
+    const xml =
+      (await readZipEntries(output)).get('xl/worksheets/sheet1.xml')?.toString('utf8') ?? '';
+
+    expect(xml.startsWith('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>')).toBe(true);
+    expect(xml.indexOf('<sheetPr>')).toBeLessThan(xml.indexOf('<dimension'));
+    expect(xml.indexOf('<pageSetup')).toBeLessThan(xml.indexOf('<drawing'));
+    expect(xml.indexOf('<pageSetup')).toBeLessThan(xml.indexOf('<tableParts'));
+    expect(xml).toContain('<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>');
+  });
+
+  it('ignores nested extLst nodes when placing pageSetup in a WPS worksheet', async () => {
+    const worksheet =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+      '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:G12"/>' +
+      '<sheetData><row r="7"><c r="A7" t="inlineStr"><is><t>Product SKU</t></is></c></row></sheetData>' +
+      '<autoFilter ref="A7:G7"><extLst/></autoFilter>' +
+      '<mergeCells count="1"><mergeCell ref="A1:G1"/></mergeCells>' +
+      '<pageMargins left="0.25" right="0.25" top="0.45" bottom="0.45" header="0.2" footer="0.2"/>' +
+      '<headerFooter/><drawing r:id="rId1" ' +
+      'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>' +
+      '</worksheet>';
+    const input = await fixture([
+      { name: '[Content_Types].xml', data: CONTENT_TYPES },
+      { name: 'xl/workbook.xml', data: WORKBOOK },
+      { name: 'xl/worksheets/sheet1.xml', data: worksheet },
+    ]);
+    const output = join(dirname(input), 'print.xlsx');
+
+    await normaliseXlsxForPdf(input, output);
+    const xml =
+      (await readZipEntries(output)).get('xl/worksheets/sheet1.xml')?.toString('utf8') ?? '';
+
+    const autoFilterEnd = xml.indexOf('</autoFilter>');
+    const pageMargins = xml.indexOf('<pageMargins');
+    const pageSetup = xml.indexOf('<pageSetup');
+    expect(pageSetup).toBeGreaterThan(autoFilterEnd);
+    expect(pageSetup).toBeGreaterThan(pageMargins);
+    expect(pageSetup).toBeLessThan(xml.indexOf('<headerFooter'));
+    expect(xml.slice(xml.indexOf('<autoFilter'), autoFilterEnd)).not.toContain('<pageSetup');
+  });
+
+  it('preserves tab and outline properties before pageSetUpPr', async () => {
+    const worksheet =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+      '<sheetPr><tabColor rgb="FFFF0000"/><outlinePr summaryBelow="1"/>' +
+      '</sheetPr><dimension ref="A1:D20"/><sheetData/></worksheet>';
+    const input = await fixture([
+      { name: '[Content_Types].xml', data: CONTENT_TYPES },
+      { name: 'xl/workbook.xml', data: WORKBOOK },
+      { name: 'xl/worksheets/sheet1.xml', data: worksheet },
+    ]);
+    const output = join(dirname(input), 'print.xlsx');
+
+    await normaliseXlsxForPdf(input, output);
+    const xml =
+      (await readZipEntries(output)).get('xl/worksheets/sheet1.xml')?.toString('utf8') ?? '';
+
+    expect(xml.indexOf('<tabColor')).toBeLessThan(xml.indexOf('<outlinePr'));
+    expect(xml.indexOf('<outlinePr')).toBeLessThan(xml.indexOf('<pageSetUpPr'));
+  });
+});
+
 async function fixture(entries: ZipFixtureEntry[]): Promise<string> {
   return fixtureBytes(buildZip(entries));
 }
@@ -238,4 +360,39 @@ function crc32(buffer: Buffer): number {
     }
   }
   return (crc ^ 0xffffffff) >>> 0;
+}
+
+async function readZipEntries(path: string): Promise<Map<string, Buffer>> {
+  const archive = await fs.readFile(path);
+  const eocd = findEocd(archive);
+  const count = eocd.readUInt16LE(10);
+  const centralSize = eocd.readUInt32LE(12);
+  const centralOffset = eocd.readUInt32LE(16);
+  const entries = new Map<string, Buffer>();
+  let offset = centralOffset;
+  for (let index = 0; index < count; index += 1) {
+    if (archive.readUInt32LE(offset) !== 0x02014b50) throw new Error('invalid central directory');
+    const method = archive.readUInt16LE(offset + 10);
+    const compressedBytes = archive.readUInt32LE(offset + 20);
+    const nameLength = archive.readUInt16LE(offset + 28);
+    const extraLength = archive.readUInt16LE(offset + 30);
+    const commentLength = archive.readUInt16LE(offset + 32);
+    const localOffset = archive.readUInt32LE(offset + 42);
+    const name = archive.subarray(offset + 46, offset + 46 + nameLength).toString('utf8');
+    const localNameLength = archive.readUInt16LE(localOffset + 26);
+    const localExtraLength = archive.readUInt16LE(localOffset + 28);
+    const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
+    const compressed = archive.subarray(dataOffset, dataOffset + compressedBytes);
+    entries.set(name, method === 8 ? inflateRawSync(compressed) : compressed);
+    offset += 46 + nameLength + extraLength + commentLength;
+  }
+  if (offset !== centralOffset + centralSize) throw new Error('invalid central directory size');
+  return entries;
+}
+
+function findEocd(archive: Buffer): Buffer {
+  for (let offset = archive.byteLength - 22; offset >= 0; offset -= 1) {
+    if (archive.readUInt32LE(offset) === 0x06054b50) return archive.subarray(offset, offset + 22);
+  }
+  throw new Error('missing ZIP end record');
 }

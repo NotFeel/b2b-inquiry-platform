@@ -17,7 +17,7 @@ const conversionMocks = vi.hoisted(() => ({
   createWorkspace: vi.fn(),
   convert: vi.fn(),
   validatePdf: vi.fn(),
-  validateXlsx: vi.fn(),
+  normaliseXlsx: vi.fn(),
 }));
 
 vi.mock('./temp-workspace', () => ({
@@ -30,7 +30,7 @@ vi.mock('./pdf-output-validator', () => ({
   validatePdfOutput: conversionMocks.validatePdf,
 }));
 vi.mock('./xlsx-zip-validator', () => ({
-  validateXlsxArchive: conversionMocks.validateXlsx,
+  normaliseXlsxForPdf: conversionMocks.normaliseXlsx,
 }));
 
 const temporaryDirectories: string[] = [];
@@ -242,13 +242,14 @@ describe('Excel-to-PDF output compensation', () => {
     conversionMocks.createWorkspace.mockResolvedValue({
       root,
       inputPath: join(root, 'input.xlsx'),
+      normalisedInputPath: join(root, 'print.xlsx'),
       outputDir: join(root, 'output'),
       profileDir: join(root, 'profile'),
       cleanup: vi.fn(async () => undefined),
     });
     conversionMocks.convert.mockResolvedValue({ outputPath, durationMs: 1 });
     conversionMocks.validatePdf.mockResolvedValue({ sizeBytes: 15, pageCount: 1 });
-    conversionMocks.validateXlsx.mockResolvedValue({ entryCount: 1, uncompressedBytes: 1 });
+    conversionMocks.normaliseXlsx.mockResolvedValue({ entryCount: 1, uncompressedBytes: 1 });
 
     const queuedDeletion = vi.fn(async () => ({}));
     const claimTransaction = {

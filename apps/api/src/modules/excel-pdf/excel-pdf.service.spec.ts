@@ -64,9 +64,14 @@ function setup() {
     pdfConversionJob: {
       create: vi.fn(async () => ({})),
       updateMany: vi.fn(async () => ({ count: 1 })),
+      deleteMany: vi.fn(async () => ({ count: 1 })),
     },
     outboxEvent: { create: vi.fn(async () => ({})) },
-    fileDeletionJob: { upsert: vi.fn(async () => ({})) },
+    fileDeletionJob: {
+      updateMany: vi.fn(async () => ({ count: 1 })),
+      upsert: vi.fn(async () => ({})),
+    },
+    excelPdfUploadChunk: { deleteMany: vi.fn(async () => ({ count: 1 })) },
     auditLog: { create: vi.fn(async () => ({})) },
   };
   const prisma = {
@@ -386,4 +391,148 @@ describe('ExcelPdfService access and lifecycle', () => {
     });
     expect(transaction.fileDeletionJob.upsert).not.toHaveBeenCalled();
   });
+
+  it('recovers a dead processing lease and exposes a deletable failed record', async () => {
+    const { service, prisma, transaction } = setup();
+    prisma.pdfConversionJob.findMany
+      .mockResolvedValueOnce([{ id: jobId, uploadId }])
+      .mockResolvedValueOnce([
+        lifecycleJobFixture({
+          status: 'FAILED',
+          errorCode: ERROR_CODES.excelPdfConversionInterrupted,
+        }),
+      ]);
+    prisma.pdfConversionJob.count.mockResolvedValue(1);
+
+    const result = await service.listJobs(
+      { page: 1, pageSize: 20, status: 'all', businessType: 'all' },
+      actor,
+    );
+
+    expect(transaction.pdfConversionJob.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: jobId,
+        status: 'PROCESSING',
+        OR: [{ leaseUntil: null }, { leaseUntil: { lte: expect.any(Date) } }],
+      },
+      data: expect.objectContaining({
+        status: 'FAILED',
+        errorCode: ERROR_CODES.excelPdfConversionInterrupted,
+        leaseOwner: null,
+        leaseUntil: null,
+      }),
+    });
+    expect(transaction.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: 'excel_pdf.conversion_interrupted',
+        entityId: jobId,
+        metadata: { leaseExpired: true },
+      }),
+    });
+    expect(result.data[0]).toMatchObject({
+      id: jobId,
+      status: 'failed',
+      errorCode: ERROR_CODES.excelPdfConversionInterrupted,
+      deletionPending: false,
+    });
+  });
+
+  it('does not restrict the all-status list to expired conversion records', async () => {
+    const { service, prisma } = setup();
+    prisma.pdfConversionJob.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+
+    await service.listJobs({ page: 1, pageSize: 20, status: 'all', businessType: 'all' }, actor);
+
+    expect(prisma.pdfConversionJob.findMany).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ where: { requestedById: actor.id } }),
+    );
+  });
+
+  it('does not fail a processing job while its worker lease is still active', async () => {
+    const { service, prisma, transaction } = setup();
+    prisma.pdfConversionJob.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      lifecycleJobFixture({
+        status: 'PROCESSING',
+        leaseOwner: 'active-worker',
+        leaseUntil: new Date(Date.now() + 60_000),
+      }),
+    ]);
+    prisma.pdfConversionJob.count.mockResolvedValue(1);
+
+    const result = await service.listJobs(
+      { page: 1, pageSize: 20, status: 'all', businessType: 'all' },
+      actor,
+    );
+
+    expect(transaction.pdfConversionJob.updateMany).not.toHaveBeenCalled();
+    expect(result.data[0]?.status).toBe('processing');
+  });
+
+  it('allows deletion after the API converts an expired processing lease to failed', async () => {
+    const { service, prisma, transaction } = setup();
+    const processing = lifecycleJobFixture({
+      status: 'PROCESSING',
+      leaseOwner: 'dead-worker',
+      leaseUntil: new Date(Date.now() - 60_000),
+    });
+    const failed = lifecycleJobFixture({
+      status: 'FAILED',
+      errorCode: ERROR_CODES.excelPdfConversionInterrupted,
+      leaseOwner: null,
+      leaseUntil: null,
+    });
+    prisma.pdfConversionJob.findFirst
+      .mockResolvedValueOnce(processing)
+      .mockResolvedValueOnce(failed);
+    prisma.pdfConversionJob.findMany.mockResolvedValueOnce([{ id: jobId, uploadId }]);
+
+    await expect(service.deleteJob(jobId, actor, 'request-delete-stale')).resolves.toEqual({
+      id: jobId,
+      status: 'deletion_pending',
+    });
+
+    expect(transaction.fileDeletionJob.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { idempotencyKey: `excel-pdf-asset:${assetId}` },
+        create: expect.objectContaining({
+          entityType: 'excel_pdf_asset',
+          entityId: assetId,
+        }),
+      }),
+    );
+  });
 });
+
+function lifecycleJobFixture(overrides: Record<string, unknown> = {}) {
+  return {
+    id: jobId,
+    uploadId,
+    requestedById: actor.id,
+    sourceFileName: 'quotation.xlsx',
+    businessType: 'quotation',
+    inputSizeBytes: 4n,
+    status: 'PROCESSING',
+    pageCount: null,
+    outputSizeBytes: null,
+    errorCode: null,
+    createdAt: new Date(),
+    startedAt: new Date(),
+    completedAt: null,
+    expiresAt: future,
+    purgeState: 'NONE',
+    leaseOwner: null,
+    leaseUntil: null,
+    sourceAssetId: assetId,
+    sourceAsset: {
+      id: assetId,
+      status: 'processing',
+      storageKey: 'private/excel-pdf/inputs/source.xlsx',
+    },
+    outputAssetId: null,
+    outputAsset: null,
+    outputKey: null,
+    requestedBy: { displayName: 'Excel User', username: 'excel-user' },
+    ...overrides,
+  };
+}

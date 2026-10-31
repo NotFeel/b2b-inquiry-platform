@@ -50,7 +50,7 @@
 | 单任务转换超时 | 300 秒 |
 | Worker 并发 | 1 |
 | 自动重试 | 最多 2 次，仅临时基础设施错误 |
-| 文件保留期 | 7 天，可配置 |
+| 输入、输出、分块文件和转换记录保留期 | 1 天，可配置 |
 
 上限必须同时由 Admin、API、反向代理、Worker 和存储层执行。当前实现不限制工作表数或非空单元格数；安全边界由上传大小、ZIP 展开限制、PDF 页数和输出大小共同约束。具体值仍应按真实报价单/PI 模板、目标主机和 LibreOffice 版本做 staging 压测。
 
@@ -123,7 +123,7 @@ Excel 转 PDF / Excel to PDF                      [转换记录]
 操作：
 - 下载/预览：仅 succeeded 且有 download 权限。
 - 重试：仅 failed 且有 retry 权限；重新验证输入文件存在且 hash 未变化。
-- 删除：二次确认，先撤销下载，再建立物理删除任务。
+- 删除：二次确认，先撤销下载，再建立物理删除任务；输入、输出和分块文件全部物理删除成功后才删除转换记录。删除失败时保留记录、对象键和可重试任务。
 - 详情：展示安全错误码、面向用户的信息和 requestId；不显示堆栈、文件 key 或内部路径。
 
 PDF 预览和下载均必须走受保护 API，不返回永久公开 R2 URL。浏览器 Blob 下载后释放 object URL。页面在 360px 手机、平板与桌面适配；小屏记录列表变卡片或局部横向滚动，页面本身不得横向溢出。
@@ -207,6 +207,8 @@ soffice \
 
 PDF 输出必须验证 `%PDF-` 文件签名、可解析页数、非空页面、最大页数与最大输出字节。转换失败不得保留半成品下载入口。
 
+转换前在 OOXML ZIP entry 层生成打印副本，不把 200 MiB 工作簿完整载入 ExcelJS/JSZip 对象模型：媒体和其他部件复用原压缩字节，仅重写 workbook/visible worksheet XML。删除 `_xlnm.Print_Titles`，使公司、联系人、邮箱、电话等模板前几行只在第一页出现；后续页直接输出商品内容。每个工作表强制 A4 横向（`paperSize=9`、`orientation=landscape`）、一页宽缩放（`fitToWidth=1`、`fitToHeight=0`）；PDF 校验阶段拒绝短边小于 595pt 或长边小于 841pt 的输出。
+
 ---
 
 ## 5. XLSX 上传与安全验证
@@ -231,7 +233,7 @@ PDF 输出必须验证 `%PDF-` 文件签名、可解析页数、非空页面、�
 
 ### 5.3 存储
 
-输入/输出 FileAsset 均 `isPublic=false`。优先复用 FileAsset、Storage adapter、R2 私有 bucket 和现有删除任务。下载 API 强制 Auth + permission + job owner/data scope。R2 key 随机，API 不返回 key 或公开 URL。保留期默认 7 天；过期清理由持久化删除任务实际删除对象，失败需重试。
+输入/输出 FileAsset 均 `isPublic=false`。优先复用 FileAsset、Storage adapter、R2 私有 bucket 和现有删除任务。下载 API 强制 Auth + permission + job owner/data scope。R2 key 随机，API 不返回 key 或公开 URL。输入、输出、分块文件和转换记录默认保留 1 天；过期清理由持久化删除任务物理删除全部对象，成功后在同一事务删除转换记录及相关上传/FileAsset 元数据，失败需重试。
 
 ---
 
@@ -352,7 +354,7 @@ Controller 仅处理认证、RBAC、multipart 和响应；Service 负责分块�
 - 若 API 与 Worker 同机，先做压测；转换导致 API readiness/P95 恶化时必须把 Worker 分离部署或提升规格。
 - 监控 queued age、转换时长、失败率、retry、RSS、临时磁盘、PDF 页数/大小。
 
-配置默认值：`EXCEL_PDF_ENABLED=false`、`EXCEL_PDF_MAX_UPLOAD_BYTES=209715200`（200 MiB）、`EXCEL_PDF_CHUNK_BYTES=8388608`（8 MiB）、`EXCEL_PDF_MAX_OUTPUT_BYTES=52428800`（50 MiB）、`EXCEL_PDF_MAX_PAGES=200`、`EXCEL_PDF_TIMEOUT_MS=300000`、`EXCEL_PDF_RETENTION_DAYS=7`。Worker 并发保持 1。只将运维确实需要调节的项目放入 `.env.example`；不暴露任意 soffice CLI 参数。
+配置默认值：`EXCEL_PDF_ENABLED=false`、`EXCEL_PDF_MAX_UPLOAD_BYTES=209715200`（200 MiB）、`EXCEL_PDF_CHUNK_BYTES=8388608`（8 MiB）、`EXCEL_PDF_MAX_OUTPUT_BYTES=52428800`（50 MiB）、`EXCEL_PDF_MAX_PAGES=200`、`EXCEL_PDF_TIMEOUT_MS=300000`、`EXCEL_PDF_RETENTION_DAYS=1`。Worker 并发保持 1。只将运维确实需要调节的项目放入 `.env.example`；不暴露任意 soffice CLI 参数。
 
 `STORAGE_DRIVER=local` 时 API 与 Worker 必须共享同一 `STORAGE_LOCAL_ROOT`，当前 Compose 通过 `/data/uploads` 共享卷实现。部署多个 Worker/API 副本时必须改用共享 S3/R2 兼容私有存储；不能把本地卷分别挂载到不同副本后假设对象可见。
 

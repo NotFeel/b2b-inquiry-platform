@@ -73,7 +73,7 @@ const schema = z.object({
     .default(52_428_800),
   EXCEL_PDF_MAX_PAGES: z.coerce.number().int().min(1).max(2_000).default(200),
   EXCEL_PDF_TIMEOUT_MS: z.coerce.number().int().min(10_000).max(1_800_000).default(300_000),
-  EXCEL_PDF_RETENTION_DAYS: z.coerce.number().int().min(1).max(90).default(7),
+  EXCEL_PDF_RETENTION_DAYS: z.coerce.number().int().min(1).max(90).default(1),
   EXCEL_PDF_CONVERTER_PATH: z.string().trim().default('/usr/bin/soffice'),
   EXCEL_PDF_PDFINFO_PATH: z.string().trim().default('/usr/bin/pdfinfo'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),

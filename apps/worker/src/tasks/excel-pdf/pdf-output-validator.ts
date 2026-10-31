@@ -6,8 +6,15 @@ import { ExcelPdfProcessingError } from './excel-pdf-errors';
 export interface PdfValidationResult {
   sizeBytes: number;
   pageCount: number;
+  pageWidthPoints: number;
+  pageHeightPoints: number;
   sha256?: string;
 }
+
+// A4 is 595.28 x 841.89 PostScript points. Allow a small renderer rounding
+// tolerance while still rejecting Letter and smaller custom page sizes.
+const A4_SHORT_EDGE_POINTS = 595;
+const A4_LONG_EDGE_POINTS = 841;
 
 export async function validatePdfOutput(input: {
   path: string;
@@ -71,11 +78,8 @@ export async function validatePdfOutput(input: {
     );
   }
 
-  const pageCount = await readPdfPageCount(
-    input.pdfInfoPath,
-    input.path,
-    input.timeoutMs ?? 30_000,
-  );
+  const info = await readPdfInfo(input.pdfInfoPath, input.path, input.timeoutMs ?? 30_000);
+  const { pageCount } = info;
   if (!Number.isInteger(pageCount) || pageCount < 1) {
     throw new ExcelPdfProcessingError(
       ERROR_CODES.excelPdfOutputInvalid,
@@ -88,21 +92,48 @@ export async function validatePdfOutput(input: {
       'The generated PDF exceeds the configured page limit.',
     );
   }
-  return { sizeBytes: stat.size, pageCount };
+  const shortEdge = Math.min(info.pageWidthPoints, info.pageHeightPoints);
+  const longEdge = Math.max(info.pageWidthPoints, info.pageHeightPoints);
+  if (
+    !Number.isFinite(shortEdge) ||
+    shortEdge < A4_SHORT_EDGE_POINTS ||
+    longEdge < A4_LONG_EDGE_POINTS
+  ) {
+    throw new ExcelPdfProcessingError(
+      ERROR_CODES.excelPdfOutputInvalid,
+      'The generated PDF pages must be at least A4 size.',
+    );
+  }
+  return {
+    sizeBytes: stat.size,
+    pageCount,
+    pageWidthPoints: info.pageWidthPoints,
+    pageHeightPoints: info.pageHeightPoints,
+  };
 }
 
-function readPdfPageCount(executable: string, path: string, timeoutMs: number): Promise<number> {
+interface PdfInfoResult {
+  pageCount: number;
+  pageWidthPoints: number;
+  pageHeightPoints: number;
+}
+
+function readPdfInfo(executable: string, path: string, timeoutMs: number): Promise<PdfInfoResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, [path], { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(executable, [path], {
+      shell: false,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, LC_ALL: 'C', LANG: 'C' },
+    });
     const chunks: Buffer[] = [];
     let bytes = 0;
     let settled = false;
-    const finish = (error?: Error, value?: number) => {
+    const finish = (error?: Error, value?: PdfInfoResult) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       if (error) reject(error);
-      else resolve(value ?? 0);
+      else resolve(value ?? { pageCount: 0, pageWidthPoints: 0, pageHeightPoints: 0 });
     };
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
@@ -142,8 +173,13 @@ function readPdfPageCount(executable: string, path: string, timeoutMs: number): 
         return;
       }
       const output = Buffer.concat(chunks).toString('utf8');
-      const match = /^Pages:\s+(\d+)\s*$/m.exec(output);
-      finish(undefined, match ? Number.parseInt(match[1] ?? '0', 10) : 0);
+      const pages = /^Pages:\s+(\d+)\s*$/m.exec(output);
+      const pageSize = /^Page size:\s+([\d.]+)\s+x\s+([\d.]+)\s+pts\b/m.exec(output);
+      finish(undefined, {
+        pageCount: pages ? Number.parseInt(pages[1] ?? '0', 10) : 0,
+        pageWidthPoints: pageSize ? Number.parseFloat(pageSize[1] ?? '0') : 0,
+        pageHeightPoints: pageSize ? Number.parseFloat(pageSize[2] ?? '0') : 0,
+      });
     });
   });
 }

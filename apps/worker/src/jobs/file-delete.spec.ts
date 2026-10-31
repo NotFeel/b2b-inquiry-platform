@@ -6,6 +6,7 @@ import { processFileDeletion } from './file-delete';
 
 const sourceKey = 'product-image/2026/10/source.png';
 const derivativeKey = 'public/products/asset/version/640.webp';
+const excelPdfUploadId = '11111111-1111-4111-8111-111111111111';
 
 function imageFixture() {
   return {
@@ -45,6 +46,11 @@ function transactionMock() {
       findMany: vi.fn(async () => []),
       findUnique: vi.fn(async () => null),
       update: vi.fn(async () => ({})),
+      updateMany: vi.fn(async () => ({ count: 1 })),
+    },
+    excelPdfUploadChunk: {
+      findMany: vi.fn(async () => [{ index: 0 }]),
+      deleteMany: vi.fn(async () => ({ count: 1 })),
     },
     quoteTemplate: { deleteMany: vi.fn(async () => ({ count: 1 })) },
     fileAsset: {
@@ -96,6 +102,7 @@ function depsWith(deleteImpl: (key: string) => Promise<void>) {
   const transaction = transactionMock();
   const prisma = {
     productImage: { findUnique: vi.fn(async () => imageFixture()) },
+    pdfConversionJob: { findMany: vi.fn(async () => []) },
     fileDeletionJob: { findFirst: vi.fn(async () => null) },
     $transaction: vi.fn(async (callback: (tx: typeof transaction) => unknown) =>
       callback(transaction),
@@ -294,6 +301,92 @@ describe('Excel-to-PDF compensating output deletion', () => {
     expect(transaction.fileDeletionJob.updateMany).toHaveBeenCalledWith({
       where: { id: 'excel-pdf-compensation-1' },
       data: expect.objectContaining({ status: 'SUCCEEDED' }),
+    });
+  });
+
+  it('does not mark the original conversion as deleting when compensation is not a user purge', async () => {
+    const { deps, transaction } = depsWith(async () => undefined);
+    const outputAssetId = '77777777-7777-4777-8777-777777777777';
+    transaction.pdfConversionJob.findMany.mockResolvedValue([
+      {
+        id: 'failed-conversion-1',
+        sourceAssetId: 'asset-1',
+        outputAssetId,
+        purgeRequestedAt: null,
+      },
+    ]);
+    transaction.pdfConversionJob.findUnique.mockResolvedValueOnce({
+      id: 'failed-conversion-1',
+      sourceAsset: { status: 'ready' },
+      outputAsset: null,
+      purgeRequestedAt: null,
+    });
+
+    await processFileDeletion(
+      {
+        jobId: 'excel-pdf-compensation-2',
+        storageKey: 'private/excel-pdf/outputs/orphan.pdf',
+        entityType: 'excel_pdf_asset',
+        entityId: outputAssetId,
+      },
+      deps,
+    );
+
+    expect(transaction.pdfConversionJob.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ purgeState: expect.anything() }),
+      }),
+    );
+  });
+});
+
+describe('Excel-to-PDF upload chunk cleanup', () => {
+  it('does not purge a successful conversion when its temporary chunks are deleted', async () => {
+    const { deps, transaction } = depsWith(async () => undefined);
+
+    await processFileDeletion(
+      {
+        jobId: 'excel-pdf-chunk-1',
+        storageKey: `private/excel-pdf/uploads/${excelPdfUploadId}/0.part`,
+        entityType: 'excel_pdf_chunk',
+        entityId: `${excelPdfUploadId}:0`,
+      },
+      deps,
+    );
+
+    expect(deps.prisma.pdfConversionJob.findMany).toHaveBeenCalledWith({
+      where: { uploadId: excelPdfUploadId, purgeRequestedAt: { not: null } },
+      select: { id: true },
+    });
+    expect(transaction.excelPdfUploadChunk.deleteMany).toHaveBeenCalledWith({
+      where: { uploadId: excelPdfUploadId, index: 0 },
+    });
+  });
+
+  it('limits temporary-cleanup failures to explicitly requested record purges', async () => {
+    const { deps, transaction } = depsWith(async () => {
+      throw new Error('storage.delete_failed');
+    });
+
+    await expect(
+      processFileDeletion(
+        {
+          jobId: 'excel-pdf-chunk-2',
+          storageKey: `private/excel-pdf/uploads/${excelPdfUploadId}/0.part`,
+          entityType: 'excel_pdf_chunk',
+          entityId: `${excelPdfUploadId}:0`,
+        },
+        deps,
+      ),
+    ).rejects.toThrow('storage.delete_failed');
+
+    expect(transaction.pdfConversionJob.updateMany).toHaveBeenCalledWith({
+      where: {
+        uploadId: excelPdfUploadId,
+        purgeRequestedAt: { not: null },
+        purgeState: { not: 'PURGED' },
+      },
+      data: { purgeState: 'FAILED' },
     });
   });
 });

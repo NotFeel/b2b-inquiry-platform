@@ -11,6 +11,7 @@ import { processProductImportValidation } from '../jobs/product-import-validate'
 import { processQuoteExport } from '../jobs/quote-export';
 import { processExcelPdfCleanup } from '../tasks/excel-pdf/excel-pdf-cleanup';
 import { processExcelPdfConversion } from '../tasks/excel-pdf/excel-pdf-task.handler';
+import { assertExcelPdfTempWorkspaceWritable } from '../tasks/excel-pdf/temp-workspace';
 import { claimNextTask } from './claim';
 import type { ClaimedTask, TaskRunnerOptions } from './types';
 
@@ -37,6 +38,15 @@ export class PostgresTaskRunner {
 
   async start(): Promise<void> {
     await failExhaustedExpiredTasks(this.prisma, this.options);
+    if (this.env.EXCEL_PDF_ENABLED) {
+      try {
+        await assertExcelPdfTempWorkspaceWritable(this.env.WORKER_TMP_DIR);
+      } catch (error) {
+        this.logger.error('task_runner.workspace_preflight_failed', {
+          errorCode: errorCodeOf(error),
+        });
+      }
+    }
     this.logger.info('task_runner.started', {
       workerId: this.options.workerId,
       maxAttempts: this.options.maxAttempts,
@@ -189,6 +199,7 @@ export class PostgresTaskRunner {
       await processExcelPdfCleanup(task.payload, {
         prisma: this.prisma,
         logger: this.logger,
+        env: this.env,
       });
       return;
     }

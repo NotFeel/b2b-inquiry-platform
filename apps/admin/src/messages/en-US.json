@@ -1698,7 +1698,9 @@
     "cancelled": "Upload cancelled.",
     "downloadStarted": "PDF download started.",
     "retryQueued": "The conversion was queued again.",
-    "deleteRequested": "Deletion requested. Private files will continue to be cleaned up.",
+    "deleteRequested": "Deletion requested. Private files and the conversion record are still being cleaned up.",
+    "deleteCompleted": "The conversion record and physical files were deleted.",
+    "deletePending": "Deleting files and record…",
     "pages": "{{count}} page(s)",
     "businessType": {
       "quotation": "Quotation",
@@ -1717,7 +1719,7 @@
       "title": "Choose an Excel file",
       "businessType": "File type",
       "limits": "Conversion limits",
-      "limitDetail": "Chunk size {{chunkSize}}; PDF up to {{outputSize}} and {{pages}} pages; files retained for {{days}} days.",
+      "limitDetail": "Chunk size {{chunkSize}}; PDF up to {{outputSize}} and {{pages}} pages; physical files and conversion records are retained for {{days}} days.",
       "dropLabel": "Drop or choose an XLSX workbook",
       "dropTitle": "Drop an .xlsx file here",
       "dropHelp": "Only macro-free .xlsx files are accepted. The server rechecks the extension, ZIP structure and external links.",
@@ -1749,6 +1751,7 @@
       "preview": "Preview",
       "retry": "Retry",
       "delete": "Delete",
+      "deleting": "Deleting",
       "downloadFile": "Download the PDF for {{fileName}}",
       "previewFile": "Preview the PDF for {{fileName}}"
     },
@@ -1756,7 +1759,7 @@
       "title": "Conversion records",
       "empty": "No conversions yet",
       "emptyHelp": "Upload an .xlsx workbook and its conversion result will appear here.",
-      "retentionHelp": "Successful and failed input and output files expire and are cleaned up after {{days}} days.",
+      "retentionHelp": "Input, output and chunk files plus conversion records are permanently deleted after {{days}} days.",
       "backDashboard": "Back to workspace"
     },
     "deleteConfirm": {
