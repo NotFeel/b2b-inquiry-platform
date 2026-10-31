@@ -2,9 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
-import {
-  inspectQuoteTemplateWorkbook,
-} from './quote-template-parser';
+import { inspectQuoteTemplateWorkbook } from './quote-template-parser';
 
 const REAL_TEMPLATE = readFileSync(
   resolve(process.cwd(), '../../assets/templates/B2B_Quotation_Template.xlsx'),
@@ -38,6 +36,27 @@ function productQuoteRows(): string[][] {
   ];
 }
 
+function flexibleProductQuoteRows(): string[][] {
+  return [
+    ['[COMPANY NAME]'],
+    ['Contact person: [CONTACT PERSON]'],
+    ['Email: [EMAIL]'],
+    ['Phone: [PHONE]'],
+    ['[QUOTATION TITLE]'],
+    [
+      'Product SKU',
+      'Product Image',
+      'Product Name',
+      'Unit Price ([CURRENCY])',
+      'Packing Quantity (PCS / carton)',
+      'Case Dimensions (L × W × H cm)',
+      'Gross Weight (KG)',
+    ],
+    ['SKU-1', '[Original product image]', '', '0.00', '', 'L × W × H', ''],
+    ['Prices are quoted in [CURRENCY]. Please contact us for further details.'],
+  ];
+}
+
 describe('inspectQuoteTemplateWorkbook', () => {
   it('detects the real B2B quotation template layout and all seven columns', async () => {
     const inspection = await inspectQuoteTemplateWorkbook(REAL_TEMPLATE, {
@@ -68,6 +87,24 @@ describe('inspectQuoteTemplateWorkbook', () => {
     expect(inspection.detectedHeaders).toHaveLength(7);
   });
 
+  it('detects Product SKU as the header anchor without RATE or MARKUP placeholders', async () => {
+    const inspection = await inspectQuoteTemplateWorkbook(
+      await workbookBuffer(flexibleProductQuoteRows()),
+      { templateType: 'product_quote' },
+    );
+
+    expect(inspection).toMatchObject({
+      headerRow: 6,
+      itemStartRow: 7,
+      requiredFieldsPresent: true,
+      missingRequiredFields: [],
+      duplicateFields: [],
+      missingPlaceholders: [],
+      placeholderRowsMismatch: [],
+      layoutValid: true,
+    });
+  });
+
   it('rejects a requested worksheet that does not exist', async () => {
     await expect(
       inspectQuoteTemplateWorkbook(REAL_TEMPLATE, {
@@ -83,11 +120,7 @@ describe('inspectQuoteTemplateWorkbook', () => {
   });
 
   it('rejects a workbook without a recognizable quote header', async () => {
-    const buffer = await workbookBuffer([
-      ['Company name'],
-      ['Contact person'],
-      ['Email'],
-    ]);
+    const buffer = await workbookBuffer([['Company name'], ['Contact person'], ['Email']]);
 
     await expect(
       inspectQuoteTemplateWorkbook(buffer, { templateType: 'product_quote' }),
@@ -142,6 +175,20 @@ describe('inspectQuoteTemplateWorkbook', () => {
     expect(inspection.requiredFieldsPresent).toBe(false);
   });
 
+  it('requires CURRENCY even when the pricing-description row is omitted', async () => {
+    const rows = flexibleProductQuoteRows();
+    rows[5]![3] = 'Unit Price';
+    rows[7] = ['Prices available on request'];
+
+    const inspection = await inspectQuoteTemplateWorkbook(await workbookBuffer(rows), {
+      templateType: 'product_quote',
+    });
+
+    expect(inspection.missingPlaceholders).toEqual(['[CURRENCY]']);
+    expect(inspection.layoutValid).toBe(false);
+    expect(inspection.requiredFieldsPresent).toBe(false);
+  });
+
   it('rejects moved placeholders even when the text is still present', async () => {
     const rows = productQuoteRows();
     rows[2] = ['Phone: [PHONE]'];
@@ -156,26 +203,14 @@ describe('inspectQuoteTemplateWorkbook', () => {
     expect(inspection.requiredFieldsPresent).toBe(false);
   });
 
-  it('rejects a moved header or first product row', async () => {
-    const movedHeader = [[''], ...productQuoteRows()];
-    const headerInspection = await inspectQuoteTemplateWorkbook(
-      await workbookBuffer(movedHeader),
-      { templateType: 'product_quote' },
-    );
-    expect(headerInspection).toMatchObject({
-      headerRow: 8,
-      itemStartRow: 9,
-      layoutValid: false,
-      requiredFieldsPresent: false,
-    });
-
+  it('rejects an item start row that is not immediately below Product SKU', async () => {
     const itemInspection = await inspectQuoteTemplateWorkbook(
-      await workbookBuffer(productQuoteRows()),
-      { templateType: 'product_quote', itemStartRow: 9 },
+      await workbookBuffer(flexibleProductQuoteRows()),
+      { templateType: 'product_quote', itemStartRow: 8 },
     );
     expect(itemInspection).toMatchObject({
-      headerRow: 7,
-      itemStartRow: 9,
+      headerRow: 6,
+      itemStartRow: 8,
       layoutValid: false,
       requiredFieldsPresent: false,
     });

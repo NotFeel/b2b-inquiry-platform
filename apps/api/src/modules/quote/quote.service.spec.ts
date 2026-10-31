@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ERROR_CODES } from '@b2b/contracts';
+import ExcelJS from 'exceljs';
 import { describe, expect, it, vi } from 'vitest';
 import type { AppEnv } from '../../config/config.module';
 import type { AuditService } from '../../common/services/audit.service';
@@ -15,6 +16,13 @@ const TEMPLATE_ID = '33333333-3333-4333-8333-333333333333';
 const REAL_TEMPLATE = readFileSync(
   resolve(process.cwd(), '../../assets/templates/B2B_Quotation_Template.xlsx'),
 );
+
+async function workbookBuffer(rows: string[][]): Promise<Buffer<ArrayBuffer>> {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet('Quotation');
+  for (const row of rows) worksheet.addRow(row);
+  return Buffer.from(await workbook.xlsx.writeBuffer()) as Buffer<ArrayBuffer>;
+}
 
 function asset(overrides: Record<string, unknown> = {}) {
   return {
@@ -156,12 +164,7 @@ describe('QuoteService quote templates', () => {
   it('disables the previous active template of the same type when activating', async () => {
     const { service, prisma } = harness();
 
-    const updated = await service.setTemplateStatus(
-      TEMPLATE_ID,
-      'active',
-      ACTOR_ID,
-      'request-2',
-    );
+    const updated = await service.setTemplateStatus(TEMPLATE_ID, 'active', ACTOR_ID, 'request-2');
 
     expect(prisma.quoteTemplate.updateMany).toHaveBeenCalledWith({
       where: {
@@ -179,16 +182,70 @@ describe('QuoteService quote templates', () => {
     expect(JSON.stringify(updated)).not.toContain('storageKey');
   });
 
-  it('refuses to activate a template whose structural check failed', async () => {
-    const { service, prisma } = harness();
+  it('refuses to activate a template whose refreshed structural check failed', async () => {
+    const { service, prisma, storage } = harness();
     prisma.quoteTemplate.findUnique.mockResolvedValueOnce(
-      template({ validationReport: { requiredFieldsPresent: false } }),
+      template({
+        headerRow: 1,
+        itemStartRow: 2,
+        validationReport: { requiredFieldsPresent: false },
+      }),
+    );
+    storage.get.mockResolvedValueOnce(
+      await workbookBuffer([
+        ['Product SKU', 'Product Image'],
+        ['SKU-1', 'image.png'],
+      ]),
     );
 
     await expect(
       service.setTemplateStatus(TEMPLATE_ID, 'active', ACTOR_ID, 'request-3'),
     ).rejects.toMatchObject({ code: ERROR_CODES.quoteTemplateInvalid });
     expect(prisma.quoteTemplate.updateMany).not.toHaveBeenCalled();
+    expect(prisma.quoteTemplate.update).toHaveBeenCalledWith({
+      where: { id: TEMPLATE_ID },
+      data: {
+        validationReport: expect.objectContaining({
+          requiredFieldsPresent: false,
+          missingRequiredFields: expect.arrayContaining(['product.name', 'product.price_cny']),
+        }),
+      },
+    });
+  });
+
+  it('revalidates an older draft with the current parser before activation', async () => {
+    const { service, prisma, storage } = harness();
+    prisma.quoteTemplate.findUnique.mockResolvedValueOnce(
+      template({
+        validationReport: {
+          requiredFieldsPresent: false,
+          missingPlaceholders: ['[RATE]', '[MARKUP]'],
+        },
+      }),
+    );
+
+    const updated = await service.setTemplateStatus(
+      TEMPLATE_ID,
+      'active',
+      ACTOR_ID,
+      'request-revalidate',
+    );
+
+    expect(storage.get).toHaveBeenCalledWith('quote-template/2026/10/template.xlsx');
+    expect(prisma.quoteTemplate.update).toHaveBeenCalledWith({
+      where: { id: TEMPLATE_ID },
+      data: expect.objectContaining({
+        status: 'active',
+        sheetName: 'Quotation',
+        headerRow: 7,
+        itemStartRow: 8,
+        validationReport: expect.objectContaining({
+          requiredFieldsPresent: true,
+          missingPlaceholders: [],
+        }),
+      }),
+    });
+    expect(updated).toMatchObject({ id: TEMPLATE_ID, status: 'active' });
   });
 
   it('refuses to reactivate a version while its physical deletion needs a retry', async () => {

@@ -77,6 +77,15 @@ async function readWorkbook(buffer: Buffer): Promise<ExcelJS.Worksheet> {
   return worksheet;
 }
 
+async function workbookBuffer(rows: string[][]): Promise<Buffer> {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet('Quotation');
+  for (const row of rows) worksheet.addRow(row);
+  worksheet.getColumn(2).width = 13;
+  worksheet.getRow(7).height = 84;
+  return Buffer.from(await workbook.xlsx.writeBuffer());
+}
+
 describe('buildQuotationWorkbookFromTemplate', () => {
   it('fills the real B2B template, keeps its spacer/footer and embeds both product images', async () => {
     const source = await readWorkbook(TEMPLATE);
@@ -162,6 +171,51 @@ describe('buildQuotationWorkbookFromTemplate', () => {
     expect(String(worksheet.getCell(`A${lastProductRow + 2}`).value)).toContain(
       'Prices are quoted in USD.',
     );
+  });
+
+  it('fills products below a dynamically detected Product SKU header without RATE or MARKUP', async () => {
+    const templateBuffer = await workbookBuffer([
+      ['[COMPANY NAME]'],
+      ['Contact person: [CONTACT PERSON]'],
+      ['Email: [EMAIL]'],
+      ['Phone: [PHONE]'],
+      ['[QUOTATION TITLE]'],
+      [
+        'Product SKU',
+        'Product Image',
+        'Product Name',
+        'Unit Price ([CURRENCY])',
+        'Packing Quantity (PCS / carton)',
+        'Case Dimensions (L × W × H cm)',
+        'Gross Weight (KG)',
+      ],
+      ['SAMPLE', '[Original product image]', 'Sample', '0.00', '1', 'L × W × H', '0'],
+      ['Prices are quoted in [CURRENCY]. Please contact us for further details.'],
+    ]);
+
+    const worksheet = await readWorkbook(
+      await buildQuotationWorkbookFromTemplate(
+        input([product(1), product(2)], {
+          templateBuffer,
+          headerRow: 6,
+          itemStartRow: 7,
+        }),
+      ),
+    );
+
+    expect(worksheet.getCell('A1').value).toBe('Example Ltd.');
+    expect(worksheet.getCell('D6').value).toBe('Unit Price (USD)');
+    expect(worksheet.getCell('A7').value).toBe('SKU-001');
+    expect(worksheet.getCell('A8').value).toBe('SKU-002');
+    expect(worksheet.getCell('A9').value).toContain('Prices are quoted in USD.');
+    expect(worksheet.getImages().map((image) => image.range.tl.nativeRow + 1)).toEqual([7, 8]);
+    expect(worksheet.autoFilter).toBe('A6:G8');
+    expect(worksheet.pageSetup.printTitlesRow).toBe('1:6');
+    expect(worksheet.views[0]).toMatchObject({
+      state: 'frozen',
+      ySplit: 6,
+      topLeftCell: 'A7',
+    });
   });
 
   it('fails instead of returning a partial workbook when the template cannot be read', async () => {

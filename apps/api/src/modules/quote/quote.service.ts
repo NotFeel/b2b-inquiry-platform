@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { ERROR_CODES, type QuoteTemplateSummary } from '@b2b/contracts';
+import { ERROR_CODES, type QuoteTemplateSummary, type QuoteTemplateType } from '@b2b/contracts';
 import type { QuoteTemplate } from '@b2b/database';
 import type {
   QuoteExportCreateInput,
@@ -300,21 +300,7 @@ export class QuoteService {
     });
     const version = (latest?.version ?? 0) + 1;
 
-    const validationReport = {
-      checkedAt: new Date().toISOString(),
-      requiredFieldsPresent: inspection.requiredFieldsPresent,
-      requiredFields: inspection.requiredFields,
-      missingRequiredFields: inspection.missingRequiredFields,
-      duplicateFields: inspection.duplicateFields,
-      missingPlaceholders: inspection.missingPlaceholders,
-      placeholderRowsMismatch: inspection.placeholderRowsMismatch,
-      layoutValid: inspection.layoutValid,
-      headerRow: inspection.headerRow,
-      itemStartRow: inspection.itemStartRow,
-      sheetName: inspection.sheetName,
-      availableSheets: inspection.availableSheets,
-      detectedHeaders: inspection.detectedHeaders,
-    };
+    const validationReport = buildValidationReport(inspection);
 
     const template = await this.prisma.quoteTemplate.create({
       data: {
@@ -371,11 +357,23 @@ export class QuoteService {
     }
 
     const report = (template.validationReport as Record<string, unknown> | null) ?? null;
-    if (status === 'active' && !report?.requiredFieldsPresent) {
-      throw new ApiError(
-        ERROR_CODES.quoteTemplateInvalid,
-        'The template failed its pre-check and cannot be activated.',
-      );
+    let refreshedInspection: Awaited<ReturnType<typeof inspectQuoteTemplateWorkbook>> | null = null;
+    let activationReport = report;
+    if (status === 'active' && report?.requiredFieldsPresent !== true) {
+      const inspection = await this.reinspectTemplate(template);
+      const validationReport = buildValidationReport(inspection);
+      if (!inspection.requiredFieldsPresent) {
+        await this.prisma.quoteTemplate.update({
+          where: { id },
+          data: { validationReport: validationReport as never },
+        });
+        throw new ApiError(
+          ERROR_CODES.quoteTemplateInvalid,
+          'The template failed its pre-check and cannot be activated.',
+        );
+      }
+      refreshedInspection = inspection;
+      activationReport = validationReport;
     }
     const updated = await this.prisma.$transaction(async (transaction) => {
       if (status === 'active') {
@@ -388,7 +386,21 @@ export class QuoteService {
           data: { status: 'disabled' },
         });
       }
-      return transaction.quoteTemplate.update({ where: { id }, data: { status } });
+      return transaction.quoteTemplate.update({
+        where: { id },
+        data: {
+          status,
+          ...(refreshedInspection
+            ? {
+                sheetName: refreshedInspection.sheetName,
+                headerRow: refreshedInspection.headerRow,
+                itemStartRow: refreshedInspection.itemStartRow,
+                fieldMapping: refreshedInspection.fieldMapping as never,
+                validationReport: activationReport as never,
+              }
+            : {}),
+        },
+      });
     });
     await this.audit.record({
       actorId,
@@ -396,13 +408,62 @@ export class QuoteService {
       entityType: 'quote_template',
       entityId: id,
       requestId,
-      metadata: { from: template.status, to: status },
+      metadata: { from: template.status, to: status, revalidated: refreshedInspection !== null },
     });
     const asset = await this.prisma.fileAsset.findUnique({
       where: { storageKey: updated.storageKey },
       select: { id: true, originalName: true, sizeBytes: true },
     });
     return quoteTemplateSummary(updated, asset);
+  }
+
+  private async reinspectTemplate(template: QuoteTemplate) {
+    if (template.templateType !== 'product_quote' && template.templateType !== 'pi') {
+      throw new ApiError(ERROR_CODES.quoteTemplateInvalid, 'The template type is not supported.');
+    }
+    if (!isManagedTemplateKey(template.storageKey)) {
+      throw new ApiError(
+        ERROR_CODES.quoteTemplateInvalid,
+        'The template file location is not managed by this application.',
+      );
+    }
+    const asset = await this.prisma.fileAsset.findUnique({
+      where: { storageKey: template.storageKey },
+    });
+    if (
+      !asset ||
+      asset.status !== 'ready' ||
+      asset.purpose !== 'quote-template' ||
+      asset.isPublic
+    ) {
+      throw new ApiError(
+        ERROR_CODES.quoteTemplateInvalid,
+        'The uploaded template file is unavailable.',
+      );
+    }
+
+    let buffer: Buffer;
+    try {
+      buffer = await this.storage.get(template.storageKey);
+    } catch {
+      throw new ApiError(
+        ERROR_CODES.quoteTemplateInvalid,
+        'The uploaded template file is unavailable.',
+      );
+    }
+    try {
+      return await inspectQuoteTemplateWorkbook(buffer, {
+        templateType: template.templateType as QuoteTemplateType,
+        sheetName: template.sheetName,
+        headerRow: template.headerRow,
+        itemStartRow: template.itemStartRow,
+      });
+    } catch (error) {
+      if (!(error instanceof QuoteTemplateParseError)) throw error;
+      throw new ApiError(ERROR_CODES.quoteTemplateInvalid, error.message, {
+        details: error.details,
+      });
+    }
   }
 
   async preview(input: QuoteExportPreviewInput) {
@@ -591,6 +652,26 @@ function isManagedTemplateKey(storageKey: string): boolean {
   return storageKey.startsWith('quote-template/') && storageKey.toLowerCase().endsWith('.xlsx');
 }
 
+function buildValidationReport(
+  inspection: Awaited<ReturnType<typeof inspectQuoteTemplateWorkbook>>,
+): Record<string, unknown> {
+  return {
+    checkedAt: new Date().toISOString(),
+    requiredFieldsPresent: inspection.requiredFieldsPresent,
+    requiredFields: inspection.requiredFields,
+    missingRequiredFields: inspection.missingRequiredFields,
+    duplicateFields: inspection.duplicateFields,
+    missingPlaceholders: inspection.missingPlaceholders,
+    placeholderRowsMismatch: inspection.placeholderRowsMismatch,
+    layoutValid: inspection.layoutValid,
+    headerRow: inspection.headerRow,
+    itemStartRow: inspection.itemStartRow,
+    sheetName: inspection.sheetName,
+    availableSheets: inspection.availableSheets,
+    detectedHeaders: inspection.detectedHeaders,
+  };
+}
+
 function safeTemplateFilename(originalName: string, name: string, version: number): string {
   const raw = originalName || `${name}-v${version}.xlsx`;
   const cleaned = raw
@@ -604,10 +685,7 @@ function safeTemplateFilename(originalName: string, name: string, version: numbe
 
 function quoteTemplateSummary(
   template: QuoteTemplate,
-  asset:
-    | { id: string; originalName: string; sizeBytes: bigint }
-    | null
-    | undefined,
+  asset: { id: string; originalName: string; sizeBytes: bigint } | null | undefined,
   deletionState: QuoteTemplateSummary['deletionState'] = null,
 ): QuoteTemplateSummary {
   return {

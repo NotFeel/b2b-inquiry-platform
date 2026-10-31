@@ -59,6 +59,7 @@ function asTemplateWorkbookError(error: unknown): QuotationTemplateWorkbookError
   return new QuotationTemplateWorkbookError(
     'The quotation workbook could not be generated safely.',
     'WORKBOOK_GENERATION_FAILED',
+    error,
   );
 }
 
@@ -512,7 +513,7 @@ export async function buildQuotationWorkbookFromTemplate(
     worksheet.autoFilter = `${columnLetter(firstColumn)}${input.headerRow}:${columnLetter(lastColumn)}${lastDataRow}`;
     worksheet.pageSetup.printArea = `${columnLetter(firstColumn)}1:${columnLetter(lastColumn)}${lastSheetRow}`;
     worksheet.pageSetup.printTitlesRow = `1:${input.headerRow}`;
-    const existingView = worksheet.views[0];
+    const existingView = Array.isArray(worksheet.views) ? worksheet.views[0] : undefined;
     worksheet.views = [
       {
         state: 'frozen' as const,

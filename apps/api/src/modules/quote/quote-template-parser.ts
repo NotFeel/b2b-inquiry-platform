@@ -36,7 +36,12 @@ const HEADER_DEFINITIONS: readonly HeaderDefinition[] = [
   { field: 'product.packaging', aliases: ['packaging', 'package', 'packing method'] },
   {
     field: 'product.carton_size_cm',
-    aliases: ['case dimensions', 'case dimensions l x w x h cm', 'carton dimensions', 'carton size'],
+    aliases: [
+      'case dimensions',
+      'case dimensions l x w x h cm',
+      'carton dimensions',
+      'carton size',
+    ],
     prefixAliases: ['case dimensions', 'carton size'],
   },
   {
@@ -91,17 +96,23 @@ export const QUOTATION_TEMPLATE_PLACEHOLDERS = {
   markup: '[MARKUP]',
 } as const;
 
-const PRODUCT_QUOTE_PLACEHOLDER_ROWS: Readonly<
-  Record<keyof typeof QUOTATION_TEMPLATE_PLACEHOLDERS, number>
+const PRODUCT_QUOTE_REQUIRED_PLACEHOLDERS = [
+  'companyName',
+  'contactPerson',
+  'email',
+  'phone',
+  'quotationTitle',
+  'currency',
+] as const satisfies readonly (keyof typeof QUOTATION_TEMPLATE_PLACEHOLDERS)[];
+
+const PRODUCT_QUOTE_FIXED_PLACEHOLDER_ROWS: Readonly<
+  Partial<Record<keyof typeof QUOTATION_TEMPLATE_PLACEHOLDERS, number>>
 > = {
   companyName: 1,
   contactPerson: 2,
   email: 3,
   phone: 4,
   quotationTitle: 5,
-  currency: 6,
-  exchangeRate: 6,
-  markup: 6,
 };
 
 export interface QuoteTemplateInspection {
@@ -154,7 +165,10 @@ function cellText(value: ExcelJS.CellValue): string {
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   if (!value || typeof value !== 'object') return '';
   if ('richText' in value && Array.isArray(value.richText)) {
-    return value.richText.map((part) => part.text).join('').trim();
+    return value.richText
+      .map((part) => part.text)
+      .join('')
+      .trim();
   }
   if ('text' in value && typeof value.text === 'string') return value.text.trim();
   return '';
@@ -194,13 +208,17 @@ function inspectRow(
   return { fieldMapping, detectedHeaders };
 }
 
-function detectHeaderRow(worksheet: ExcelJS.Worksheet): number | null {
+function detectHeaderRow(
+  worksheet: ExcelJS.Worksheet,
+  templateType: QuoteTemplateType,
+): number | null {
   const lastRow = Math.min(Math.max(worksheet.rowCount, 1), 200);
   let best: { rowNumber: number; score: number } | null = null;
   for (let rowNumber = 1; rowNumber <= lastRow; rowNumber += 1) {
     const inspected = inspectRow(worksheet, rowNumber);
     const fields = new Set(Object.values(inspected.fieldMapping));
-    const hasAnchor = fields.has('product.sku') || fields.has('product.name');
+    const hasAnchor =
+      fields.has('product.sku') || (templateType !== 'product_quote' && fields.has('product.name'));
     const score = fields.size;
     if (hasAnchor && score >= 2 && (!best || score > best.score)) {
       best = { rowNumber, score };
@@ -209,14 +227,12 @@ function detectHeaderRow(worksheet: ExcelJS.Worksheet): number | null {
   return best?.rowNumber ?? null;
 }
 
-function findPlaceholderRows(
-  worksheet: ExcelJS.Worksheet,
-  lastRow: number,
-): Map<string, number[]> {
+function findPlaceholderRows(worksheet: ExcelJS.Worksheet): Map<string, number[]> {
   const found = new Map<string, number[]>();
   for (const placeholder of Object.values(QUOTATION_TEMPLATE_PLACEHOLDERS)) {
     found.set(placeholder, []);
   }
+  const lastRow = Math.max(worksheet.rowCount, 1);
   for (let rowNumber = 1; rowNumber <= lastRow; rowNumber += 1) {
     const row = worksheet.getRow(rowNumber);
     for (let columnNumber = 1; columnNumber <= worksheet.columnCount; columnNumber += 1) {
@@ -260,7 +276,7 @@ export async function inspectQuoteTemplateWorkbook(
     });
   }
 
-  const headerRow = options.headerRow ?? detectHeaderRow(worksheet);
+  const headerRow = options.headerRow ?? detectHeaderRow(worksheet, options.templateType);
   if (!headerRow) {
     throw new QuoteTemplateParseError('No recognizable quote table header was found.', {
       reason: 'HEADER_NOT_FOUND',
@@ -297,22 +313,21 @@ export async function inspectQuoteTemplateWorkbook(
   const placeholderRowsMismatch: string[] = [];
   let layoutValid = true;
   if (options.templateType === 'product_quote') {
-    const placeholderRows = findPlaceholderRows(worksheet, headerRow);
-    for (const [field, placeholder] of Object.entries(QUOTATION_TEMPLATE_PLACEHOLDERS)) {
-      const expectedRow =
-        PRODUCT_QUOTE_PLACEHOLDER_ROWS[field as keyof typeof QUOTATION_TEMPLATE_PLACEHOLDERS];
+    const placeholderRows = findPlaceholderRows(worksheet);
+    for (const field of PRODUCT_QUOTE_REQUIRED_PLACEHOLDERS) {
+      const placeholder = QUOTATION_TEMPLATE_PLACEHOLDERS[field];
+      const expectedRow = PRODUCT_QUOTE_FIXED_PLACEHOLDER_ROWS[field];
       const rows = placeholderRows.get(placeholder) ?? [];
       if (rows.length === 0) {
         missingPlaceholders.push(placeholder);
-      } else if (!rows.includes(expectedRow)) {
+      } else if (expectedRow !== undefined && !rows.includes(expectedRow)) {
         placeholderRowsMismatch.push(placeholder);
       }
     }
-    // The product quote template is a stable integration contract. Styling is
-    // user-editable, but the server-owned header and first data row may not move.
+    // Product rows always start immediately below the detected Product SKU row.
+    // Customer placeholders remain fixed so the header remains safely fillable.
     layoutValid =
-      headerRow === 7 &&
-      itemStartRow === 8 &&
+      itemStartRow === headerRow + 1 &&
       missingPlaceholders.length === 0 &&
       placeholderRowsMismatch.length === 0;
   }
