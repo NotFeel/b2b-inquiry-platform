@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { QuotationExportProduct, QuotationExportTemplateOption } from '@b2b/contracts';
 import {
   filterQuotationProducts,
+  moveQuotationSelection,
+  moveQuotationSelectionBy,
   quotationIssueTranslationKey,
   selectQuotationTemplate,
   setQuotationSelection,
@@ -45,14 +47,73 @@ describe('filterQuotationProducts', () => {
 });
 
 describe('setQuotationSelection', () => {
-  it('adds and removes only the requested ids while retaining hidden selections', () => {
-    const selected = new Set(['hidden-product', 'visible-product']);
-    const added = setQuotationSelection(selected, ['second-visible'], true);
-    expect([...selected]).toEqual(['hidden-product', 'visible-product']);
-    expect([...added].sort()).toEqual(['hidden-product', 'second-visible', 'visible-product']);
+  it('appends new ids while preserving hidden selections and the existing order', () => {
+    const selected = ['hidden-product', 'visible-product'];
+    const added = setQuotationSelection(
+      selected,
+      ['visible-product', 'second-visible', 'second-visible'],
+      true,
+    );
+    expect(selected).toEqual(['hidden-product', 'visible-product']);
+    expect(added).toEqual(['hidden-product', 'visible-product', 'second-visible']);
+  });
 
-    const removed = setQuotationSelection(added, ['visible-product'], false);
-    expect([...removed].sort()).toEqual(['hidden-product', 'second-visible']);
+  it('removes only the requested ids without changing the remaining order', () => {
+    const selected = ['hidden-product', 'visible-product', 'second-visible'];
+    const removed = setQuotationSelection(selected, ['visible-product'], false);
+    expect(removed).toEqual(['hidden-product', 'second-visible']);
+  });
+});
+
+describe('quotation selection ordering', () => {
+  const selected = ['product-a', 'product-b', 'product-c', 'product-d'];
+
+  it('moves a product to a requested position without duplicates', () => {
+    expect(moveQuotationSelection(selected, 'product-d', 1)).toEqual([
+      'product-a',
+      'product-d',
+      'product-b',
+      'product-c',
+    ]);
+    expect(moveQuotationSelection(selected, 'product-a', 3)).toEqual([
+      'product-b',
+      'product-c',
+      'product-d',
+      'product-a',
+    ]);
+  });
+
+  it('moves one position and keeps boundary or unknown-product operations stable', () => {
+    expect(moveQuotationSelectionBy(selected, 'product-b', -1)).toEqual([
+      'product-b',
+      'product-a',
+      'product-c',
+      'product-d',
+    ]);
+    expect(moveQuotationSelectionBy(selected, 'product-c', 1)).toEqual([
+      'product-a',
+      'product-b',
+      'product-d',
+      'product-c',
+    ]);
+    expect(moveQuotationSelectionBy(selected, 'product-a', -1)).toEqual(selected);
+    expect(moveQuotationSelectionBy(selected, 'product-d', 1)).toEqual(selected);
+    expect(moveQuotationSelection(selected, 'unknown', 0)).toEqual(selected);
+  });
+
+  it('clamps drag targets to the visible list bounds', () => {
+    expect(moveQuotationSelection(selected, 'product-b', -10)).toEqual([
+      'product-b',
+      'product-a',
+      'product-c',
+      'product-d',
+    ]);
+    expect(moveQuotationSelection(selected, 'product-b', 99)).toEqual([
+      'product-a',
+      'product-c',
+      'product-d',
+      'product-b',
+    ]);
   });
 });
 

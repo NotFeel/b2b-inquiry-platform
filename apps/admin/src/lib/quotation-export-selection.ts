@@ -24,16 +24,53 @@ export function filterQuotationProducts(
 }
 
 export function setQuotationSelection(
-  selected: ReadonlySet<string>,
+  selected: readonly string[],
   productIds: readonly string[],
   checked: boolean,
-): Set<string> {
-  const next = new Set(selected);
+): string[] {
+  if (!checked) {
+    const removed = new Set(productIds);
+    return selected.filter((productId) => !removed.has(productId));
+  }
+
+  const next = [...selected];
+  const included = new Set(next);
   for (const productId of productIds) {
-    if (checked) next.add(productId);
-    else next.delete(productId);
+    if (included.has(productId)) continue;
+    included.add(productId);
+    next.push(productId);
   }
   return next;
+}
+
+/** Moves one selected product to the requested zero-based export position. */
+export function moveQuotationSelection(
+  selected: readonly string[],
+  productId: string,
+  targetIndex: number,
+): string[] {
+  const sourceIndex = selected.indexOf(productId);
+  if (sourceIndex < 0) return [...selected];
+
+  const next = [...selected];
+  const boundedTarget = Math.max(0, Math.min(Math.trunc(targetIndex), next.length - 1));
+  if (sourceIndex === boundedTarget) return next;
+
+  const [moved] = next.splice(sourceIndex, 1);
+  if (moved === undefined) return next;
+  next.splice(boundedTarget, 0, moved);
+  return next;
+}
+
+/** One-step keyboard/button reordering without relying on drag support. */
+export function moveQuotationSelectionBy(
+  selected: readonly string[],
+  productId: string,
+  offset: -1 | 1,
+): string[] {
+  const sourceIndex = selected.indexOf(productId);
+  if (sourceIndex < 0) return [...selected];
+  return moveQuotationSelection(selected, productId, sourceIndex + offset);
 }
 
 export function quotationIssueTranslationKey(code: string): string {

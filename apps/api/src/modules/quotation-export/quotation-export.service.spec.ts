@@ -1,3 +1,4 @@
+import ExcelJS from 'exceljs';
 import Decimal from 'decimal.js';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -10,6 +11,7 @@ import { QuotationExportService } from './quotation-export.service';
 
 const CATEGORY_ID = '11111111-1111-4111-8111-111111111111';
 const PRODUCT_ID = '22222222-2222-4222-8222-222222222222';
+const PRODUCT_ID_2 = '33333333-3333-4333-8333-333333333333';
 const TEMPLATE_ID = '55555555-5555-4555-8555-555555555555';
 const IMAGE_KEY = 'product-image/2026/10/cover.png';
 const TEMPLATE_KEY = 'quote-template/2026/10/B2B_Quotation_Template.xlsx';
@@ -116,15 +118,19 @@ function templateAsset(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function setup(row: ReturnType<typeof product> = product()) {
+function setup(rows: ReturnType<typeof product> | ReturnType<typeof product>[] = product()) {
   const template = quoteTemplate();
   const asset = templateAsset();
+  const productRows = Array.isArray(rows) ? rows : [rows];
+  const firstRow = productRows[0] ?? product();
   const prisma = {
     product: {
-      count: vi.fn().mockResolvedValue(1),
-      findMany: vi.fn().mockResolvedValue([row]),
+      count: vi.fn().mockResolvedValue(productRows.length),
+      findMany: vi.fn().mockResolvedValue(productRows),
     },
-    category: { findMany: vi.fn().mockResolvedValue(row.category ? [row.category] : []) },
+    category: {
+      findMany: vi.fn().mockResolvedValue(firstRow.category ? [firstRow.category] : []),
+    },
     quoteTemplate: {
       findMany: vi.fn().mockResolvedValue([template]),
       findUnique: vi.fn().mockResolvedValue(template),
@@ -302,17 +308,47 @@ describe('QuotationExportService', () => {
     expect(serialized).not.toContain(IMAGE_KEY);
   });
 
+  it('preserves the requested product order in preview and exported worksheet rows', async () => {
+    const first = product();
+    const second = product({
+      id: PRODUCT_ID_2,
+      sku: 'SKU-002',
+      translations: [
+        { productId: PRODUCT_ID_2, locale: 'en-US', name: 'Second product', description: null },
+      ],
+    });
+    const { service } = setup([first, second]);
+    const requestedOrder = [PRODUCT_ID_2, PRODUCT_ID];
+
+    const preview = await service.preview({ ...selection, productIds: requestedOrder }, false);
+    expect(preview.items.map((item) => item.productId)).toEqual(requestedOrder);
+    expect(preview.items.map((item) => item.sku)).toEqual(['SKU-002', 'SKU-001']);
+
+    const exported = await service.export(
+      { ...exportInput, productIds: requestedOrder },
+      false,
+      'admin-id',
+      'request-id',
+    );
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(
+      exported.buffer as unknown as Parameters<typeof workbook.xlsx.load>[0],
+    );
+    const worksheet = workbook.getWorksheet('Quotation');
+    if (!worksheet) throw new Error('Quotation worksheet missing');
+
+    expect(worksheet.getCell('A8').value).toBe('SKU-002');
+    expect(worksheet.getCell('C8').value).toBe('Second product');
+    expect(worksheet.getCell('A9').value).toBe('SKU-001');
+    expect(worksheet.getCell('C9').value).toBe('Steel gate');
+  });
+
   it('refuses the whole export before storage or audit when any product is invalid', async () => {
     const invalid = product({ priceCny: null });
     const { service, storage, prisma } = setup(invalid);
 
     await expect(
-      service.export(
-        exportInput,
-        false,
-        'admin-id',
-        'request-id',
-      ),
+      service.export(exportInput, false, 'admin-id', 'request-id'),
     ).rejects.toMatchObject({ code: 'QUOTATION_EXPORT_VALIDATION_FAILED', status: 422 });
     expect(storage.get).not.toHaveBeenCalled();
     expect(prisma.auditLog.create).not.toHaveBeenCalled();
@@ -320,12 +356,7 @@ describe('QuotationExportService', () => {
 
   it('writes redacted audit metadata only after the workbook succeeds', async () => {
     const { service, prisma, storage, logger } = setup();
-    const result = await service.export(
-      exportInput,
-      false,
-      'admin-id',
-      'request-id',
-    );
+    const result = await service.export(exportInput, false, 'admin-id', 'request-id');
 
     expect(result.filename).toMatch(/^Quotation_USD_\d{8}_\d{6}\.xlsx$/);
     expect(result.buffer.subarray(0, 2).toString()).toBe('PK');
@@ -357,14 +388,9 @@ describe('QuotationExportService', () => {
     const { service, prisma, logger } = setup();
     prisma.auditLog.create.mockRejectedValueOnce(new Error('audit unavailable'));
 
-    await expect(
-      service.export(
-        exportInput,
-        false,
-        'admin-id',
-        'request-id',
-      ),
-    ).rejects.toThrow('audit unavailable');
+    await expect(service.export(exportInput, false, 'admin-id', 'request-id')).rejects.toThrow(
+      'audit unavailable',
+    );
     expect(logger.info).not.toHaveBeenCalled();
   });
 
@@ -376,12 +402,7 @@ describe('QuotationExportService', () => {
     });
 
     await expect(
-      service.export(
-        exportInput,
-        false,
-        'admin-id',
-        'request-id',
-      ),
+      service.export(exportInput, false, 'admin-id', 'request-id'),
     ).rejects.toMatchObject({ code: 'QUOTATION_EXPORT_IMAGE_UNAVAILABLE', status: 422 });
     expect(prisma.auditLog.create).not.toHaveBeenCalled();
   });

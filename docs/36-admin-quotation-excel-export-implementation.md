@@ -72,6 +72,8 @@ MVP 建议单次最多 200 件（必须压测后确认）。默认只允许 publ
 - 列：checkbox、后台缩略图、SKU、英文名、品类、箱规摘要、成本可用状态（可报价/缺成本，不显示成本金额）。
 - 默认全选必须覆盖整个查询集，不能仅勾选当前页。建议服务端返回最多 200 个完整 product ID 清单，前端持有 selectedProductIds；超过上限提示先缩小范围。
 - 搜索变化保留已选项，提供“全选当前结果”；选择数为 0 禁用导出。
+- `selectedProductIds` 同时是 Excel 商品行顺序：新勾选项追加到末尾，取消勾选保留其余项顺序；已选顺序面板提供上移/下移按钮和桌面拖拽，搜索不会隐藏或打乱已选项。
+- 商品表显示每项当前导出位次；preview 与 export 都按该数组顺序发送 `productIds`，后端必须按请求顺序逐项构建商品行，不能依赖数据库 `findMany` 的返回顺序。
 
 ### 3.4 报价抬头
 
@@ -293,7 +295,7 @@ Phase 5 Validation：执行全部测试、Excel/WPS 实测、压测 1/20/100/最
 | Phase 1 Discovery | 已完成 | 已核对 Product、ProductTranslation、ProductImage、FileAsset、Category、Permission、RolePermission、Menu、AuditLog、Storage adapter、RBAC guard、Admin locale 路由与现有 ExcelJS 依赖；无需修改 Product schema。 |
 | Phase 2 Backend | 已完成 | 新增独立 `QuotationExportModule`；实现 config/templates/products/preview/export 五个接口、统一 Decimal 计算、商品聚合校验、原图读取与 PNG/JPEG 魔数/像素校验、模板工作簿填充、严格审计和同步下载。报价模板登记会读取私有 XLSX 校验工作表、固定占位符、第 7 行表头、第 8 行商品起点和字段映射；真实 `B2B_Quotation_Template.xlsx` 已验证为 `Quotation!A7:G8`、7 列完整映射。 |
 | Phase 3 RBAC / Menu / i18n | 已完成 | 新增 `quotation.export.read`、`quotation.export.create`、`quotation.export.unpublished`；商品管理下增加“报价单导出 / Quotation Export”菜单及双语翻译；`catalog_manager` 仅授予 read/create。 |
-| Phase 4 Admin UI | 已完成 | 已实现报价模板选择、无模板引导、品类树、包含后代、默认全选、搜索保留选择、清空/恢复默认、抬头与价格配置、服务端预览、权限/加载/错误/成功状态、确认弹窗和 Blob 下载；确认弹窗显示模板名称与版本，页面按 360px 起单列/局部横向表格适配。 |
+| Phase 4 Admin UI | 已完成 | 已实现报价模板选择、无模板引导、品类树、包含后代、默认全选、搜索保留选择、清空/恢复默认、已选商品有序列表（上移/下移与桌面拖拽）、抬头与价格配置、服务端预览、权限/加载/错误/成功状态、确认弹窗和 Blob 下载；确认弹窗显示模板名称、版本及顺序固定规则，页面按 360px 起单列/局部横向表格适配。 |
 | Phase 5 Validation | 自动化已完成，人工验收未完成 | lint、typecheck、API/Admin/validation tests、菜单翻译检查和全仓生产 build 已通过；Office/WPS 人工打开和 1/20/100/200 件容量压测尚未执行。按本次用户要求未提交 commit/PR。 |
 
 ### 14.2 已落地接口与业务规则
@@ -313,6 +315,7 @@ Phase 5 Validation：执行全部测试、Excel/WPS 实测、压测 1/20/100/最
 - 无 `quotation.export.unpublished` 权限时，商品查询在数据库层只统计 `PUBLISHED` 且 lifecycle 非 `DISCONTINUED`；该权限也不能绕过停产限制。
 - 价格只由后端按 `CEILING_2(costCny × (1 + markup/100) × exchangeRate)` 计算；所有币种（含 JPY）统一两位小数；CNY 汇率固定为 1。
 - preview 与 export 共用同一价格计算和商品校验；export 重新读取数据库并重算，任一商品不合法时整单返回 422，不生成或返回部分 XLSX。
+- preview 与 export 均按 `productIds` 请求数组顺序输出；自动化测试直接读取导出工作簿，验证第 8 行起的 SKU/名称顺序与页面请求一致。
 - 单图上限 8 MiB、图片总量上限 40 MiB、20 MP、读取并发 4；读取失败、格式伪造或超限均整单失败。
 - 审计 `QUOTATION_EXCEL_EXPORTED` 成功后才返回文件；审计不记录成本、客户邮箱/电话、storageKey、图片字节或 XLSX 内容。
 - 预览和导出均按登录用户限流：预览 120 次/分钟、导出 10 次/分钟。当前限流为单 API 进程内存窗口，多实例部署前需改为共享存储或边缘限流。

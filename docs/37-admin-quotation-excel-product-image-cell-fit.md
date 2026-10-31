@@ -278,13 +278,78 @@ function fitImageIntoCell(input: ImageFitInput): ImageFitResult;
 
 ## 15. 验收签字项
 
-- [ ] 商品图片从原图字节嵌入，脱离网络可查看。
-- [ ] 第 8 行起每件商品图片一行一图，对应 SKU 正确。
-- [ ] 图片自动适配 B 列对应单元格，等比、居中、不裁切、不溢出。
-- [ ] 商品行高/图片列宽调整后可动态适配。
-- [ ] 第 1–6 行 Logo 的媒体内容、尺寸和 anchor 不变。
-- [ ] 第 7 行表头、footer、模板样式保留。
+- [x] 商品图片从原图字节嵌入，脱离网络可查看。
+- [x] 第 8 行起每件商品图片一行一图，对应 SKU 正确。
+- [x] 图片自动适配 B 列对应单元格，等比、居中、不裁切、不溢出。
+- [x] 商品行高/图片列宽调整后可动态适配。
+- [x] 第 1–6 行 Logo 的媒体内容、尺寸和 anchor 不变。
+- [x] 第 7 行表头、footer、模板样式保留。
 - [ ] Excel、WPS、LibreOffice 打开无修复提示，图片显示正常。
-- [ ] 原图缺失、损坏或超限时整份导出失败并有明确错误。
-- [ ] 价格、权限、审计与现有报价导出流程无回归。
-- [ ] lint、typecheck、tests、build 结果如实记录。
+- [x] 原图缺失、损坏或超限时整份导出失败并有明确错误。
+- [x] 价格、权限、审计与现有报价导出流程无回归。
+- [x] lint、typecheck、tests、build 结果如实记录。
+
+## 16. 实施记录（2026-10-30）
+
+### 16.1 已实现文件
+
+- `apps/api/src/modules/quotation-export/quotation-image-fitter.ts`
+  - 按实际列宽、行高和 padding 计算可用区域；使用 96 DPI、`1 px = 9525 EMU`。
+  - 等比缩放且允许小图放大，不裁切；水平、垂直居中；隐藏行列、合并图片格、非法尺寸和过小区域安全失败。
+- `apps/api/src/modules/quotation-export/quotation-image-embedder.ts`
+  - 只使用 `productId` 绑定商品与图片，不使用图片数组顺序或文件名。
+  - 每张商品图固定写入对应商品行的图片列，采用 `oneCellAnchor` 和显式 EMU offset；写入后复核数量、行、尺寸和 `editAs`。
+- `apps/api/src/modules/quotation-export/quotation-drawing-preserver.ts`
+  - 在改行和样式前快照所有模板图片的媒体 SHA-256、关系与 anchor。
+  - 只清理明确位于商品区域图片列且不跨行的旧商品占位图；Logo、表头图和无法可靠分类的跨区域图片分别按保留或安全失败处理。
+  - 最终重新打开 XLSX 校验固定图片的媒体哈希和 anchor 未变化。
+- `apps/api/src/modules/quotation-export/quotation-ooxml-package.ts`
+  - 默认继续使用 ExcelJS 写入路径；生成后通过 JSZip/OOXML 校验 worksheet → drawing → relationship → media。
+  - 只有媒体哈希仍匹配、且商品图仍是 `oneCellAnchor` 时，才允许修复商品图起点和 `ext` 尺寸。缺失媒体、外链、图片关系缺失、`IMAGE()`/`DISPIMG()` 公式或固定图片变化均拒绝发布。
+- `apps/api/src/modules/quotation-export/quotation-template-workbook.ts`
+  - 接入图片快照、旧商品图清理、逐商品图片嵌入和最终 OOXML 校验；任一图片或包结构失败统一转换为模板业务错误，不返回半成品。
+  - footer 优先按币种占位符定位，其次按明确的 footer 文案定位；只把 footer 上方连续的商品样板区作为可调整数据行。
+
+### 16.2 真实模板核验值
+
+`assets/templates/B2B_Quotation_Template.xlsx` 的实际结构为：
+
+- 工作表 `Quotation`，7 列；A/B/C 列宽分别为 18、20.5625、42。
+- 第 1–6 行高 23pt，第 7 行高 34pt，第 8–10 行商品样板行高 84pt。
+- 第 11 行为空分隔行，第 12 行为 footer 起始行，行高 22pt，包含 `[CURRENCY]`。
+- Logo 是 `twoCellAnchor`，起点为 ExcelJS 0-based `col=1,row=1,colOff=368935,rowOff=43180`，终点为 `col=1,row=4,colOff=1426210,rowOff=95885`；媒体为 `xl/media/image1.jpeg`。
+
+导出 1/2/3/200 件商品时，商品行从第 8 行开始，图片按每行实际行高分别计算；footer 始终位于所有商品行及其保留的空分隔行之后。
+
+### 16.3 自动化验证
+
+已执行并通过：
+
+```bash
+pnpm --filter @b2b/api exec vitest run src/modules/quotation-export
+pnpm --filter @b2b/api exec tsc --noEmit --pretty false
+pnpm --filter @b2b/api exec eslint src/modules/quotation-export
+pnpm --filter @b2b/api build
+pnpm test
+pnpm typecheck
+pnpm lint
+ADMIN_API_PROXY_TARGET=http://localhost:3002 pnpm build
+```
+
+结果：quotation-export 共 10 个测试文件、101 个测试全部通过；仓库级 tests、typecheck、lint 和四个应用/包的构建通过。直接执行 `pnpm build` 时 admin 会按现有安全策略要求显式提供 `ADMIN_API_PROXY_TARGET` 或 `API_BASE_URL`，因此本次使用本地 API 地址作为构建时临时变量重跑。测试覆盖：
+
+- 正方形、横图、竖图、小图放大、不同 B 列宽/行高、非法尺寸和隐藏/合并单元格。
+- 乱序图片输入按 `productId` 绑定、不同媒体字节逐行对应、缺失/额外/重复图片拒绝。
+- 真实模板 Logo 媒体和 anchor 保留、商品占位图局部清理、跨区域图片安全失败。
+- ExcelJS 默认输出、OOXML 本地 relationship/media 校验、商品 anchor 有限修复、缺媒体拒绝、图片公式拒绝。
+- 1、2、200 件商品；真实模板第 8/9 行图片、表头、footer、合并单元格、筛选和打印区域。
+
+### 16.4 尚未验证与已知边界
+
+- 尚未在本机使用 Microsoft Excel、WPS、LibreOffice Calc 逐个人工打开 1 件、2 件和较多商品文件；因此兼容性签字项保持未勾选。
+- 不同操作系统/Office 客户端对默认字体、UI 缩放和小数像素可能有细微渲染差异；当前算法以模板列宽/行高和 96 DPI 为确定值，并提供 4px 内边距。
+- 本次未新增数据库 schema、API、权限或迁移。原图读取、格式/大小校验和后台 RBAC 继续复用现有报价导出链路。
+
+### 16.5 回滚
+
+回滚本次 `quotation-template-workbook`、图片 fit/embed/preserve/OOXML 校验模块及对应测试即可；不涉及数据库迁移、模板文件改写、商品原图或历史导出数据，因此无需数据回滚。生产如需紧急止损，应同时由服务端禁用导出接口并撤销 `quotation.export.create` 权限，不能只隐藏菜单按钮。

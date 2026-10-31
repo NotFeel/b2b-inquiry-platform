@@ -4,6 +4,14 @@ import {
   QUOTATION_TEMPLATE_PLACEHOLDERS,
   type QuoteTemplateFieldKey,
 } from '../quote/quote-template-parser';
+import {
+  QuotationDrawingPreserveError,
+  assertTemplateDrawingsPreserved,
+  captureTemplateDrawings,
+  removeTemplateProductImages,
+} from './quotation-drawing-preserver';
+import { QuotationImageEmbedError, embedQuotationProductImages } from './quotation-image-embedder';
+import { QuotationOoxmlError, ensureQuotationOoxmlImages } from './quotation-ooxml-package';
 import { safeExcelText, type QuotationWorkbookProduct } from './quotation-workbook';
 
 export interface QuotationTemplateWorkbookInput {
@@ -24,10 +32,34 @@ export class QuotationTemplateWorkbookError extends Error {
   constructor(
     message: string,
     readonly reason: string,
+    override readonly cause?: unknown,
   ) {
     super(message);
     this.name = 'QuotationTemplateWorkbookError';
   }
+}
+
+function asTemplateWorkbookError(error: unknown): QuotationTemplateWorkbookError {
+  if (error instanceof QuotationTemplateWorkbookError) return error;
+  if (
+    error instanceof QuotationImageEmbedError ||
+    error instanceof QuotationDrawingPreserveError ||
+    error instanceof QuotationOoxmlError
+  ) {
+    const diagnosticCodes =
+      error instanceof QuotationOoxmlError && error.errors.length > 0
+        ? ` (${error.errors.map((item) => item.code).join(', ')})`
+        : '';
+    return new QuotationTemplateWorkbookError(
+      `${error.message}${diagnosticCodes}`,
+      error.reason,
+      error,
+    );
+  }
+  return new QuotationTemplateWorkbookError(
+    'The quotation workbook could not be generated safely.',
+    'WORKBOOK_GENERATION_FAILED',
+  );
 }
 
 interface MergePattern {
@@ -79,11 +111,7 @@ function rowHasValues(worksheet: ExcelJS.Worksheet, rowNumber: number): boolean 
   return false;
 }
 
-function rowContains(
-  worksheet: ExcelJS.Worksheet,
-  rowNumber: number,
-  needle: string,
-): boolean {
+function rowContains(worksheet: ExcelJS.Worksheet, rowNumber: number, needle: string): boolean {
   const row = worksheet.getRow(rowNumber);
   for (let index = 1; index <= worksheet.columnCount; index += 1) {
     if (cellText(row.getCell(index).value).toUpperCase().includes(needle)) return true;
@@ -91,25 +119,53 @@ function rowContains(
   return false;
 }
 
-function findFooterStartRow(
-  worksheet: ExcelJS.Worksheet,
-  itemStartRow: number,
-): number {
+function findFooterStartRow(worksheet: ExcelJS.Worksheet, itemStartRow: number): number {
   for (let rowNumber = itemStartRow; rowNumber <= worksheet.rowCount; rowNumber += 1) {
-    if (
-      !rowHasValues(worksheet, rowNumber) ||
-      rowContains(worksheet, rowNumber, QUOTATION_TEMPLATE_PLACEHOLDERS.currency)
-    ) {
+    if (rowContains(worksheet, rowNumber, QUOTATION_TEMPLATE_PLACEHOLDERS.currency)) {
+      return rowNumber;
+    }
+  }
+
+  // Older templates may omit the currency placeholder in their footer. Only
+  // accept explicit footer language; otherwise keep the template unchanged and
+  // let the normal row validation decide whether the structure is safe.
+  const footerMarkers = ['PRICES ARE QUOTED', 'CONTACT US', 'FURTHER DETAILS'];
+  for (let rowNumber = itemStartRow; rowNumber <= worksheet.rowCount; rowNumber += 1) {
+    if (footerMarkers.some((marker) => rowContains(worksheet, rowNumber, marker))) {
       return rowNumber;
     }
   }
   return worksheet.rowCount + 1;
 }
 
-function mergeCellsFromRange(
+function rowHasTemplateContent(worksheet: ExcelJS.Worksheet, rowNumber: number): boolean {
+  if (rowHasValues(worksheet, rowNumber)) return true;
+  const row = worksheet.getRow(rowNumber);
+  if (row.height !== undefined) return true;
+  for (let column = 1; column <= worksheet.columnCount; column += 1) {
+    const cell = row.getCell(column);
+    if (cell.border || cell.fill || cell.font || cell.numFmt || cell.alignment || cell.protection) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Finds the contiguous product sample block immediately above the footer. */
+function findSampleDataRows(
   worksheet: ExcelJS.Worksheet,
-  range: string,
-): ShiftedMerge | null {
+  itemStartRow: number,
+  footerStartRow: number,
+): number[] {
+  const rows: number[] = [];
+  for (let rowNumber = itemStartRow; rowNumber < footerStartRow; rowNumber += 1) {
+    if (!rowHasTemplateContent(worksheet, rowNumber)) break;
+    rows.push(rowNumber);
+  }
+  return rows;
+}
+
+function mergeCellsFromRange(worksheet: ExcelJS.Worksheet, range: string): ShiftedMerge | null {
   const [startCell, endCell] = range.split(':');
   if (!startCell || !endCell) return null;
   const start = worksheet.getCell(startCell);
@@ -141,12 +197,11 @@ function columnLetter(columnNumberValue: number): string {
 
 function captureRowPatterns(
   worksheet: ExcelJS.Worksheet,
-  itemStartRow: number,
-  footerStartRow: number,
+  sampleRowNumbers: readonly number[],
   dataMerges: ShiftedMerge[],
 ): DataRowPattern[] {
   const patterns: DataRowPattern[] = [];
-  for (let rowNumber = itemStartRow; rowNumber < footerStartRow; rowNumber += 1) {
+  for (const rowNumber of sampleRowNumbers) {
     const row = worksheet.getRow(rowNumber);
     const cellStyles: Partial<ExcelJS.Style>[] = [];
     for (let column = 1; column <= worksheet.columnCount; column += 1) {
@@ -164,10 +219,7 @@ function captureRowPatterns(
   return patterns;
 }
 
-function defaultDataRowPattern(
-  worksheet: ExcelJS.Worksheet,
-  headerRow: number,
-): DataRowPattern {
+function defaultDataRowPattern(worksheet: ExcelJS.Worksheet, headerRow: number): DataRowPattern {
   const header = worksheet.getRow(headerRow);
   const cellStyles: Partial<ExcelJS.Style>[] = [];
   for (let column = 1; column <= worksheet.columnCount; column += 1) {
@@ -234,22 +286,6 @@ function applyRowPattern(
   for (let column = 1; column <= worksheet.columnCount; column += 1) {
     row.getCell(column).style = cloneStyle(pattern.cellStyles[column - 1] ?? {});
   }
-}
-
-function imageDisplaySize(
-  image: QuotationWorkbookProduct['image'],
-  cellWidthPixels: number,
-  cellHeightPixels: number,
-): { width: number; height: number } {
-  const sourceWidth = image.width ?? 160;
-  const sourceHeight = image.height ?? 160;
-  const maxWidth = Math.max(24, cellWidthPixels - 10);
-  const maxHeight = Math.max(24, cellHeightPixels - 10);
-  const scale = Math.min(maxWidth / sourceWidth, maxHeight / sourceHeight, 1);
-  return {
-    width: Math.max(1, Math.round(sourceWidth * scale)),
-    height: Math.max(1, Math.round(sourceHeight * scale)),
-  };
 }
 
 function writeProductField(
@@ -336,163 +372,175 @@ export async function buildQuotationWorkbookFromTemplate(
     );
   }
 
-  const footerStartRow = findFooterStartRow(worksheet, input.itemStartRow);
-  const sampleDataRows = footerStartRow - input.itemStartRow;
-
-  const mergeRanges = [...(worksheet.model.merges ?? [])]
-    .map((range) => mergeCellsFromRange(worksheet, range))
-    .filter((merge): merge is ShiftedMerge => merge !== null);
-  const dataMerges = mergeRanges.filter(
-    (merge) => merge.startRow >= input.itemStartRow && merge.endRow < footerStartRow,
-  );
-  if (dataMerges.some((merge) => merge.startRow !== merge.endRow)) {
-    throw new QuotationTemplateWorkbookError(
-      'Product data rows cannot contain multi-row merged cells.',
-      'DATA_ROW_MERGE_INVALID',
-    );
-  }
-  const footerMerges = mergeRanges.filter((merge) => merge.startRow >= footerStartRow);
-  const rowPatterns = captureRowPatterns(
-    worksheet,
-    input.itemStartRow,
-    footerStartRow,
-    dataMerges,
-  );
-  const dataRowPatterns =
-    rowPatterns.length > 0
-      ? rowPatterns
-      : [defaultDataRowPattern(worksheet, input.headerRow)];
-
-  // ExcelJS preserves merges below inserted rows, but does not shift them when
-  // rows are removed. Temporarily unmerge footer/data ranges and recreate them
-  // at their final positions after the data area has been resized.
-  for (const merge of [...dataMerges, ...footerMerges]) {
-    worksheet.unMergeCells(rangeFor(merge));
-  }
-
-  const rowDelta = input.products.length - sampleDataRows;
-  if (rowDelta > 0) {
-    worksheet.spliceRows(
-      footerStartRow,
-      0,
-      ...Array.from({ length: rowDelta }, () => [] as ExcelJS.CellValue[]),
-    );
-  } else if (rowDelta < 0) {
-    worksheet.spliceRows(input.itemStartRow + input.products.length, Math.abs(rowDelta));
-  }
-  const replacements = {
-    [QUOTATION_TEMPLATE_PLACEHOLDERS.companyName]: input.header.companyName,
-    [QUOTATION_TEMPLATE_PLACEHOLDERS.contactPerson]: input.header.contactPerson,
-    [QUOTATION_TEMPLATE_PLACEHOLDERS.email]: input.header.email,
-    [QUOTATION_TEMPLATE_PLACEHOLDERS.phone]: input.header.phone,
-    [QUOTATION_TEMPLATE_PLACEHOLDERS.quotationTitle]: input.header.quotationTitle,
-    [QUOTATION_TEMPLATE_PLACEHOLDERS.currency]: input.currencyCode,
-    [QUOTATION_TEMPLATE_PLACEHOLDERS.exchangeRate]: `${input.exchangeRate} ${input.currencyCode}`,
-    [QUOTATION_TEMPLATE_PLACEHOLDERS.markup]: `${input.markupPercent}%`,
-  } as const;
-  for (let rowNumber = 1; rowNumber <= worksheet.rowCount; rowNumber += 1) {
-    const row = worksheet.getRow(rowNumber);
-    for (let column = 1; column <= worksheet.columnCount; column += 1) {
-      const cell = row.getCell(column);
-      cell.value = replaceTextTokens(cell.value, replacements);
-    }
-  }
-
-  const mappedColumns = Object.entries(input.fieldMapping)
-    .map(([letter, field]) => ({ field, column: columnNumber(worksheet, letter) }))
-    .filter((entry): entry is { field: QuoteTemplateFieldKey; column: number } =>
-      Boolean(entry.column),
-    );
-  const imageColumn = mappedColumns.find((entry) => entry.field === 'product.image')?.column;
-  if (!imageColumn) {
-    throw new QuotationTemplateWorkbookError(
-      'The template does not map a product image column.',
-      'IMAGE_COLUMN_MISSING',
-    );
-  }
-
-  input.products.forEach((product, index) => {
-    const rowNumber = input.itemStartRow + index;
-    const pattern = dataRowPatterns[index % dataRowPatterns.length];
-    if (!pattern) {
+  try {
+    const mappedColumns = Object.entries(input.fieldMapping)
+      .map(([letter, field]) => ({ field, column: columnNumber(worksheet, letter) }))
+      .filter((entry): entry is { field: QuoteTemplateFieldKey; column: number } =>
+        Boolean(entry.column),
+      );
+    const imageColumn = mappedColumns.find((entry) => entry.field === 'product.image')?.column;
+    if (!imageColumn) {
       throw new QuotationTemplateWorkbookError(
-        'The template data-row style could not be read.',
-        'DATA_ROW_STYLE_MISSING',
-      );
-    }
-    applyRowPattern(worksheet, rowNumber, pattern);
-    const row = worksheet.getRow(rowNumber);
-    for (let column = 1; column <= worksheet.columnCount; column += 1) {
-      row.getCell(column).value = null;
-    }
-    for (const mapped of mappedColumns) {
-      writeProductField(
-        row.getCell(mapped.column),
-        mapped.field,
-        product,
-        product.unitPrice,
+        'The template does not map a product image column.',
+        'IMAGE_COLUMN_MISSING',
       );
     }
 
-    const imageId = workbook.addImage({
-      buffer: product.image.buffer.buffer.slice(
-        product.image.buffer.byteOffset,
-        product.image.buffer.byteOffset + product.image.buffer.byteLength,
-      ) as ExcelJS.Buffer,
-      extension: product.image.extension,
-    });
-    const columnWidth = worksheet.getColumn(imageColumn).width ?? 18;
-    const cellWidthPixels = Math.max(40, Math.round(columnWidth * 7 + 5));
-    const rowHeight = row.height ?? 84;
-    const cellHeightPixels = Math.max(40, Math.round((rowHeight * 4) / 3));
-    worksheet.addImage(imageId, {
-      tl: { col: imageColumn - 1 + 0.06, row: rowNumber - 1 + 0.06 },
-      ext: imageDisplaySize(product.image, cellWidthPixels, cellHeightPixels),
-      editAs: 'oneCell',
-    });
-  });
-
-  input.products.forEach((_, index) => {
-    const rowNumber = input.itemStartRow + index;
-    const pattern = dataRowPatterns[index % dataRowPatterns.length];
-    for (const merge of pattern?.merges ?? []) {
-      worksheet.mergeCells(
-        rowNumber,
-        merge.startColumn,
-        rowNumber,
-        merge.endColumn,
+    const footerStartRow = findFooterStartRow(worksheet, input.itemStartRow);
+    if (footerStartRow <= input.itemStartRow) {
+      throw new QuotationTemplateWorkbookError(
+        'The template footer could not be identified below the product data.',
+        'FOOTER_NOT_FOUND',
       );
     }
-  });
-  for (const merge of footerMerges) {
-    const shifted = { ...merge, startRow: merge.startRow + rowDelta, endRow: merge.endRow + rowDelta };
-    worksheet.mergeCells(rangeFor(shifted));
+    const sampleRowNumbers = findSampleDataRows(worksheet, input.itemStartRow, footerStartRow);
+    const sampleDataRows = sampleRowNumbers.length;
+
+    const mergeRanges = [...(worksheet.model.merges ?? [])]
+      .map((range) => mergeCellsFromRange(worksheet, range))
+      .filter((merge): merge is ShiftedMerge => merge !== null);
+    const dataMerges = mergeRanges.filter(
+      (merge) => merge.startRow >= input.itemStartRow && merge.endRow < footerStartRow,
+    );
+    if (dataMerges.some((merge) => merge.startRow !== merge.endRow)) {
+      throw new QuotationTemplateWorkbookError(
+        'Product data rows cannot contain multi-row merged cells.',
+        'DATA_ROW_MERGE_INVALID',
+      );
+    }
+    const footerMerges = mergeRanges.filter((merge) => merge.startRow >= footerStartRow);
+    const drawingSnapshot = captureTemplateDrawings({
+      workbook,
+      worksheet,
+      headerRow: input.headerRow,
+      itemStartRow: input.itemStartRow,
+      footerStartRow,
+      imageColumn,
+    });
+    removeTemplateProductImages(worksheet, drawingSnapshot);
+    const rowPatterns = captureRowPatterns(worksheet, sampleRowNumbers, dataMerges);
+    const dataRowPatterns =
+      rowPatterns.length > 0 ? rowPatterns : [defaultDataRowPattern(worksheet, input.headerRow)];
+
+    // ExcelJS preserves merges below inserted rows, but does not shift them when
+    // rows are removed. Temporarily unmerge footer/data ranges and recreate them
+    // at their final positions after the data area has been resized.
+    for (const merge of [...dataMerges, ...footerMerges]) {
+      worksheet.unMergeCells(rangeFor(merge));
+    }
+
+    const rowDelta = input.products.length - sampleDataRows;
+    if (rowDelta > 0) {
+      worksheet.spliceRows(
+        footerStartRow,
+        0,
+        ...Array.from({ length: rowDelta }, () => [] as ExcelJS.CellValue[]),
+      );
+    } else if (rowDelta < 0) {
+      worksheet.spliceRows(input.itemStartRow + input.products.length, Math.abs(rowDelta));
+    }
+    const replacements = {
+      [QUOTATION_TEMPLATE_PLACEHOLDERS.companyName]: input.header.companyName,
+      [QUOTATION_TEMPLATE_PLACEHOLDERS.contactPerson]: input.header.contactPerson,
+      [QUOTATION_TEMPLATE_PLACEHOLDERS.email]: input.header.email,
+      [QUOTATION_TEMPLATE_PLACEHOLDERS.phone]: input.header.phone,
+      [QUOTATION_TEMPLATE_PLACEHOLDERS.quotationTitle]: input.header.quotationTitle,
+      [QUOTATION_TEMPLATE_PLACEHOLDERS.currency]: input.currencyCode,
+      [QUOTATION_TEMPLATE_PLACEHOLDERS.exchangeRate]: `${input.exchangeRate} ${input.currencyCode}`,
+      [QUOTATION_TEMPLATE_PLACEHOLDERS.markup]: `${input.markupPercent}%`,
+    } as const;
+    for (let rowNumber = 1; rowNumber <= worksheet.rowCount; rowNumber += 1) {
+      const row = worksheet.getRow(rowNumber);
+      for (let column = 1; column <= worksheet.columnCount; column += 1) {
+        const cell = row.getCell(column);
+        cell.value = replaceTextTokens(cell.value, replacements);
+      }
+    }
+
+    const productImages = new Map(
+      input.products.map((product) => [product.productId, product.image] as const),
+    );
+    input.products.forEach((product, index) => {
+      const rowNumber = input.itemStartRow + index;
+      const patternIndex = Math.min(index, dataRowPatterns.length - 1);
+      const pattern = dataRowPatterns[patternIndex];
+      if (!pattern) {
+        throw new QuotationTemplateWorkbookError(
+          'The template data-row style could not be read.',
+          'DATA_ROW_STYLE_MISSING',
+        );
+      }
+      applyRowPattern(worksheet, rowNumber, pattern);
+      const row = worksheet.getRow(rowNumber);
+      for (let column = 1; column <= worksheet.columnCount; column += 1) {
+        row.getCell(column).value = null;
+      }
+      for (const mapped of mappedColumns) {
+        writeProductField(row.getCell(mapped.column), mapped.field, product, product.unitPrice);
+      }
+    });
+
+    input.products.forEach((_, index) => {
+      const rowNumber = input.itemStartRow + index;
+      const patternIndex = Math.min(index, dataRowPatterns.length - 1);
+      const pattern = dataRowPatterns[patternIndex];
+      for (const merge of pattern?.merges ?? []) {
+        worksheet.mergeCells(rowNumber, merge.startColumn, rowNumber, merge.endColumn);
+      }
+    });
+    for (const merge of footerMerges) {
+      const shifted = {
+        ...merge,
+        startRow: merge.startRow + rowDelta,
+        endRow: merge.endRow + rowDelta,
+      };
+      worksheet.mergeCells(rangeFor(shifted));
+    }
+
+    const productImageAnchors = embedQuotationProductImages({
+      worksheet,
+      products: input.products,
+      images: productImages,
+      itemStartRow: input.itemStartRow,
+      imageColumn,
+    });
+
+    const firstColumn = 1;
+    const lastColumn = Math.max(1, worksheet.columnCount);
+    const lastDataRow = input.itemStartRow + input.products.length - 1;
+    const lastSheetRow = Math.max(lastDataRow, worksheet.rowCount);
+    worksheet.autoFilter = `${columnLetter(firstColumn)}${input.headerRow}:${columnLetter(lastColumn)}${lastDataRow}`;
+    worksheet.pageSetup.printArea = `${columnLetter(firstColumn)}1:${columnLetter(lastColumn)}${lastSheetRow}`;
+    worksheet.pageSetup.printTitlesRow = `1:${input.headerRow}`;
+    const existingView = worksheet.views[0];
+    worksheet.views = [
+      {
+        state: 'frozen' as const,
+        ySplit: input.headerRow,
+        topLeftCell: `${columnLetter(firstColumn)}${input.itemStartRow}`,
+        ...(existingView?.showGridLines === undefined
+          ? {}
+          : { showGridLines: existingView.showGridLines }),
+        ...(existingView?.showRowColHeaders === undefined
+          ? {}
+          : { showRowColHeaders: existingView.showRowColHeaders }),
+        ...(existingView?.zoomScale === undefined ? {} : { zoomScale: existingView.zoomScale }),
+        ...(existingView?.zoomScaleNormal === undefined
+          ? {}
+          : { zoomScaleNormal: existingView.zoomScaleNormal }),
+      },
+    ];
+    workbook.modified = input.generatedAt;
+
+    const output = Buffer.from(await workbook.xlsx.writeBuffer());
+    await assertTemplateDrawingsPreserved(output, input.sheetName, drawingSnapshot);
+    const validated = await ensureQuotationOoxmlImages(output, {
+      sheetName: input.sheetName,
+      fixedImages: drawingSnapshot.fixedImages,
+      productImages: productImageAnchors.map((anchor) => ({ anchor, fit: anchor.fit })),
+    });
+    return validated.buffer;
+  } catch (error) {
+    throw asTemplateWorkbookError(error);
   }
-
-  const firstColumn = 1;
-  const lastColumn = Math.max(1, worksheet.columnCount);
-  const lastDataRow = input.itemStartRow + input.products.length - 1;
-  const lastSheetRow = Math.max(lastDataRow, worksheet.rowCount);
-  worksheet.autoFilter = `${columnLetter(firstColumn)}${input.headerRow}:${columnLetter(lastColumn)}${lastDataRow}`;
-  worksheet.pageSetup.printArea = `${columnLetter(firstColumn)}1:${columnLetter(lastColumn)}${lastSheetRow}`;
-  worksheet.pageSetup.printTitlesRow = `1:${input.headerRow}`;
-  const existingView = worksheet.views[0];
-  worksheet.views = [{
-    state: 'frozen' as const,
-    ySplit: input.headerRow,
-    topLeftCell: `${columnLetter(firstColumn)}${input.itemStartRow}`,
-    ...(existingView?.showGridLines === undefined
-      ? {}
-      : { showGridLines: existingView.showGridLines }),
-    ...(existingView?.showRowColHeaders === undefined
-      ? {}
-      : { showRowColHeaders: existingView.showRowColHeaders }),
-    ...(existingView?.zoomScale === undefined ? {} : { zoomScale: existingView.zoomScale }),
-    ...(existingView?.zoomScaleNormal === undefined
-      ? {}
-      : { zoomScaleNormal: existingView.zoomScaleNormal }),
-  }];
-  workbook.modified = input.generatedAt;
-
-  return Buffer.from(await workbook.xlsx.writeBuffer());
 }

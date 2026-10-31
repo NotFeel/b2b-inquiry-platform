@@ -32,6 +32,8 @@ import { localeHref, translateError } from '../../../../../lib/i18n';
 import { quotationExportApi } from '../../../../../lib/quotation-export-api';
 import {
   filterQuotationProducts,
+  moveQuotationSelection,
+  moveQuotationSelectionBy,
   quotationIssueTranslationKey,
   selectQuotationTemplate,
   setQuotationSelection,
@@ -77,6 +79,7 @@ export default function QuotationExportPage() {
   const toast = useToast();
   const breadcrumb = useBreadcrumb();
   const descendantId = useId();
+  const selectedOrderId = useId();
 
   const canRead = can('quotation.export.read');
   const canCreate = can('quotation.export.create');
@@ -103,8 +106,11 @@ export default function QuotationExportPage() {
   const [productsError, setProductsError] = useState<string | null>(null);
   const [productsRequestId, setProductsRequestId] = useState<string | null>(null);
   const [productsReloadNonce, setProductsReloadNonce] = useState(0);
-  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
   const [search, setSearch] = useState('');
+  const [draggedProductId, setDraggedProductId] = useState<string | null>(null);
+  const [dragOverProductId, setDragOverProductId] = useState<string | null>(null);
+  const [orderAnnouncement, setOrderAnnouncement] = useState('');
 
   const [header, setHeader] = useState<QuotationExportHeader>(DEFAULT_HEADER);
   const [pricing, setPricing] = useState<QuotationExportPricing>({
@@ -206,7 +212,7 @@ export default function QuotationExportPage() {
 
   useEffect(() => {
     const sequence = ++productLoadSequence.current;
-    setSelectedIds(new Set());
+    setSelectedProductIds([]);
     setSearch('');
     setProductsError(null);
     setProductsRequestId(null);
@@ -223,9 +229,7 @@ export default function QuotationExportPage() {
       .then((result) => {
         if (sequence !== productLoadSequence.current) return;
         setProductList(result);
-        setSelectedIds(
-          result.limitExceeded ? new Set() : new Set(result.items.map((item) => item.id)),
-        );
+        setSelectedProductIds(result.limitExceeded ? [] : result.items.map((item) => item.id));
       })
       .catch((error: unknown) => {
         if (sequence !== productLoadSequence.current) return;
@@ -242,18 +246,6 @@ export default function QuotationExportPage() {
       });
   }, [canRead, categoryId, includeDescendants, locale, productsReloadNonce, t]);
 
-  const selectedProducts = useMemo(
-    () => productList.items.filter((product) => selectedIds.has(product.id)),
-    [productList.items, selectedIds],
-  );
-  const selectedKey = useMemo(
-    () =>
-      selectedProducts
-        .map((product) => product.id)
-        .sort()
-        .join(','),
-    [selectedProducts],
-  );
   const filteredProducts = useMemo(
     () => filterQuotationProducts(productList.items, search),
     [productList.items, search],
@@ -261,6 +253,23 @@ export default function QuotationExportPage() {
   const productById = useMemo(
     () => new Map(productList.items.map((product) => [product.id, product])),
     [productList.items],
+  );
+  const selectedProducts = useMemo(
+    () =>
+      selectedProductIds.flatMap((productId) => {
+        const product = productById.get(productId);
+        return product ? [product] : [];
+      }),
+    [productById, selectedProductIds],
+  );
+  const selectedProductIdSet = useMemo(() => new Set(selectedProductIds), [selectedProductIds]);
+  const selectedPositionById = useMemo(
+    () => new Map(selectedProductIds.map((productId, index) => [productId, index + 1])),
+    [selectedProductIds],
+  );
+  const orderedProductIds = useMemo(
+    () => selectedProducts.map((product) => product.id),
+    [selectedProducts],
   );
   const selectedTemplate = useMemo(
     () => templates.find((template) => template.id === templateId) ?? null,
@@ -309,7 +318,7 @@ export default function QuotationExportPage() {
     if (
       !canCreate ||
       !categoryId ||
-      selectedProducts.length === 0 ||
+      orderedProductIds.length === 0 ||
       productList.limitExceeded ||
       !pricing.exchangeRate.trim()
     ) {
@@ -324,7 +333,7 @@ export default function QuotationExportPage() {
         .preview({
           categoryId,
           includeDescendants,
-          productIds: selectedProducts.map((product) => product.id),
+          productIds: orderedProductIds,
           markupPercent: pricing.markupPercent,
           currencyCode: pricing.currencyCode,
           exchangeRate: pricing.exchangeRate,
@@ -359,17 +368,16 @@ export default function QuotationExportPage() {
     pricing.exchangeRate,
     pricing.markupPercent,
     productList.limitExceeded,
-    selectedKey,
-    selectedProducts,
+    orderedProductIds,
     t,
   ]);
 
   const toggleProduct = (productId: string, checked: boolean) => {
-    setSelectedIds((current) => setQuotationSelection(current, [productId], checked));
+    setSelectedProductIds((current) => setQuotationSelection(current, [productId], checked));
   };
 
   const selectVisible = () => {
-    setSelectedIds((current) =>
+    setSelectedProductIds((current) =>
       setQuotationSelection(
         current,
         filteredProducts.map((product) => product.id),
@@ -379,13 +387,48 @@ export default function QuotationExportPage() {
   };
 
   const restoreDefaultSelection = () => {
-    setSelectedIds(new Set(productList.items.map((product) => product.id)));
+    setSelectedProductIds(productList.items.map((product) => product.id));
+    setOrderAnnouncement('');
   };
 
   const selectCategory = (value: string | null) => {
     setCategoryId(value);
-    setSelectedIds(new Set());
+    setSelectedProductIds([]);
     setPreview(null);
+  };
+
+  const announceOrder = (productId: string, position: number) => {
+    const product = productById.get(productId);
+    if (!product) return;
+    setOrderAnnouncement(
+      t('quotationExport.orderMoved', { sku: product.sku, position: position + 1 }),
+    );
+  };
+
+  const moveSelectedProduct = (productId: string, targetIndex: number) => {
+    const next = moveQuotationSelection(selectedProductIds, productId, targetIndex);
+    setSelectedProductIds(next);
+    announceOrder(productId, targetIndex);
+  };
+
+  const moveSelectedProductBy = (productId: string, offset: -1 | 1) => {
+    const sourceIndex = selectedProductIds.indexOf(productId);
+    if (sourceIndex < 0) return;
+    const targetIndex = sourceIndex + offset;
+    const next = moveQuotationSelectionBy(selectedProductIds, productId, offset);
+    setSelectedProductIds(next);
+    announceOrder(productId, targetIndex);
+  };
+
+  const dropSelectedProduct = (targetProductId: string, targetIndex: number) => {
+    if (!draggedProductId || draggedProductId === targetProductId) {
+      setDraggedProductId(null);
+      setDragOverProductId(null);
+      return;
+    }
+    moveSelectedProduct(draggedProductId, targetIndex);
+    setDraggedProductId(null);
+    setDragOverProductId(null);
   };
 
   const setCurrency = (currencyCode: string) => {
@@ -406,7 +449,7 @@ export default function QuotationExportPage() {
       templateId,
       categoryId,
       includeDescendants,
-      productIds: selectedProducts.map((product) => product.id),
+      productIds: orderedProductIds,
       header,
       pricing: {
         markupPercent: pricing.markupPercent,
@@ -445,12 +488,27 @@ export default function QuotationExportPage() {
         render: (product) => (
           <input
             type="checkbox"
-            checked={selectedIds.has(product.id)}
+            checked={selectedProductIdSet.has(product.id)}
             aria-label={t('quotationExport.selectProduct', { sku: product.sku })}
             disabled={productList.limitExceeded}
             onChange={(event) => toggleProduct(product.id, event.target.checked)}
           />
         ),
+      },
+      {
+        key: 'exportOrder',
+        header: t('quotationExport.columns.exportOrder'),
+        width: 88,
+        render: (product) => {
+          const position = selectedPositionById.get(product.id);
+          return position ? (
+            <Badge tone="info">{t('quotationExport.orderPosition', { position })}</Badge>
+          ) : (
+            <span className="muted" aria-label={t('quotationExport.notInExportOrder')}>
+              —
+            </span>
+          );
+        },
       },
       {
         key: 'image',
@@ -492,9 +550,7 @@ export default function QuotationExportPage() {
         header: t('quotationExport.columns.cost'),
         render: (product) => (
           <span className="stack-xs">
-            {product.costCny !== null ? (
-              <span className="mono">{product.costCny} CNY</span>
-            ) : null}
+            {product.costCny !== null ? <span className="mono">{product.costCny} CNY</span> : null}
             <Badge tone={product.hasCost ? 'success' : 'danger'}>
               {product.costCny !== null
                 ? t('quotationExport.costReady')
@@ -538,7 +594,7 @@ export default function QuotationExportPage() {
         },
       },
     ],
-    [previewErrors, productList.limitExceeded, selectedIds, t],
+    [previewErrors, productList.limitExceeded, selectedPositionById, selectedProductIdSet, t],
   );
 
   const previewItems = useMemo(
@@ -699,7 +755,7 @@ export default function QuotationExportPage() {
                 <p className="small muted">
                   {t('quotationExport.total', { count: productList.totalCount })} ·{' '}
                   {t('quotationExport.selected', {
-                    selected: selectedIds.size,
+                    selected: selectedProductIds.length,
                     total: productList.totalCount,
                   })}
                 </p>
@@ -721,8 +777,11 @@ export default function QuotationExportPage() {
                 <Button
                   size="sm"
                   variant="secondary"
-                  disabled={selectedIds.size === 0}
-                  onClick={() => setSelectedIds(new Set())}
+                  disabled={selectedProductIds.length === 0}
+                  onClick={() => {
+                    setSelectedProductIds([]);
+                    setOrderAnnouncement('');
+                  }}
                 >
                   {t('quotationExport.clearAll')}
                 </Button>
@@ -777,6 +836,122 @@ export default function QuotationExportPage() {
               requestId={productsRequestId}
               onRetry={() => setProductsReloadNonce((value) => value + 1)}
             />
+
+            <div className="quotation-order-panel" aria-labelledby={selectedOrderId}>
+              <div className="row-between">
+                <div className="stack-xs">
+                  <h3 id={selectedOrderId}>{t('quotationExport.selectedOrderTitle')}</h3>
+                  <p className="small muted">{t('quotationExport.selectedOrderHelp')}</p>
+                </div>
+                <Badge tone="neutral">
+                  {t('quotationExport.selectedCount', { count: selectedProducts.length })}
+                </Badge>
+              </div>
+              <p className="visually-hidden" role="status" aria-live="polite">
+                {orderAnnouncement}
+              </p>
+              {selectedProducts.length === 0 ? (
+                <p className="small muted">{t('quotationExport.selectedOrderEmpty')}</p>
+              ) : (
+                <ol className="quotation-order-list">
+                  {selectedProducts.map((product, index) => {
+                    const isDropTarget = dragOverProductId === product.id;
+                    return (
+                      <li
+                        key={product.id}
+                        className={`quotation-order-item${isDropTarget ? ' is-drop-target' : ''}`}
+                        onDragOver={(event) => {
+                          if (!draggedProductId || draggedProductId === product.id) return;
+                          event.preventDefault();
+                          event.dataTransfer.dropEffect = 'move';
+                          setDragOverProductId(product.id);
+                        }}
+                        onDragLeave={(event) => {
+                          const relatedTarget = event.relatedTarget;
+                          if (
+                            relatedTarget instanceof Node &&
+                            event.currentTarget.contains(relatedTarget)
+                          ) {
+                            return;
+                          }
+                          setDragOverProductId((current) =>
+                            current === product.id ? null : current,
+                          );
+                        }}
+                        onDrop={(event) => {
+                          event.preventDefault();
+                          dropSelectedProduct(product.id, index);
+                        }}
+                      >
+                        <button
+                          type="button"
+                          className="quotation-order-handle"
+                          draggable={selectedProducts.length > 1}
+                          aria-label={t('quotationExport.dragProduct', { sku: product.sku })}
+                          title={t('quotationExport.dragProduct', { sku: product.sku })}
+                          onDragStart={(event) => {
+                            event.dataTransfer.effectAllowed = 'move';
+                            event.dataTransfer.setData('text/plain', product.id);
+                            setDraggedProductId(product.id);
+                            setDragOverProductId(null);
+                          }}
+                          onDragEnd={() => {
+                            setDraggedProductId(null);
+                            setDragOverProductId(null);
+                          }}
+                        >
+                          <span aria-hidden="true">⠿</span>
+                        </button>
+                        <span className="quotation-order-position" aria-hidden="true">
+                          {index + 1}
+                        </span>
+                        {product.thumbnailUrl ? (
+                          <img
+                            className="product-thumb quotation-order-thumb"
+                            src={product.thumbnailUrl}
+                            alt=""
+                            loading="lazy"
+                          />
+                        ) : (
+                          <span
+                            className="product-thumb product-thumb-empty quotation-order-thumb"
+                            aria-hidden="true"
+                          >
+                            —
+                          </span>
+                        )}
+                        <span className="quotation-order-product">
+                          <span className="mono small">{product.sku}</span>
+                          <span className="truncate">{product.englishName ?? '—'}</span>
+                        </span>
+                        <span className="quotation-order-actions">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            aria-label={t('quotationExport.moveUp', { sku: product.sku })}
+                            title={t('quotationExport.moveUp', { sku: product.sku })}
+                            disabled={index === 0}
+                            onClick={() => moveSelectedProductBy(product.id, -1)}
+                          >
+                            ↑
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            aria-label={t('quotationExport.moveDown', { sku: product.sku })}
+                            title={t('quotationExport.moveDown', { sku: product.sku })}
+                            disabled={index === selectedProducts.length - 1}
+                            onClick={() => moveSelectedProductBy(product.id, 1)}
+                          >
+                            ↓
+                          </Button>
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ol>
+              )}
+            </div>
           </section>
 
           <section className="panel stack-sm" aria-labelledby="quotation-header-title">
@@ -1013,6 +1188,7 @@ export default function QuotationExportPage() {
         description={
           <div className="stack-sm">
             <p>{t('quotationExport.confirmDescription')}</p>
+            <p>{t('quotationExport.confirmOrderDescription')}</p>
             <dl className="stack-xs">
               <div>
                 <dt className="tiny muted">{t('quotationExport.templateLabel')}</dt>

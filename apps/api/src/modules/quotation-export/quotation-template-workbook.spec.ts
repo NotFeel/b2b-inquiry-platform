@@ -26,7 +26,10 @@ const FIELD_MAPPING = {
   G: 'product.carton_weight_kg',
 } as const;
 
-function product(index = 1, overrides: Partial<QuotationWorkbookProduct> = {}): QuotationWorkbookProduct {
+function product(
+  index = 1,
+  overrides: Partial<QuotationWorkbookProduct> = {},
+): QuotationWorkbookProduct {
   return {
     productId: `product-${index}`,
     sku: `SKU-${String(index).padStart(3, '0')}`,
@@ -75,7 +78,7 @@ async function readWorkbook(buffer: Buffer): Promise<ExcelJS.Worksheet> {
 }
 
 describe('buildQuotationWorkbookFromTemplate', () => {
-  it('fills the header-only real B2B template and embeds both product images', async () => {
+  it('fills the real B2B template, keeps its spacer/footer and embeds both product images', async () => {
     const source = await readWorkbook(TEMPLATE);
     const buffer = await buildQuotationWorkbookFromTemplate(
       input([
@@ -91,9 +94,7 @@ describe('buildQuotationWorkbookFromTemplate', () => {
     expect(worksheet.getCell('A1').value).toBe('Example Ltd.');
     expect(worksheet.getCell('A2').value).toBe('Contact person: Jerry');
     expect(worksheet.getCell('A3').value).toBe('Email: sales@example.com');
-    expect(worksheet.getCell('A4').value).toBe(
-      'Phone/WhatsApp/WeChat: +86 190 7428 9250',
-    );
+    expect(worksheet.getCell('A4').value).toBe('Phone/WhatsApp/WeChat: +86 190 7428 9250');
     expect(worksheet.getCell('A5').value).toBe('October Price List');
     expect(String(worksheet.getCell('A6').value)).toContain('Currency: USD');
     expect(String(worksheet.getCell('A6').value)).toContain('Exchange rate: 0.1385 USD');
@@ -121,9 +122,9 @@ describe('buildQuotationWorkbookFromTemplate', () => {
       .filter((row) => row >= 8);
     expect(productImageRows).toEqual([8, 9]);
 
-    expect(source.rowCount).toBe(7);
+    expect(source.rowCount).toBe(12);
     expect(worksheet.getRow(8).height).toBe(84);
-    expect(worksheet.getCell('A8').border).toEqual(source.getCell('A7').border);
+    expect(worksheet.getCell('A8').border).toEqual(source.getCell('A8').border);
     expect(worksheet.getCell('A8').alignment).toMatchObject({
       horizontal: 'center',
       vertical: 'middle',
@@ -132,8 +133,11 @@ describe('buildQuotationWorkbookFromTemplate', () => {
       expect.arrayContaining(['A1:G1', 'A2:G2', 'A3:G3', 'A4:G4', 'A5:G5', 'A6:G6']),
     );
     expect(worksheet.autoFilter).toBe('A7:G9');
-    expect(worksheet.pageSetup.printArea).toBe('A1:G9');
+    expect(worksheet.pageSetup.printArea).toBe('A1:G11');
     expect(worksheet.pageSetup.printTitlesRow).toBe('1:7');
+    expect(worksheet.getCell('A10').value).toBeNull();
+    expect(String(worksheet.getCell('A11').value)).toContain('Prices are quoted in USD.');
+    expect(worksheet.model.merges).toContain('A11:G11');
     expect(worksheet.views[0]).toMatchObject({
       state: 'frozen',
       ySplit: 7,
@@ -143,9 +147,7 @@ describe('buildQuotationWorkbookFromTemplate', () => {
 
   it.each([1, 200])('resizes the data area safely for %i products', async (count) => {
     const products = Array.from({ length: count }, (_, index) => product(index + 1));
-    const worksheet = await readWorkbook(
-      await buildQuotationWorkbookFromTemplate(input(products)),
-    );
+    const worksheet = await readWorkbook(await buildQuotationWorkbookFromTemplate(input(products)));
     const lastProductRow = 7 + count;
     const templateImageCount = (await readWorkbook(TEMPLATE)).getImages().length;
 
@@ -155,8 +157,11 @@ describe('buildQuotationWorkbookFromTemplate', () => {
     expect(worksheet.getCell(`D${lastProductRow}`).value).toBe(count === 1 ? 15.93 : 115);
     expect(worksheet.getImages()).toHaveLength(templateImageCount + count);
     expect(worksheet.autoFilter).toBe(`A7:G${lastProductRow}`);
-    expect(worksheet.pageSetup.printArea).toBe(`A1:G${lastProductRow}`);
+    expect(worksheet.pageSetup.printArea).toBe(`A1:G${lastProductRow + 2}`);
     expect(worksheet.getCell(`A${lastProductRow + 1}`).value).toBeNull();
+    expect(String(worksheet.getCell(`A${lastProductRow + 2}`).value)).toContain(
+      'Prices are quoted in USD.',
+    );
   });
 
   it('fails instead of returning a partial workbook when the template cannot be read', async () => {
