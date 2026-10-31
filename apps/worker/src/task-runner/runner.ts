@@ -1,4 +1,4 @@
-import type { ProductImportCleanupJobPayload } from '@b2b/contracts';
+import type { ExcelPdfCleanupJobPayload, ProductImportCleanupJobPayload } from '@b2b/contracts';
 import type { PrismaClient } from '@b2b/database';
 import type { WorkerEnv } from '../env';
 import type { WorkerLogger } from '../logger';
@@ -9,6 +9,8 @@ import { processImageDerivatives } from '../jobs/image-derivatives';
 import { processProductImportCleanup } from '../jobs/product-import-cleanup';
 import { processProductImportValidation } from '../jobs/product-import-validate';
 import { processQuoteExport } from '../jobs/quote-export';
+import { processExcelPdfCleanup } from '../tasks/excel-pdf/excel-pdf-cleanup';
+import { processExcelPdfConversion } from '../tasks/excel-pdf/excel-pdf-task.handler';
 import { claimNextTask } from './claim';
 import type { ClaimedTask, TaskRunnerOptions } from './types';
 
@@ -29,6 +31,7 @@ export class PostgresTaskRunner {
       leaseSeconds: env.TASK_LEASE_SECONDS,
       pollIntervalMs: env.TASK_POLL_INTERVAL_MS,
       retryBaseDelayMs: env.TASK_RETRY_BASE_DELAY_MS,
+      excelPdfEnabled: env.EXCEL_PDF_ENABLED,
     };
   }
 
@@ -169,6 +172,22 @@ export class PostgresTaskRunner {
         prisma: this.prisma,
         storage: this.storage,
         env: this.env,
+        logger: this.logger,
+      });
+      return;
+    }
+    if (task.eventType === 'excel-pdf-convert') {
+      await processExcelPdfConversion(task.payload, {
+        prisma: this.prisma,
+        storage: this.storage,
+        env: this.env,
+        logger: this.logger,
+      });
+      return;
+    }
+    if (task.eventType === 'excel-pdf-cleanup') {
+      await processExcelPdfCleanup(task.payload, {
+        prisma: this.prisma,
         logger: this.logger,
       });
       return;
@@ -344,6 +363,16 @@ async function ensureScheduledTasks(prisma: PrismaClient, env: WorkerEnv): Promi
       payload: { scheduledAt: cleanupAt } satisfies ProductImportCleanupJobPayload as never,
       status: 'QUEUED',
       idempotencyKey: `product-import-cleanup:${cleanupAt}`,
+    },
+    update: {},
+  });
+  await prisma.outboxEvent.upsert({
+    where: { idempotencyKey: `excel-pdf-cleanup:${cleanupAt}` },
+    create: {
+      eventType: 'excel-pdf-cleanup',
+      payload: { scheduledAt: cleanupAt } satisfies ExcelPdfCleanupJobPayload as never,
+      status: 'QUEUED',
+      idempotencyKey: `excel-pdf-cleanup:${cleanupAt}`,
     },
     update: {},
   });

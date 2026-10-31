@@ -24,11 +24,13 @@
     "check:production-reference-data": "node scripts/exec.mjs tsx scripts/check-production-reference-data.ts",
     "check:menu-translations": "node scripts/exec.mjs tsx scripts/check-menu-translations.ts",
     "bootstrap": "node scripts/exec.mjs tsx scripts/bootstrap-admin.ts",
+    "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf generated"
   },
   "dependencies": {
-    "@prisma/client": "6.19.3"
+    "@prisma/client": "6.19.3",
+    "tsx": "4.23.15"
   },
   "devDependencies": {
     "@b2b/contracts": "workspace:*",
@@ -37,7 +39,7 @@
     "@node-rs/argon2": "2.2.2",
     "dotenv": "18.0.8",
     "prisma": "6.19.3",
-    "tsx": "4.23.15",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
   }
 }

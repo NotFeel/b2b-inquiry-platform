@@ -12,6 +12,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { CategoriesModule } from './modules/categories/categories.module';
 import { ContentModule } from './modules/content/content.module';
 import { DictionaryModule } from './modules/dictionary/dictionary.module';
+import { ExcelPdfModule } from './modules/excel-pdf/excel-pdf.module';
 import { FilesModule } from './modules/files/files.module';
 import { HealthModule } from './modules/health/health.module';
 import { InquiryModule } from './modules/inquiry/inquiry.module';
@@ -44,6 +45,7 @@ import { UsersModule } from './modules/users/users.module';
     CategoriesModule,
     ProductsModule,
     QuotationExportModule,
+    ExcelPdfModule,
     TagsModule,
     FilesModule,
     AdsModule,

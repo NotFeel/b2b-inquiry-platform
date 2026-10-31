@@ -42,7 +42,11 @@ export async function processFileDeletion(
     if (payload.storageKey) {
       await deps.storage.delete(payload.storageKey);
     }
-    if (payload.entityType === 'product_image') {
+    if (payload.entityType === 'excel_pdf_asset') {
+      await finaliseExcelPdfAssetDeletion(payload, deps);
+    } else if (payload.entityType === 'excel_pdf_chunk') {
+      await finaliseExcelPdfChunkDeletion(payload, deps);
+    } else if (payload.entityType === 'product_image') {
       await finaliseImageDeletion(payload, deps);
       // An image retry can be what unblocks an already-failed product purge.
       // Resume that aggregate task so the product row is not left behind after
@@ -64,6 +68,118 @@ export async function processFileDeletion(
     entityId: payload.entityId ?? null,
   });
   return { deleted: true };
+}
+
+/**
+ * Finalises a private Excel-to-PDF source/output object after storage confirms
+ * deletion. Source FileAsset metadata is retained in a non-downloadable
+ * `deleted` state because the legacy-compatible job column is non-nullable;
+ * output metadata is removed after its nullable reference is cleared.
+ */
+async function finaliseExcelPdfAssetDeletion(payload: Payload, deps: Deps): Promise<void> {
+  const { prisma } = deps;
+  const assetId = payload.entityId;
+  if (!assetId) return;
+
+  await prisma.$transaction(async (transaction) => {
+    const asset = await transaction.fileAsset.findUnique({ where: { id: assetId } });
+    const relatedJobs = await transaction.pdfConversionJob.findMany({
+      where: { OR: [{ sourceAssetId: assetId }, { outputAssetId: assetId }] },
+      select: { id: true, sourceAssetId: true, outputAssetId: true },
+    });
+    for (const job of relatedJobs) {
+      if (job.outputAssetId === assetId) {
+        await transaction.pdfConversionJob.update({
+          where: { id: job.id },
+          data: {
+            outputAssetId: null,
+            outputKey: null,
+            outputSizeBytes: null,
+            outputSha256: null,
+            pageCount: null,
+          },
+        });
+      }
+    }
+    if (asset) {
+      const sourceReference = relatedJobs.some((job) => job.sourceAssetId === assetId);
+      if (sourceReference) {
+        await transaction.fileAsset.update({
+          where: { id: asset.id },
+          data: { status: 'deleted', sha256: null, isPublic: false },
+        });
+      } else {
+        await transaction.fileAsset.deleteMany({ where: { id: asset.id } });
+      }
+    }
+    for (const jobId of relatedJobs.map((job) => job.id)) {
+      const current = await transaction.pdfConversionJob.findUnique({
+        where: { id: jobId },
+        include: {
+          sourceAsset: { select: { status: true } },
+          outputAsset: { select: { id: true } },
+        },
+      });
+      if (!current) continue;
+      const purged = current.sourceAsset.status === 'deleted' && current.outputAsset === null;
+      await transaction.pdfConversionJob.update({
+        where: { id: jobId },
+        data: {
+          purgeState: purged ? 'PURGED' : 'PENDING',
+          ...(purged ? { purgeRequestedAt: current.purgeRequestedAt ?? new Date() } : {}),
+        },
+      });
+    }
+    await finishExcelPdfDeletionJob(payload.jobId, transaction);
+    await transaction.auditLog.create({
+      data: {
+        action: 'excel_pdf.file_deleted',
+        entityType: 'excel_pdf_asset',
+        entityId: assetId,
+        metadata: {
+          storageScope: payload.storageKey ? scopeOf(payload.storageKey) : null,
+          sourceMetadataRetained: Boolean(asset),
+        } as never,
+      },
+    });
+  });
+}
+
+async function finaliseExcelPdfChunkDeletion(payload: Payload, deps: Deps): Promise<void> {
+  const match = /^([0-9a-f-]{36}):(\d+)$/i.exec(payload.entityId ?? '');
+  if (!match) return;
+  const uploadId = match[1]!;
+  const index = Number.parseInt(match[2]!, 10);
+  await deps.prisma.$transaction(async (transaction) => {
+    await transaction.excelPdfUploadChunk.deleteMany({ where: { uploadId, index } });
+    await finishExcelPdfDeletionJob(payload.jobId, transaction);
+    await transaction.auditLog.create({
+      data: {
+        action: 'excel_pdf.chunk_deleted',
+        entityType: 'excel_pdf_upload',
+        entityId: uploadId,
+        metadata: { chunkIndex: index } as never,
+      },
+    });
+  });
+}
+
+async function finishExcelPdfDeletionJob(
+  jobId: string | undefined,
+  transaction: Parameters<Parameters<PrismaClient['$transaction']>[0]>[0],
+): Promise<void> {
+  if (!jobId) return;
+  await transaction.fileDeletionJob.updateMany({
+    where: { id: jobId },
+    data: {
+      status: 'SUCCEEDED',
+      lockedBy: null,
+      lockedUntil: null,
+      heartbeatAt: null,
+      lastErrorCode: null,
+      completedAt: new Date(),
+    },
+  });
 }
 
 /**
@@ -422,6 +538,26 @@ async function recordFailure(payload: Payload, deps: Deps, error: unknown): Prom
           data: { deleteState: 'DELETE_FAILED' },
         });
       }
+      if (payload.entityType === 'excel_pdf_asset' && payload.entityId) {
+        const asset = await transaction.fileAsset.findUnique({
+          where: { id: payload.entityId },
+          select: { id: true },
+        });
+        if (asset) {
+          const job = await transaction.pdfConversionJob.findFirst({
+            where: {
+              OR: [{ sourceAssetId: asset.id }, { outputAssetId: asset.id }],
+            },
+            select: { id: true },
+          });
+          if (job) {
+            await transaction.pdfConversionJob.update({
+              where: { id: job.id },
+              data: { purgeState: 'FAILED' },
+            });
+          }
+        }
+      }
       await transaction.auditLog.create({
         data: {
           action:
@@ -429,7 +565,9 @@ async function recordFailure(payload: Payload, deps: Deps, error: unknown): Prom
               ? 'product.permanent_delete_blocked'
               : payload.entityType === 'quote_template'
                 ? 'quote_template.permanent_delete_failed'
-                : 'product.image.permanent_delete_failed',
+                : payload.entityType === 'excel_pdf_asset'
+                  ? 'excel_pdf.file_delete_failed'
+                  : 'product.image.permanent_delete_failed',
           entityType: payload.entityType ?? 'file',
           entityId: payload.entityId ?? null,
           metadata: { errorCode: code, attemptRecorded: true } as never,

@@ -2,12 +2,14 @@ import { createHash, createHmac } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, promises as fs } from 'node:fs';
 import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import type { Readable } from 'node:stream';
-import { Readable as NodeReadable } from 'node:stream';
+import { PassThrough, Readable as NodeReadable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { storageVisibilityForKey, type StorageVisibility } from '@b2b/contracts';
 import type { WorkerEnv } from './env';
 
 export interface ObjectStorage {
   put(key: string, body: Buffer, contentType: string): Promise<void>;
+  putFile?(key: string, path: string, contentType: string): Promise<void>;
   get(key: string): Promise<Buffer>;
   readStream(key: string): Readable;
   exists(key: string): Promise<boolean>;
@@ -23,6 +25,12 @@ export class RoutedObjectStorage implements ObjectStorage {
 
   put(key: string, body: Buffer, contentType: string): Promise<void> {
     return this.driver(key).put(key, body, contentType);
+  }
+
+  putFile(key: string, path: string, contentType: string): Promise<void> {
+    const driver = this.driver(key);
+    if (!driver.putFile) throw new Error('storage.put_file_not_supported');
+    return driver.putFile(key, path, contentType);
   }
 
   get(key: string): Promise<Buffer> {
@@ -65,6 +73,13 @@ export class LocalObjectStorage implements ObjectStorage {
     const target = this.resolveKey(key);
     mkdirSync(dirname(target), { recursive: true });
     await fs.writeFile(target, body, { mode: 0o640 });
+  }
+
+  async putFile(key: string, path: string): Promise<void> {
+    const target = this.resolveKey(key);
+    mkdirSync(dirname(target), { recursive: true });
+    await fs.copyFile(path, target);
+    await fs.chmod(target, 0o640);
   }
 
   async get(key: string): Promise<Buffer> {
@@ -207,6 +222,23 @@ export class S3ObjectStorage implements ObjectStorage {
     if (!response.ok) throw new Error(`storage.s3_put_failed:${response.status}`);
   }
 
+  async putFile(key: string, path: string, contentType: string): Promise<void> {
+    const url = this.objectUrl(key);
+    const stat = await fs.stat(path);
+    const payloadHash = 'UNSIGNED-PAYLOAD';
+    const headers = this.sign('PUT', url, payloadHash, {
+      'content-type': contentType,
+      'content-length': String(stat.size),
+    });
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers,
+      body: createReadStream(path),
+      duplex: 'half',
+    } as RequestInit & { duplex: 'half' });
+    if (!response.ok) throw new Error(`storage.s3_put_failed:${response.status}`);
+  }
+
   async get(key: string): Promise<Buffer> {
     const response = await this.request('GET', key);
     if (!response.ok) throw new Error(`storage.s3_get_failed:${response.status}`);
@@ -214,16 +246,13 @@ export class S3ObjectStorage implements ObjectStorage {
   }
 
   readStream(key: string): Readable {
-    const stream = new NodeReadable({ read() {} });
+    const stream = new PassThrough();
     void (async () => {
-      try {
-        const buffer = await this.get(key);
-        stream.push(buffer);
-        stream.push(null);
-      } catch (error) {
-        stream.destroy(error as Error);
-      }
-    })();
+      const response = await this.request('GET', key);
+      if (!response.ok) throw new Error(`storage.s3_get_failed:${response.status}`);
+      if (!response.body) throw new Error('storage.s3_get_empty_body');
+      await pipeline(NodeReadable.from(response.body as AsyncIterable<Uint8Array>), stream);
+    })().catch((error: unknown) => stream.destroy(error as Error));
     return stream;
   }
 

@@ -58,12 +58,16 @@ if (!command) {
   process.exit(1);
 }
 
-// Runtime traffic uses the Neon pooled URL. Prisma migrations must use the
-// direct endpoint from a single controlled release job, so the wrapper swaps
-// DATABASE_URL only for migrate commands. The value is never printed.
+// Runtime traffic uses the Neon pooled URL. Prisma migrations and the
+// release-owned reference synchronizer use the direct endpoint so they do not
+// compete with application traffic for a pooled session. The value is never
+// printed.
+const isReferenceSeed =
+  command === 'tsx' &&
+  args[0] === 'prisma/seed.ts' &&
+  args.includes('--reference-only');
 if (
-  command === 'prisma' &&
-  args[0] === 'migrate' &&
+  ((command === 'prisma' && args[0] === 'migrate') || isReferenceSeed) &&
   typeof process.env.DIRECT_DATABASE_URL === 'string' &&
   process.env.DIRECT_DATABASE_URL.trim().length > 0
 ) {

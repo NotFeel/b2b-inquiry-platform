@@ -3,6 +3,11 @@ import { PrismaClient } from '../generated/client';
 const prisma = new PrismaClient();
 
 const REQUIRED_PERMISSION_CODES = [
+  'excel_pdf.read',
+  'excel_pdf.create',
+  'excel_pdf.download',
+  'excel_pdf.retry',
+  'excel_pdf.delete',
   'product.import',
   'product.create',
   'product.publish',
@@ -60,6 +65,39 @@ async function main(): Promise<void> {
     for (const locale of ['zh-CN', 'en-US']) {
       const label = importMenu.translations.find((item) => item.locale === locale)?.label.trim();
       if (!label) problems.push('menu products.bulk-import is missing translation: ' + locale);
+    }
+  }
+
+  const excelPdfMenu = await prisma.menu.findUnique({
+    where: { code: 'excel-pdf' },
+    select: {
+      code: true,
+      route: true,
+      permissionCode: true,
+      enabled: true,
+      visible: true,
+      parent: { select: { code: true } },
+      translations: { select: { locale: true, label: true } },
+    },
+  });
+  if (!excelPdfMenu) {
+    problems.push('missing menu: excel-pdf');
+  } else {
+    if (excelPdfMenu.parent?.code !== 'quotes-files') {
+      problems.push('menu excel-pdf must be under quotes-files');
+    }
+    if (excelPdfMenu.route !== '/tools/excel-to-pdf') {
+      problems.push('menu excel-pdf has an unexpected route');
+    }
+    if (excelPdfMenu.permissionCode !== 'excel_pdf.read') {
+      problems.push('menu excel-pdf must require excel_pdf.read');
+    }
+    if (!excelPdfMenu.enabled || !excelPdfMenu.visible) {
+      problems.push('menu excel-pdf must be enabled and visible');
+    }
+    for (const locale of ['zh-CN', 'en-US']) {
+      const label = excelPdfMenu.translations.find((item) => item.locale === locale)?.label.trim();
+      if (!label) problems.push('menu excel-pdf is missing translation: ' + locale);
     }
   }
 
@@ -136,18 +174,22 @@ async function main(): Promise<void> {
   });
   if (!superAdmin) {
     problems.push('missing built-in role: super_admin');
-  } else if (
-    !(await prisma.rolePermission.findUnique({
+  } else {
+    const superAdminGrants = await prisma.rolePermission.findMany({
       where: {
-        roleId_permissionCode: {
-          roleId: superAdmin.id,
-          permissionCode: 'product.import',
+        roleId: superAdmin.id,
+        permissionCode: {
+          in: [...REQUIRED_PERMISSION_CODES],
         },
       },
-      select: { roleId: true },
-    }))
-  ) {
-    problems.push('super_admin is missing the product.import grant');
+      select: { permissionCode: true },
+    });
+    const grantedCodes = new Set(superAdminGrants.map((grant) => grant.permissionCode));
+    for (const permissionCode of REQUIRED_PERMISSION_CODES) {
+      if (!grantedCodes.has(permissionCode)) {
+        problems.push('super_admin is missing the ' + permissionCode + ' grant');
+      }
+    }
   }
 
   if (problems.length > 0) {
@@ -160,7 +202,7 @@ async function main(): Promise<void> {
   }
 
   console.log(
-    'Production reference-data verification OK: bulk-import migration, permissions, menu translations, role grants, and product status dictionaries.',
+    'Production reference-data verification OK: bulk-import and Excel-to-PDF menus, permissions, translations, role grants, and product status dictionaries.',
   );
 }
 

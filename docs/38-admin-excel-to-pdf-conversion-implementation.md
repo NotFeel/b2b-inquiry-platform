@@ -4,7 +4,7 @@
 > 文档编号：ADM-EXCEL-PDF-01  
 > 目标分支：`main`  
 > 范围：Admin 上传报价单 Excel 或 PI Excel，服务端转换成 PDF 并授权下载。  
-> 状态：实现规格，不代表功能已完成或已部署。
+> 状态：本分支已按本规范完成实现和自动化验证；生产启用前仍需完成 staging 金样本与 200 MiB 压测。
 
 ## 0. 重要历史决策与本次重新引入
 
@@ -34,23 +34,35 @@
 
 不做 PDF 编辑、合并拆分、OCR、签名、邮件发送、密码加密 PDF、多格式文档转换或浏览器端打印。
 
-### 1.3 默认限制（部署前需压测）
+### 1.3 实现限制（生产启用前需压测）
 
-| 项目 | 初始限制 |
+| 项目 | 当前实现值 |
 |---|---:|
-| 上传 XLSX | 10 MiB |
-| ZIP 展开总大小 | 50 MiB |
-| ZIP entries | 2,000 |
-| 工作表数 | 20 |
-| 非空单元格 | 20,000 |
+| 上传 XLSX | 200 MiB |
+| 单次上传分块 | 8 MiB |
+| 上传会话有效期 | 1 小时 |
+| ZIP entries | 4,000 |
+| 单个 ZIP entry 展开大小 | 256 MiB |
+| ZIP 展开总大小 | 1 GiB |
+| ZIP 最大压缩比 | 250 |
 | PDF 页数 | 200 |
 | PDF 输出 | 50 MiB |
-| 单任务超时 | 90 秒 |
+| 单任务转换超时 | 300 秒 |
 | Worker 并发 | 1 |
 | 自动重试 | 最多 2 次，仅临时基础设施错误 |
 | 文件保留期 | 7 天，可配置 |
 
-上限必须同时由 API 流式上传、反向代理、Worker 和存储层执行。具体值应按真实报价单/PI 模板和目标主机压测调整。
+上限必须同时由 Admin、API、反向代理、Worker 和存储层执行。当前实现不限制工作表数或非空单元格数；安全边界由上传大小、ZIP 展开限制、PDF 页数和输出大小共同约束。具体值仍应按真实报价单/PI 模板、目标主机和 LibreOffice 版本做 staging 压测。
+
+### 1.4 大文件分块上传协议
+
+Excel 转 PDF 不使用单次整文件请求，流程如下：
+
+1. `POST /api/v1/admin/excel-pdf/uploads` 提交文件名、总字节数、业务类型和 `Idempotency-Key`，服务端返回 `uploadId`、`chunkSize`、`chunkCount` 和过期时间。
+2. 客户端按 8 MiB 顺序上传 `PUT /uploads/:uploadId/chunks/:index`；每个代理请求都低于 Next.js 默认 10 MiB 请求体限制，单个分块失败可独立重试。
+3. `POST /uploads/:uploadId/complete` 仅在所有分块大小与 SHA-256 校验通过后创建 `excel-pdf-convert` 任务并返回 HTTP 202。
+4. Worker 按索引流式合并分块，复核完整文件 SHA-256、大小和 OOXML/ZIP 安全约束；归档、输入对象和输出对象全部保持私有。
+5. Worker 使用 `attemptId + leaseOwner` 条件更新任务，租约至少为 `max(600 秒, 2 × EXCEL_PDF_TIMEOUT_MS + 120 秒)`；过期租约可恢复，旧 Worker 不得覆盖新 attempt 的最终状态。
 
 ---
 
@@ -77,7 +89,7 @@ Excel 转 PDF / Excel to PDF                      [转换记录]
 │ ┌───────────────────────────────────────────────────┐ │
 │ │          拖拽 XLSX 文件到这里                       │ │
 │ │                或 [选择文件]                        │ │
-│ │           仅支持 .xlsx · 最大 10 MB                 │ │
+│ │           仅支持 .xlsx · 最大 200 MB                │ │
 │ └───────────────────────────────────────────────────┘ │
 │ 文件名 | 文件大小 | [移除]                              │
 ├───────────────────────────────────────────────────────┤
@@ -201,14 +213,14 @@ PDF 输出必须验证 `%PDF-` 文件签名、可解析页数、非空页面、�
 
 ### 5.1 上传约束
 
-优先复用现有安全上传设施；multipart 流式读取，限制 10 MiB。若项目已有 R2 presigned upload，则需 upload-complete 确认、私有对象检查和隔离验证后才可建任务。不能把未经确认的客户端对象交给 Worker。
+大文件采用 8 MiB 分块上传，整份 XLSX 上限 200 MiB，上传会话 1 小时过期。每个分块请求小于 Next.js 默认 10 MiB 限制；API 将匿名分块键与服务端生成的 `uploadId`/索引绑定，并记录每块长度和 SHA-256，避免把客户端对象键直接交给 Worker。只有 complete 阶段的块数、总长度和完整文件 SHA-256 全部校验通过后才创建任务。
 
 校验步骤：
 1. 扩展名必须为 .xlsx（不区分大小写）；MIME 不可信，只作辅助提示。
 2. 验证 ZIP 容器签名、CRC/可读性、entry 数、展开大小和压缩比，拒绝 zip bomb。
 3. 必须包含 `[Content_Types].xml`、`xl/workbook.xml` 等 OOXML 结构。
 4. 拒绝 vbaProject.bin、macro-enabled content type、`xl/externalLinks/`、外部 TargetMode=External 关系、OLE/ActiveX、外部数据连接。
-5. 限制 sheet 数、行列/非空 cell 规模、共享字符串、媒体总量；无法安全预检的超大工作簿拒绝。
+5. 校验 ZIP entry 数不超过 4,000、单 entry 不超过 256 MiB、展开总量不超过 1 GiB、压缩比不超过 250；当前实现不额外限制 sheet 数或非空 cell 数。
 6. 拒绝加密/密码保护无法解析的工作簿，错误码 `XLSX_PASSWORD_PROTECTED_UNSUPPORTED`。
 7. 原文件名仅作脱敏展示元数据；存储名由服务端随机生成，不含客户名称、报价编号或 PI 编号。
 8. 不刷新公式/外部连接、不执行宏、不联网；只使用工作簿已有缓存值。发现外部引用时拒绝。
@@ -229,15 +241,20 @@ PDF 输出必须验证 `%PDF-` 文件签名、可解析页数、非空页面、�
 
 | 方法 | 路径 | 权限 | 作用 |
 |---|---|---|---|
-| POST | `/excel-pdf/jobs` | excel_pdf.create | multipart 上传并创建任务 |
+| GET | `/excel-pdf/config` | excel_pdf.read | 返回功能开关、200 MiB 上限、8 MiB 分块和输出限制 |
+| POST | `/excel-pdf/uploads` | excel_pdf.create | 初始化分块上传；要求 `Idempotency-Key` |
+| PUT | `/excel-pdf/uploads/:uploadId/chunks/:index` | excel_pdf.create | 上传单个 8 MiB 分块 |
+| GET | `/excel-pdf/uploads/:uploadId` | excel_pdf.create | 查询已上传分块与上传状态 |
+| POST | `/excel-pdf/uploads/:uploadId/complete` | excel_pdf.create | 校验完整文件并创建转换任务，HTTP 202 |
+| POST | `/excel-pdf/uploads/:uploadId/cancel` | excel_pdf.create | 取消上传并安排物理清理 |
 | GET | `/excel-pdf/jobs` | excel_pdf.read | 分页列表 |
 | GET | `/excel-pdf/jobs/:id` | excel_pdf.read | 详情/状态 |
 | GET | `/excel-pdf/jobs/:id/download` | excel_pdf.download | 下载 PDF |
-| GET | `/excel-pdf/jobs/:id/preview` | excel_pdf.download | inline 预览（可选） |
+| GET | `/excel-pdf/jobs/:id/preview` | excel_pdf.download | inline 预览 |
 | POST | `/excel-pdf/jobs/:id/retry` | excel_pdf.retry | 重试失败任务 |
 | DELETE | `/excel-pdf/jobs/:id` | excel_pdf.delete | 请求删除输入/输出文件 |
 
-创建任务返回 HTTP 202：
+初始化上传返回的 `uploadId`、`chunkSize`、`chunkCount`、`expiresAt` 只用于本次上传。完成上传并创建任务后返回 HTTP 202：
 
 ```json
 {
@@ -250,7 +267,7 @@ PDF 输出必须验证 `%PDF-` 文件签名、可解析页数、非空页面、�
 }
 ```
 
-不返回 storageKey、私有 URL、Buffer、工作簿单元格内容或客户信息。创建支持 `Idempotency-Key`，防止客户端超时重发导致重复转换。
+不返回 storageKey、私有 URL、Buffer、工作簿单元格内容或客户信息。初始化上传使用 `Idempotency-Key`；同一管理员以相同 key 重试时返回已有上传会话，避免重复创建对象。
 
 列表字段：id、fileName、businessType（quotation/pi/other）、fileSize、status、pageCount、outputSize、errorCode、createdAt、completedAt、expiresAt、createdBy。businessType 是用户选择的分类标签，不作为权限判断依据。分页最大 50。
 
@@ -264,7 +281,7 @@ PDF 输出必须验证 `%PDF-` 文件签名、可解析页数、非空页面、�
 
 先审计 `database/prisma/schema.prisma`、migration 和代码：FileAsset 是否支持私有 XLSX/PDF、purpose、hash、size、状态和过期时间；OutboxEvent / PG task runner 是否允许新增 task type 和 payload schema version；QuoteExportJob 是否专属于 Excel 生成；AuditLog 是否有事件类型和 JSON metadata；删除任务是否支持两个 asset。
 
-优先扩展已有通用任务/outbox 为 `EXCEL_PDF_CONVERT` type；若无合适通用任务模型，则添加独立 `ExcelPdfConversionJob` 表。禁止创建竞争的第二套任务状态系统，也不要为本功能增加 Redis/BullMQ。
+优先扩展已有通用任务/outbox 为 `excel-pdf-convert` type；若无合适通用任务模型，则添加独立 `ExcelPdfConversionJob` 表。禁止创建竞争的第二套任务状态系统，也不要为本功能增加 Redis/BullMQ。
 
 参考状态机：queued→processing→succeeded|failed|cancelled|expired。failed 可手动 retry→queued。Worker 通过现有原子 claim/lease/heartbeat 机制领取任务；过期 lease 可恢复。PDF 上传私有存储且完整校验后，才能将 job 更新 succeeded。R2/DB 非原子：使用待确认状态、幂等 key 和补偿删除任务处理孤儿对象。
 
@@ -274,57 +291,51 @@ PDF 输出必须验证 `%PDF-` 文件签名、可解析页数、非空页面、�
 
 ## 8. Admin 前端实现
 
-建议功能边界（按仓库实际结构适配）：
+当前功能边界：
 
 ```text
 apps/admin/src/
-  app/[locale]/tools/excel-to-pdf/page.tsx
-  features/excel-pdf/
-    api/excel-pdf.api.ts
-    components/excel-file-dropzone.tsx
-    components/conversion-options-form.tsx
-    components/conversion-job-table.tsx
-    components/conversion-job-status.tsx
-    hooks/use-excel-pdf-jobs.ts
-    types/excel-pdf.types.ts
-    schemas/excel-pdf-form.schema.ts
+  app/[locale]/(admin)/tools/excel-to-pdf/page.tsx
+  lib/excel-pdf-api.ts
+  messages/zh-CN.json
+  messages/en-US.json
 ```
 
-使用现有 API client、Session、错误处理、表格/上传组件、Admin Shell 和 locale 路由。上传采用 FormData，不手动指定 multipart Content-Type boundary。提交时带 Idempotency-Key；客户端超时后以相同 key 查询/重试。成功后列表刷新并选中最新任务；轮询使用退避。下载按 Blob 处理，安全解析 Content-Disposition 文件名并释放 object URL。所有文案进入 zh-CN/en-US 资源。不要把文件内容/PI 数据持久化到浏览器存储。
+页面复用唯一 Admin Shell、Session、现有错误处理和 locale 路由。客户端把文件按 8 MiB 切片，逐块使用 FormData 上传且不手动设置 multipart Content-Type；单块网络/5xx 错误有限重试并显示当前分块。初始化请求带 Idempotency-Key，complete 后使用退避轮询任务状态。下载按 Blob 处理，安全解析 Content-Disposition 文件名并释放 object URL。所有文案进入 zh-CN/en-US 资源。不要把文件内容/PI 数据持久化到浏览器存储。
 
 ---
 
 ## 9. API / Worker 代码实现边界
 
-建议模块路径（实际适配项目）：
+当前模块路径：
 
 ```text
 apps/api/src/modules/excel-pdf/
   excel-pdf.module.ts
   excel-pdf.controller.ts
   excel-pdf.service.ts
-  dto/create-excel-pdf-job.dto.ts
-  dto/list-excel-pdf-jobs.dto.ts
-  excel-pdf-upload.validator.ts
 
 apps/worker/src/tasks/excel-pdf/
   excel-pdf-task.handler.ts
+  excel-pdf-cleanup.ts
+  excel-pdf-errors.ts
   xlsx-zip-validator.ts
   libreoffice.runner.ts
-  excel-pdf-converter.ts
   pdf-output-validator.ts
   temp-workspace.ts
 ```
 
-Controller 仅处理认证、RBAC、multipart 和响应；Service 负责 job/outbox、FileAsset、Storage、审计；Converter 是独立 adapter；Validator 负责输入资源约束。转换绝不能运行在 API 请求生命周期内。Worker shutdown 时停止领取新任务并正确处理中断；失败状态不可被旧 attempt 覆盖。
+Controller 仅处理认证、RBAC、multipart 和响应；Service 负责分块幂等、complete 校验、job/outbox、FileAsset、Storage、审计；Worker runner 使用固定可执行路径和参数数组启动 LibreOffice；Validator 负责输入 ZIP/OOXML 与输出 PDF 安全约束。转换绝不能运行在 API 请求生命周期内。Worker shutdown 时停止领取新任务并正确处理中断；失败状态不可被旧 attempt 覆盖。
 
 ---
 
 ## 10. 菜单/权限 Seed 与国际化
 
-- 通过项目现有幂等 reference seed 或 SQL 修复机制新增 Menu 与 zh-CN/en-US MenuTranslation。
+- 使用项目现有 `--reference-only` 幂等 reference seed 新增 Menu 与 zh-CN/en-US
+  MenuTranslation；API 每次启动都会在监听端口前自动同步，SQL 文件仅作为受控恢复兜底。
 - 新增 Permission code 时先检查现有目录；创建权限定义不等于给角色授权。
-- 只有经过确认的角色才授予 create/read/download；retry/delete 默认管理员专用。
+- `excel_pdf.read/create/download/retry/delete` 默认只授予 `super_admin`；其他角色必须经过
+  受控角色授权流程，retry/delete 默认保持管理员专用。
 - 菜单父级不存在时不自行新建平行菜单树；先选择现有合适父级。
 - 更新菜单翻译覆盖检查，新增 menu 必须通过 `pnpm check:menu-translations`。
 
@@ -334,13 +345,16 @@ Controller 仅处理认证、RBAC、multipart 和响应；Service 负责 job/out
 
 - 仅在 Worker 镜像安装 LibreOffice headless 和所需字体；API 镜像不要安装。
 - 固定基础镜像与包版本/tag/digest，不使用 latest；非 root 运行。
-- Worker 临时目录使用受限 tmpfs/volume；只读根文件系统；限制 CPU/RAM/PID/临时盘。
+- 生产 Compose 的 Worker 安装 `libreoffice-calc`、`poppler-utils`、Fontconfig、DejaVu 和 Noto CJK 字体；`WORKER_TMP_DIR=/data/tmp` 使用持久卷，避免容器重启中断任务时留下不可追踪状态。建议预留至少 2 GiB 临时空间。
+- 当前生产 Compose 为 Worker 设置 2 CPU、4 GiB 内存、256 PIDs、1 GiB shared memory、文件描述符限制、6 分钟停止宽限期、`no-new-privileges` 和 drop all capabilities；这些限制保护宿主机，但不能保证任意 200 MiB 工作簿都能在超时和内存限制内完成。
 - 禁止转换容器网络出站；存储读写由 Worker 主进程的 Storage adapter 执行，必要时按最小权限提供网络。
 - Cloudflare Workers 只负责 Admin UI/BFF 请求转发；不在 Cloudflare Worker request CPU 生命周期中执行 soffice。
 - 若 API 与 Worker 同机，先做压测；转换导致 API readiness/P95 恶化时必须把 Worker 分离部署或提升规格。
 - 监控 queued age、转换时长、失败率、retry、RSS、临时磁盘、PDF 页数/大小。
 
-配置必须先检查现有 ConfigModule、环境变量 schema 和部署文档后决定。建议逻辑配置：enabled 默认 false、maxUploadBytes 10 MiB、maxOutputBytes 50 MiB、timeoutMs 90,000、maxSheets 20、maxPages 200、retentionDays 7、workerConcurrency 1。只将运维确实需要调节的项目放入 `.env.example`；不暴露任意 CLI 参数。
+配置默认值：`EXCEL_PDF_ENABLED=false`、`EXCEL_PDF_MAX_UPLOAD_BYTES=209715200`（200 MiB）、`EXCEL_PDF_CHUNK_BYTES=8388608`（8 MiB）、`EXCEL_PDF_MAX_OUTPUT_BYTES=52428800`（50 MiB）、`EXCEL_PDF_MAX_PAGES=200`、`EXCEL_PDF_TIMEOUT_MS=300000`、`EXCEL_PDF_RETENTION_DAYS=7`。Worker 并发保持 1。只将运维确实需要调节的项目放入 `.env.example`；不暴露任意 soffice CLI 参数。
+
+`STORAGE_DRIVER=local` 时 API 与 Worker 必须共享同一 `STORAGE_LOCAL_ROOT`，当前 Compose 通过 `/data/uploads` 共享卷实现。部署多个 Worker/API 副本时必须改用共享 S3/R2 兼容私有存储；不能把本地卷分别挂载到不同副本后假设对象可见。
 
 ---
 
@@ -366,14 +380,20 @@ Controller 仅处理认证、RBAC、multipart 和响应；Service 负责 job/out
 7. R2/DB 失败的补偿与孤儿清理可观察、可重试。
 8. retry 并发、删除、到期清理物理对象与数据范围测试。
 9. PDF 不会进入公开 API、公开 CDN 或无需授权的 URL。
+10. 恰好 200 MiB 的初始化可接受，200 MiB + 1 字节被拒绝；分块大小不超过 8 MiB，complete 对缺块、长度/SHA 不匹配和并发幂等请求给出一致结果。
+11. download 只解析服务端记录的对象键；对象缺失、记录大小不一致、Storage 读失败时不返回损坏文件，并记录不含对象键的失败审计。
 
 ### 12.3 Admin E2E
 
-`登录 → Excel 转 PDF → 上传 quotation.xlsx → queued → processing → succeeded → 下载 PDF → 校验页数/非空 → 删除 → 验证物理对象删除完成`。PI 文件再执行一轮。测试 360px、768px、1280px，以及键盘上传、拖拽、错误格式、网络中断、重复点击、轮询失败、下载失败和权限拒绝。
+`登录 → Excel 转 PDF → 上传 quotation.xlsx → queued → processing → succeeded → 下载 PDF → 校验页数/非空 → 删除 → 验证物理对象删除完成`。PI 文件再执行一轮。测试 360px、768px、1280px，以及键盘上传、拖拽、错误格式、网络中断、重复点击、分块重试、轮询失败、下载失败和权限拒绝。
 
 ### 12.4 金样本视觉回归
 
 以当前正式报价模板生成含 Logo、商品图片、长英文名称、价格和 footer 的 XLSX；另准备 PI XLSX。检查页数、方向、打印区域、重复表头、商品图片、边框、字体、合并、页眉页脚、币种与金额。与 Microsoft Excel 参考 PDF 逐页比较；允许已记录的引擎差异，关键字段/图片不可丢失。测试记录转换器版本、OS 镜像 digest 和日期；不提交真实客户数据样本。
+
+### 12.5 200 MiB 容量验收
+
+在 staging 使用脱敏、合法的接近 200 MiB XLSX 执行完整分块上传和 LibreOffice 转换，记录上传吞吐、Worker 峰值 RSS、CPU、临时磁盘、转换耗时、队列等待、PDF 页数/大小和失败码。该压测验证的是当前部署规格，不代表任意 200 MiB 工作簿都能在 300 秒内完成；超过页数、输出大小或超时限制必须明确失败并向用户显示可操作错误。
 
 ---
 
@@ -397,15 +417,21 @@ Worker 镜像增加 LibreOffice/字体；API 镜像不装。加入资源限制�
 
 ### Phase 4：测试与文档
 
-执行 workspace 测试、lint、typecheck、build；记录未运行项目及原因。更新 README、docs/08、部署文档和 docs/30 历史说明。本文件仅说明计划，不代表代码实现。
+执行 workspace 测试、lint、typecheck、build；记录未运行项目及原因。更新 README、docs/08、部署文档和 docs/30 历史说明。自动化检查通过不等于生产容量验收通过，200 MiB 压测和金样本视觉回归仍需在 staging 记录结果。
 
 ---
 
 ## 14. 发布与回滚
 
-发布顺序：备份 PostgreSQL 元数据；部署 additive migration（如有）；部署 API/Worker 镜像且关闭功能；验证 soffice、字体和临时盘；执行报价单与 PI 金样本 smoke test；运行幂等 seed；preview 验收后启用；监控队列延迟、RSS、失败率、临时磁盘与 API P95。
+发布顺序：备份 PostgreSQL 元数据；部署 additive migration（如有）；部署 API/Worker 镜像且关闭功能；API 启动自动同步 reference data（生产发布脚本还会在切换前预检）；验证 soffice、字体和临时盘；执行报价单与 PI 金样本 smoke test；preview 验收后启用；监控队列延迟、RSS、失败率、临时磁盘与 API P95。
 
-回滚：关闭功能开关并停止 Worker 领取 `EXCEL_PDF_CONVERT`；API 入口返回 disabled，不只隐藏菜单；保留 job、审计、FileAsset 与对象；回滚 API/Worker 镜像；additive migration 默认不反向删除；不删除报价单 Excel、PI Excel、模板与 PI 业务数据。
+回滚：
+
+1. 设置 `EXCEL_PDF_ENABLED=false`。API 的上传、任务查询、下载、重试和删除入口会返回 disabled；Worker 的服务端 claim 查询也不会再领取 `excel-pdf-convert` 事件，而不是把旧事件领取后消费失败。
+2. 转换事件和对应 job 保持 `QUEUED`，已完成下载记录与审计保持不变；功能重新启用后可继续处理旧事件。清理任务不受该门禁影响，仍可执行已授权的物理删除和到期清理。
+3. 如需立即停止全部后台任务，再暂停 Worker image 或实例；只隐藏 Admin 菜单或只回滚前端不构成回滚。
+4. 视故障范围回滚 API/Worker 镜像。两个 additive migration 默认不反向删除；保留 job、审计、FileAsset 与对象，除非已按数据保留策略确认可清理。
+5. 不删除报价单 Excel、PI Excel、报价模板或 PI 业务数据。若必须关闭菜单授权，仅撤销 `excel_pdf.*` 权限并保留历史，不删除权限审计事实。
 
 ---
 

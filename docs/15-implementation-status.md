@@ -53,7 +53,9 @@ pnpm --filter @b2b/admin start        # http://localhost:3001
 `pnpm dev` 在开发环境以仓库 `.env` 为准，避免终端残留的 Neon `DATABASE_URL` 覆盖本地配置。
 它会先执行 `prisma migrate deploy`；如果 PostgreSQL 未启动，命令会在 API 启动前以 P1001
 失败，而不是留下“Admin 已启动、API 未监听”的半启动状态。需要连接隔离测试库时，可显式
-指定 `ENV_FILE=/absolute/path/to/test.env`。
+指定 `ENV_FILE=/absolute/path/to/test.env`。API 监听端口前还会自动执行
+`--reference-only` reference data 同步，幂等补齐菜单、双语翻译和权限；该同步失败时 API
+不会启动。完整 demo 数据仍只通过显式 `pnpm db:seed -- --demo` 写入。
 
 ## 4. 环境注意事项
 

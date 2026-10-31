@@ -1,6 +1,7 @@
 import { createHash, createHmac } from 'node:crypto';
 import type { Readable } from 'node:stream';
-import { Readable as NodeReadable } from 'node:stream';
+import { PassThrough, Readable as NodeReadable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import type {
   S3DriverOptions,
   StorageDriver,
@@ -135,19 +136,16 @@ export class S3StorageDriver implements StorageDriver {
   }
 
   createReadStream(key: string): Readable {
-    // The stream is produced lazily by the caller-facing helper; a buffered read
-    // keeps the SigV4 signing path simple and is adequate for derived images and
-    // exported workbooks.
-    const stream = new NodeReadable({ read() {} });
+    // Pipe the fetch body through a real stream pipeline. This preserves
+    // backpressure for large generated PDFs instead of buffering the object in
+    // the API process before sending it to the browser.
+    const stream = new PassThrough();
     void (async () => {
-      try {
-        const buffer = await this.get(key);
-        stream.push(buffer);
-        stream.push(null);
-      } catch (error) {
-        stream.destroy(error as Error);
-      }
-    })();
+      const response = await this.request('GET', key);
+      if (!response.ok) throw new Error(`storage.s3_get_failed:${response.status}`);
+      if (!response.body) throw new Error('storage.s3_get_empty_body');
+      await pipeline(NodeReadable.from(response.body as AsyncIterable<Uint8Array>), stream);
+    })().catch((error: unknown) => stream.destroy(error as Error));
     return stream;
   }
 

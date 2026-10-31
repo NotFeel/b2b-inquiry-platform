@@ -62,6 +62,18 @@ EXPOSE 3002
 CMD ["node", "dist/main.js"]
 
 FROM runtime-base AS worker
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      fontconfig \
+      fonts-dejavu-core \
+      fonts-noto-cjk \
+      libreoffice-calc \
+      poppler-utils \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /data/tmp \
+    && chown node:node /data/tmp
+USER node
 WORKDIR /workspace/apps/worker
 COPY --from=build --chown=node:node /workspace/apps/worker/package.json ./package.json
 COPY --from=build --chown=node:node /workspace/apps/worker/node_modules ./node_modules

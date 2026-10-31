@@ -58,6 +58,37 @@ validation token，commit 仍在一个 PostgreSQL 事务内创建全部商品。
 - 旧 `/admin/products/bulk-import/validate` 仅用于小于 8 MB 的兼容/快速测试；出现
   `Request body exceeded 10MB` 时检查 Admin 是否仍调用该旧端点，而不是调大网关上限。
 
+### 2.2 大文件 Excel 转 PDF
+
+Excel 转 PDF 使用与商品导入相同的“小请求、大对象”原则，详细契约见
+`docs/38-admin-excel-to-pdf-conversion-implementation.md`。
+
+- 单份 `.xlsx` 上限 200 MiB；Admin 按服务端返回的 8 MiB 分块依次上传到
+  `/api/v1/admin/excel-pdf/uploads/:uploadId/chunks/:index`，complete 后由 API 创建
+  `excel-pdf-convert` PostgreSQL 任务并返回 202。上传会话 1 小时过期。
+- 反向代理只需允许单块约 10 MiB，例如 `client_max_body_size 10m`；不要为了 200 MiB
+  文件把 Next.js、网关或 API 的单个请求体上限直接提升到 200 MiB。
+- 只有 Worker 镜像安装 `libreoffice-calc`、`poppler-utils`、Fontconfig、DejaVu 与
+  Noto CJK 字体；API 镜像保持精简。生产 Compose 为 Worker 配置 2 CPU、4 GiB 内存、
+  256 PIDs、1 GiB shared memory、文件描述符限制和 6 分钟停止宽限期。
+- `WORKER_TMP_DIR` 必须挂载持久临时卷（当前为 `/data/tmp`），建议至少 2 GiB 可用空间；
+  `STORAGE_DRIVER=local` 时 API 与 Worker 必须共享同一 `/data/uploads`。多副本或
+  Serverless 环境必须使用共享 S3/R2 兼容私有存储。
+- 功能默认 `EXCEL_PDF_ENABLED=false`。先部署两个 additive migration
+  `20261030195000_excel_pdf_conversion`、`20261030210000_excel_pdf_job_lease`，再部署
+  API/Worker 并保持关闭；验证 `soffice --version`、`pdfinfo -v`、CJK 字体和临时盘后执行
+  幂等菜单/权限 SQL，完成 staging 金样本和接近 200 MiB 压测再开启。
+- 紧急回滚先设置 `EXCEL_PDF_ENABLED=false`：API 入口返回 disabled，Worker 不再领取
+  `excel-pdf-convert`，未处理事件仍留在 PostgreSQL，重新启用后可继续。该门禁不阻断
+  `excel-pdf-cleanup`，以便删除/到期清理继续收敛；若需完全停止后台处理，再暂停 Worker。
+  additive schema、job、审计和对象默认保留，不通过反向 migration 删除业务历史。
+- Worker 并发保持 1。监控 queued age、转换耗时、RSS、CPU、临时盘、PDF 页数/大小、
+  lease 过期、失败率和删除任务。Compose 资源限制只保护宿主机，不保证任意 200 MiB
+  工作簿都在 300 秒内完成。
+- 当前 Compose 只做容器权限和资源隔离，不能单独提供“转换进程完全无网络”。若安全
+  基线要求转换沙箱禁止出站，必须在宿主机/编排层增加 egress 策略，并为私有存储访问
+  保留受控例外。
+
 ## 3. 首次部署流程
 
 1. 创建 Neon database/branch、R2 public/private bucket 和最小权限服务账号。
@@ -76,6 +107,27 @@ validation token，commit 仍在一个 PostgreSQL 事务内创建全部商品。
 - 备份完成且可恢复后才做高风险迁移；迁移脚本必须考虑锁表、耗时和大表索引创建方式。
 - 回滚优先采用前向修复；数据破坏性迁移必须有事先验证的恢复/回滚策略。
 - 生产环境禁止开发者直接运行未经审查的临时 SQL。
+
+### 4.1 API 启用的参考数据增量同步
+
+API 在 Nest 监听端口前自动执行 `tsx prisma/seed.ts --reference-only`。本地 `pnpm dev`、
+测试/staging、systemd 直接运行 `apps/api/dist/main.js` 和 Docker API 都经过这个入口，不依赖
+开发者手动补 SQL。同步失败时 API 以非零状态退出，不会在菜单或权限缺失时继续提供后台服务。
+
+- 同步只处理版本化 reference data：权限、内置角色、菜单结构、缺失菜单翻译、系统锁定字典。
+  它不会写入 demo/商品/客户数据，不会覆盖运营修改过的菜单翻译，不会禁用或删除自定义菜单，
+  也不会恢复普通角色已被手工撤销的旧授权。
+- `excel_pdf.read/create/download/retry/delete` 与 `excel-pdf` 菜单会自动补齐；五项权限只默认
+  授予 `super_admin`。如需授予其他角色，仍须通过受控角色权限流程操作。
+- 整次同步在一个 PostgreSQL 事务内执行，并先获取事务级 advisory lock；多实例同时启动时会
+  串行等待，提交或回滚后自动释放锁。
+- 启动同步使用 `DIRECT_DATABASE_URL`（若配置），避免长事务占用 Neon pooled session；没有该
+  变量时使用 `DATABASE_URL`。schema migration 仍必须由独立受控发布步骤先执行。
+- 数据库运行账号必须具备对 `permissions`、`roles`、`role_permissions`、`menus`、
+  `menu_translations` 和系统字典对应表的必要读写权限。权限不足属于启动阻断，应按最小权限原则
+  单独授权，不要改用更高权限的超级用户连接 API 运行流量。
+- 生产发布脚本仍会在切换应用镜像前执行同一同步和只读校验，作为发布前门禁；随后 API 启动时再
+  执行一次是幂等且有锁保护的，不会重复插入菜单或翻译。
 
 ## 5. 备份与恢复
 

@@ -276,6 +276,9 @@ importers:
       '@prisma/client':
         specifier: 6.19.3
         version: 6.19.3(prisma@6.19.3(magicast@0.3.5)(typescript@5.9.3))(typescript@5.9.3)
+      tsx:
+        specifier: 4.23.15
+        version: 4.23.15
     devDependencies:
       '@b2b/contracts':
         specifier: workspace:*
@@ -295,12 +298,12 @@ importers:
       prisma:
         specifier: 6.19.3
         version: 6.19.3(magicast@0.3.5)(typescript@5.9.3)
-      tsx:
-        specifier: 4.23.15
-        version: 4.23.15
       typescript:
         specifier: 5.9.3
         version: 5.9.3
+      vitest:
+        specifier: 3.2.7
+        version: 3.2.7(@types/node@24.19.2)(jiti@2.7.0)(supports-color@10.2.2)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1)
 
   packages/contracts:
     dependencies:

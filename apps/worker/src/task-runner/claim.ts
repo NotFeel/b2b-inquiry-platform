@@ -1,5 +1,7 @@
 import type {
   AnalyticsRollupJobPayload,
+  ExcelPdfCleanupJobPayload,
+  ExcelPdfConvertJobPayload,
   FileDeleteJobPayload,
   ImageDerivativeJobPayload,
   ProductImportCleanupJobPayload,
@@ -136,8 +138,11 @@ async function claimOutboxEvent(
       'image-derivatives',
       'product-import-validate',
       'product-import-cleanup',
-      'analytics-rollup'
+      'analytics-rollup',
+      'excel-pdf-convert',
+      'excel-pdf-cleanup'
     )
+      AND (${options.excelPdfEnabled !== false} OR "eventType" <> 'excel-pdf-convert')
       AND (
         (status = 'QUEUED'::"JobStatus" AND "runAfter" <= now())
         OR (
@@ -188,6 +193,24 @@ async function claimOutboxEvent(
       attempts: claimed.attempts,
       eventType: 'product-import-cleanup',
       payload: row.payload as ProductImportCleanupJobPayload,
+    };
+  }
+  if (row.eventType === 'excel-pdf-convert') {
+    return {
+      source: 'outbox',
+      id: row.id,
+      attempts: claimed.attempts,
+      eventType: 'excel-pdf-convert',
+      payload: row.payload as ExcelPdfConvertJobPayload,
+    };
+  }
+  if (row.eventType === 'excel-pdf-cleanup') {
+    return {
+      source: 'outbox',
+      id: row.id,
+      attempts: claimed.attempts,
+      eventType: 'excel-pdf-cleanup',
+      payload: row.payload as ExcelPdfCleanupJobPayload,
     };
   }
   return null;

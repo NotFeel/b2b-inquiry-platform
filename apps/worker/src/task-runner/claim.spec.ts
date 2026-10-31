@@ -91,4 +91,14 @@ describe('PostgreSQL task claim', () => {
       },
     });
   });
+
+  it('leaves Excel-to-PDF conversion events queued when the feature is disabled', async () => {
+    const { prisma, raw } = prismaWithClaims([[], []]);
+
+    await claimNextTask(prisma, { ...options, excelPdfEnabled: false });
+
+    const outboxQuery = raw.mock.calls[2];
+    expect(outboxQuery?.[0]?.join('?')).toContain('"eventType" <> \'excel-pdf-convert\'');
+    expect(outboxQuery).toContain(false);
+  });
 });
