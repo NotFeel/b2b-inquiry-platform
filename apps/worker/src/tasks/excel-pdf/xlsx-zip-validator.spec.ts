@@ -154,7 +154,7 @@ describe('XLSX ZIP security validation', () => {
 });
 
 describe('XLSX print normalisation', () => {
-  it('sets every sheet to A4 landscape and removes repeated print titles without changing media', async () => {
+  it('sets A4 landscape and repeats only the quotation title and Product SKU header rows', async () => {
     const workbook =
       '<?xml version="1.0" encoding="UTF-8"?>' +
       '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
@@ -170,11 +170,20 @@ describe('XLSX print normalisation', () => {
       '<pageMargins left="0.3" right="0.3" top="0.4" bottom="0.4" header="0.2" footer="0.2"/>' +
       '<pageSetup paperSize="1" orientation="portrait" fitToWidth="0" fitToHeight="2"/>' +
       '<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Company</t></is></c></row>' +
+      '<row r="5"><c r="A5" t="inlineStr"><is><t>Quotation Title</t></is></c></row>' +
+      '<row r="7"><c r="A7" t="inlineStr"><is><t>Product SKU</t></is></c></row>' +
       '</sheetData></worksheet>';
     const media = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02]);
     const input = await fixture([
       { name: '[Content_Types].xml', data: CONTENT_TYPES },
       { name: 'xl/workbook.xml', data: workbook },
+      {
+        name: 'xl/_rels/workbook.xml.rels',
+        data:
+          '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+          '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" ' +
+          'Target="worksheets/sheet1.xml"/></Relationships>',
+      },
       { name: 'xl/worksheets/sheet1.xml', data: worksheet },
       { name: 'xl/styles.xml', data: '<styleSheet/>' },
       { name: 'xl/media/image1.png', data: media },
@@ -184,7 +193,11 @@ describe('XLSX print normalisation', () => {
     await normaliseXlsxForPdf(input, output);
     const entries = await readZipEntries(output);
 
-    expect(entries.get('xl/workbook.xml')?.toString('utf8')).not.toContain('Print_Titles');
+    const normalisedWorkbook = entries.get('xl/workbook.xml')?.toString('utf8') ?? '';
+    expect(normalisedWorkbook).not.toContain("'Products'!$1:$6");
+    expect(normalisedWorkbook).toContain(
+      'name="_xlnm.Print_Titles" localSheetId="0">' + "'Products'!$5:$7</definedName>",
+    );
     const normalisedWorksheet = entries.get('xl/worksheets/sheet1.xml')?.toString('utf8') ?? '';
     expect(normalisedWorksheet).toContain('<pageSetUpPr fitToPage="1"/>');
     expect(normalisedWorksheet).toContain(
@@ -193,7 +206,42 @@ describe('XLSX print normalisation', () => {
     expect(normalisedWorksheet).toContain('<t>Company</t>');
     expect(entries.get('xl/styles.xml')?.toString('utf8')).toBe('<styleSheet/>');
     expect(entries.get('xl/media/image1.png')).toEqual(media);
-    await expect(validateXlsxArchive(output)).resolves.toMatchObject({ entryCount: 5 });
+    await expect(validateXlsxArchive(output)).resolves.toMatchObject({ entryCount: 6 });
+  });
+
+  it('resolves shared-string headers and escapes apostrophes in worksheet names', async () => {
+    const workbook =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+      '<sheets><sheet name="Buyer&apos;s Quote" sheetId="1" r:id="rId7" ' +
+      'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>' +
+      '</sheets></workbook>';
+    const sharedStrings =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+      '<si><t>Quotation Title</t></si><si><r><t>Product </t></r><r><t>SKU</t></r></si></sst>';
+    const worksheet =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+      '<sheetData><row r="5"><c r="A5" t="s"><v>0</v></c></row>' +
+      '<row r="8"><c r="A8" t="s"><v>1</v></c></row></sheetData></worksheet>';
+    const input = await fixture([
+      { name: '[Content_Types].xml', data: CONTENT_TYPES },
+      { name: 'xl/workbook.xml', data: workbook },
+      {
+        name: 'xl/_rels/workbook.xml.rels',
+        data: '<Relationships><Relationship Id="rId7" Target="worksheets/sheet7.xml"/></Relationships>',
+      },
+      { name: 'xl/sharedStrings.xml', data: sharedStrings },
+      { name: 'xl/worksheets/sheet7.xml', data: worksheet },
+    ]);
+    const output = join(dirname(input), 'shared-strings.xlsx');
+
+    await normaliseXlsxForPdf(input, output);
+    const normalisedWorkbook =
+      (await readZipEntries(output)).get('xl/workbook.xml')?.toString('utf8') ?? '';
+
+    expect(normalisedWorkbook).toContain("'Buyer''s Quote'!$5:$8");
   });
 
   it('inserts page setup in schema order when sheetPr and pageSetup are absent', async () => {

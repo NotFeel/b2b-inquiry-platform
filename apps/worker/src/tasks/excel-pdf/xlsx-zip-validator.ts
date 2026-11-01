@@ -1,4 +1,5 @@
 import { constants as fsConstants, promises as fs } from 'node:fs';
+import { posix } from 'node:path';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import { ERROR_CODES, EXCEL_PDF_LIMITS } from '@b2b/contracts';
 import { ExcelPdfProcessingError } from './excel-pdf-errors';
@@ -11,6 +12,7 @@ const MAX_COMMENT = 0xffff;
 const MAX_CENTRAL_DIRECTORY_BYTES = 16 * 1024 * 1024;
 const MAX_METADATA_ENTRY_BYTES = 4 * 1024 * 1024;
 const MAX_METADATA_TOTAL_BYTES = 8 * 1024 * 1024;
+const QUOTATION_TITLE_ROW = 5;
 
 interface ZipEntry {
   name: string;
@@ -31,6 +33,11 @@ interface ZipEntry {
 export interface XlsxValidationResult {
   entryCount: number;
   uncompressedBytes: number;
+}
+
+interface PrintTitleDefinition {
+  localSheetId: number;
+  range: string;
 }
 
 /**
@@ -133,6 +140,7 @@ export async function normaliseXlsxForPdf(
     const central = Buffer.alloc(eocd.centralDirectorySize);
     await readExactly(input, central, 0, central.byteLength, eocd.centralDirectoryOffset);
     const entries = parseCentralDirectory(central, eocd.entryCount);
+    const quotationPrintTitles = await findQuotationPrintTitles(input, entries);
 
     output = await fs.open(outputPath, 'wx', 0o600);
     const centralParts: Buffer[] = [];
@@ -150,7 +158,7 @@ export async function normaliseXlsxForPdf(
         const original = await readEntry(input, entry);
         const xml =
           entry.name.toLowerCase() === 'xl/workbook.xml'
-            ? normaliseWorkbookXml(original.toString('utf8'))
+            ? normaliseWorkbookXml(original.toString('utf8'), quotationPrintTitles)
             : normaliseSheetXml(original.toString('utf8'), /chartsheets\//i.test(entry.name));
         rewritten = deflateRawSync(Buffer.from(xml, 'utf8'));
         method = 8;
@@ -256,13 +264,190 @@ function shouldNormaliseEntry(name: string): boolean {
   );
 }
 
-function normaliseWorkbookXml(xml: string): string {
-  return xml
+function normaliseWorkbookXml(xml: string, printTitles: readonly PrintTitleDefinition[]): string {
+  const withoutExistingTitles = xml
     .replace(/<definedName\b(?=[^>]*\bname\s*=\s*["']_xlnm\.Print_Titles["'])[^>]*\/>/gi, '')
     .replace(
       /<definedName\b(?=[^>]*\bname\s*=\s*["']_xlnm\.Print_Titles["'])[^>]*>[\s\S]*?<\/definedName>/gi,
       '',
     );
+  if (printTitles.length === 0) return withoutExistingTitles;
+
+  const definitions = printTitles
+    .map(
+      ({ localSheetId, range }) =>
+        `<definedName name="_xlnm.Print_Titles" localSheetId="${localSheetId}">${escapeXmlText(
+          range,
+        )}</definedName>`,
+    )
+    .join('');
+  const existingBlock = /<definedNames\b[^>]*>[\s\S]*?<\/definedNames>/i;
+  if (existingBlock.test(withoutExistingTitles)) {
+    return withoutExistingTitles.replace(existingBlock, (block) =>
+      block.replace(/<\/definedNames\s*>/i, (closing) => `${definitions}${closing}`),
+    );
+  }
+
+  const selfClosingBlock = /<definedNames\b[^>]*\/>/i;
+  if (selfClosingBlock.test(withoutExistingTitles)) {
+    return withoutExistingTitles.replace(
+      selfClosingBlock,
+      `<definedNames>${definitions}</definedNames>`,
+    );
+  }
+
+  if (!/<\/sheets\s*>/i.test(withoutExistingTitles)) throw invalidFile();
+  return withoutExistingTitles.replace(
+    /<\/sheets\s*>/i,
+    (closing) => `${closing}<definedNames>${definitions}</definedNames>`,
+  );
+}
+
+async function findQuotationPrintTitles(
+  input: Awaited<ReturnType<typeof fs.open>>,
+  entries: readonly ZipEntry[],
+): Promise<PrintTitleDefinition[]> {
+  const byName = new Map(entries.map((entry) => [entry.name.toLowerCase(), entry]));
+  const workbookEntry = byName.get('xl/workbook.xml');
+  const relationshipEntry = byName.get('xl/_rels/workbook.xml.rels');
+  if (!workbookEntry || !relationshipEntry) return [];
+
+  const [workbookXml, relationshipsXml] = await Promise.all([
+    readEntry(input, workbookEntry).then((buffer) => buffer.toString('utf8')),
+    readEntry(input, relationshipEntry).then((buffer) => buffer.toString('utf8')),
+  ]);
+  const relationshipTargets = parseWorkbookRelationshipTargets(relationshipsXml);
+  const sheets = parseWorkbookSheets(workbookXml);
+  if (sheets.length === 0) return [];
+
+  const sharedStringsEntry = byName.get('xl/sharedstrings.xml');
+  const sharedStrings = sharedStringsEntry
+    ? parseSharedStrings(
+        await readEntry(input, sharedStringsEntry).then((buffer) => buffer.toString('utf8')),
+      )
+    : [];
+  const definitions: PrintTitleDefinition[] = [];
+
+  for (const [localSheetId, sheet] of sheets.entries()) {
+    const target = relationshipTargets.get(sheet.relationshipId);
+    if (!target) continue;
+    const worksheetEntry = byName.get(target.toLowerCase());
+    if (!worksheetEntry) continue;
+
+    const worksheetXml = await readEntry(input, worksheetEntry).then((buffer) =>
+      buffer.toString('utf8'),
+    );
+    const headerRow = findProductSkuHeaderRow(worksheetXml, sharedStrings);
+    if (headerRow === null) continue;
+
+    const quotedSheetName = `'${sheet.name.replace(/'/g, "''")}'`;
+    // LibreOffice honours only the first range in a comma-separated OOXML
+    // Print_Titles value. Repeat one contiguous range so both the quotation
+    // title and the Product SKU header survive real PDF pagination.
+    const firstRow = Math.min(QUOTATION_TITLE_ROW, headerRow);
+    const lastRow = Math.max(QUOTATION_TITLE_ROW, headerRow);
+    definitions.push({
+      localSheetId,
+      range: `${quotedSheetName}!$${firstRow}:$${lastRow}`,
+    });
+  }
+
+  return definitions;
+}
+
+function parseWorkbookRelationshipTargets(xml: string): Map<string, string> {
+  const targets = new Map<string, string>();
+  for (const match of xml.matchAll(/<Relationship\b[^>]*>/gi)) {
+    const tag = match[0];
+    const id = getXmlAttribute(tag, 'Id');
+    const target = getXmlAttribute(tag, 'Target');
+    if (!id || !target) continue;
+    const normalizedTarget = target.startsWith('/')
+      ? posix.normalize(target.slice(1))
+      : posix.normalize(posix.join('xl', target));
+    targets.set(id, normalizedTarget);
+  }
+  return targets;
+}
+
+function parseWorkbookSheets(xml: string): { name: string; relationshipId: string }[] {
+  const sheets: { name: string; relationshipId: string }[] = [];
+  for (const match of xml.matchAll(/<sheet\b[^>]*>/gi)) {
+    const tag = match[0];
+    const name = getXmlAttribute(tag, 'name');
+    const relationshipId = getXmlAttribute(tag, 'r:id');
+    if (name && relationshipId) sheets.push({ name: decodeXmlText(name), relationshipId });
+  }
+  return sheets;
+}
+
+function parseSharedStrings(xml: string): string[] {
+  return [...xml.matchAll(/<si\b[^>]*>([\s\S]*?)<\/si>/gi)].map((match) =>
+    [...(match[1] ?? '').matchAll(/<t\b[^>]*>([\s\S]*?)<\/t>/gi)]
+      .map((textMatch) => decodeXmlText(textMatch[1] ?? ''))
+      .join(''),
+  );
+}
+
+function findProductSkuHeaderRow(xml: string, sharedStrings: readonly string[]): number | null {
+  for (const rowMatch of xml.matchAll(/<row\b([^>]*)>([\s\S]*?)<\/row>/gi)) {
+    const rowNumber = Number(getXmlAttribute(rowMatch[1] ?? '', 'r'));
+    if (!Number.isInteger(rowNumber) || rowNumber < 1) continue;
+    for (const cellMatch of (rowMatch[2] ?? '').matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/gi)) {
+      const cellAttributes = cellMatch[1] ?? '';
+      const cellBody = cellMatch[2] ?? '';
+      const type = getXmlAttribute(cellAttributes, 't');
+      let value = '';
+      if (type === 's') {
+        const rawIndex = /<v\b[^>]*>([\s\S]*?)<\/v>/i.exec(cellBody)?.[1];
+        const index = rawIndex === undefined ? Number.NaN : Number(rawIndex);
+        value = Number.isInteger(index) ? (sharedStrings[index] ?? '') : '';
+      } else if (type === 'inlineStr') {
+        value = [...cellBody.matchAll(/<t\b[^>]*>([\s\S]*?)<\/t>/gi)]
+          .map((match) => decodeXmlText(match[1] ?? ''))
+          .join('');
+      } else {
+        value = decodeXmlText(/<v\b[^>]*>([\s\S]*?)<\/v>/i.exec(cellBody)?.[1] ?? '');
+      }
+      if (value.toUpperCase().replace(/\s+/g, ' ').includes('PRODUCT SKU')) return rowNumber;
+    }
+  }
+  return null;
+}
+
+function getXmlAttribute(tag: string, name: string): string | null {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return (
+    new RegExp(`(?:^|\\s)${escapedName}\\s*=\\s*(["'])([\\s\\S]*?)\\1`, 'i').exec(tag)?.[2] ?? null
+  );
+}
+
+function decodeXmlText(value: string): string {
+  return value.replace(
+    /&(?:#x([0-9a-f]+)|#(\d+)|(amp|lt|gt|quot|apos));/gi,
+    (_entity, hex: string | undefined, decimal: string | undefined, named: string | undefined) => {
+      if (hex) return String.fromCodePoint(Number.parseInt(hex, 16));
+      if (decimal) return String.fromCodePoint(Number.parseInt(decimal, 10));
+      switch (named?.toLowerCase()) {
+        case 'amp':
+          return '&';
+        case 'lt':
+          return '<';
+        case 'gt':
+          return '>';
+        case 'quot':
+          return '"';
+        case 'apos':
+          return "'";
+        default:
+          return _entity;
+      }
+    },
+  );
+}
+
+function escapeXmlText(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function normaliseSheetXml(xml: string, chartsheet: boolean): string {

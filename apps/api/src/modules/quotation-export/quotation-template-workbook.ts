@@ -23,6 +23,8 @@ export interface QuotationTemplateWorkbookInput {
   header: QuotationExportHeader;
   currencyCode: QuotationExportCurrency;
   markupPercent: string;
+  /** Explicit summary when selected products use different markup values. */
+  markupDisplay?: string;
   exchangeRate: string;
   products: QuotationWorkbookProduct[];
   generatedAt: Date;
@@ -448,7 +450,7 @@ export async function buildQuotationWorkbookFromTemplate(
       [QUOTATION_TEMPLATE_PLACEHOLDERS.quotationTitle]: input.header.quotationTitle,
       [QUOTATION_TEMPLATE_PLACEHOLDERS.currency]: input.currencyCode,
       [QUOTATION_TEMPLATE_PLACEHOLDERS.exchangeRate]: `${input.exchangeRate} ${input.currencyCode}`,
-      [QUOTATION_TEMPLATE_PLACEHOLDERS.markup]: `${input.markupPercent}%`,
+      [QUOTATION_TEMPLATE_PLACEHOLDERS.markup]: input.markupDisplay ?? `${input.markupPercent}%`,
     } as const;
     for (let rowNumber = 1; rowNumber <= worksheet.rowCount; rowNumber += 1) {
       const row = worksheet.getRow(rowNumber);

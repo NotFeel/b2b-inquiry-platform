@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 import type { QuotationExportProduct, QuotationExportTemplateOption } from '@b2b/contracts';
 import {
   filterQuotationProducts,
+  isQuotationMarkupPercent,
   moveQuotationSelection,
   moveQuotationSelectionBy,
+  quotationProductMarkups,
   quotationIssueTranslationKey,
   selectQuotationTemplate,
+  setQuotationMarkupsForProducts,
   setQuotationSelection,
 } from './quotation-export-selection';
 
@@ -62,6 +65,34 @@ describe('setQuotationSelection', () => {
     const selected = ['hidden-product', 'visible-product', 'second-visible'];
     const removed = setQuotationSelection(selected, ['visible-product'], false);
     expect(removed).toEqual(['hidden-product', 'second-visible']);
+  });
+});
+
+describe('quotation product markups', () => {
+  it('validates the same 0-500, two-decimal range used by the API', () => {
+    expect(isQuotationMarkupPercent('0')).toBe(true);
+    expect(isQuotationMarkupPercent('15.25')).toBe(true);
+    expect(isQuotationMarkupPercent('500.00')).toBe(true);
+    expect(isQuotationMarkupPercent('500.01')).toBe(false);
+    expect(isQuotationMarkupPercent('-1')).toBe(false);
+    expect(isQuotationMarkupPercent('1.234')).toBe(false);
+    expect(isQuotationMarkupPercent('')).toBe(false);
+  });
+
+  it('batch updates loaded rows without mutating earlier state', () => {
+    const current = { 'product-a': '10', hidden: '12' };
+    const next = setQuotationMarkupsForProducts(current, ['product-a', 'product-b'], '18.5');
+    expect(next).toEqual({ 'product-a': '18.5', 'product-b': '18.5', hidden: '12' });
+    expect(current).toEqual({ 'product-a': '10', hidden: '12' });
+  });
+
+  it('builds selected markups in export order and falls back to batch markup', () => {
+    expect(
+      quotationProductMarkups(['product-b', 'product-a'], { 'product-a': '20' }, '15'),
+    ).toEqual([
+      { productId: 'product-b', markupPercent: '15' },
+      { productId: 'product-a', markupPercent: '20' },
+    ]);
   });
 });
 

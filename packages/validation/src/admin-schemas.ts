@@ -704,6 +704,46 @@ const quotationIncludeDescendantsSchema = z
   .union([z.boolean(), z.enum(['true', 'false'])])
   .transform((value) => value === true || value === 'true');
 
+const quotationProductMarkupsSchema = z
+  .array(
+    z
+      .object({
+        productId: uuidSchema,
+        markupPercent: quotationMarkupSchema,
+      })
+      .strict(),
+  )
+  .max(QUOTATION_EXPORT_LIMITS.maxProducts)
+  .optional();
+
+function validateQuotationProductMarkups(
+  productIds: readonly string[],
+  productMarkups: readonly { productId: string }[] | undefined,
+  ctx: z.RefinementCtx,
+  basePath: readonly (string | number)[],
+): void {
+  if (!productMarkups) return;
+  const selected = new Set(productIds);
+  const seen = new Set<string>();
+  productMarkups.forEach((item, index) => {
+    if (!selected.has(item.productId)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: [...basePath, index, 'productId'],
+        message: 'validation.quotation.productMarkupNotSelected',
+      });
+    }
+    if (seen.has(item.productId)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: [...basePath, index, 'productId'],
+        message: 'validation.quotation.productMarkupDuplicate',
+      });
+    }
+    seen.add(item.productId);
+  });
+}
+
 export const quotationExportProductListQuerySchema = z
   .object({
     categoryId: quotationCategoryIdSchema,
@@ -726,10 +766,16 @@ export const quotationExportPreviewSchema = z
   .object({
     ...quotationExportSelectionShape,
     markupPercent: quotationMarkupSchema,
+    productMarkups: quotationProductMarkupsSchema,
     currencyCode: z.enum(QUOTATION_EXPORT_CURRENCIES),
     exchangeRate: quotationExchangeRateSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) =>
+    validateQuotationProductMarkups(value.productIds, value.productMarkups, ctx, [
+      'productMarkups',
+    ]),
+  );
 export type QuotationExportPreviewInput = z.infer<typeof quotationExportPreviewSchema>;
 
 const quotationHeaderText = (max: number) =>
@@ -767,12 +813,19 @@ export const quotationExportSchema = z
     pricing: z
       .object({
         markupPercent: quotationMarkupSchema,
+        productMarkups: quotationProductMarkupsSchema,
         currencyCode: z.enum(QUOTATION_EXPORT_CURRENCIES),
         exchangeRate: quotationExchangeRateSchema,
       })
       .strict(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) =>
+    validateQuotationProductMarkups(value.productIds, value.pricing.productMarkups, ctx, [
+      'pricing',
+      'productMarkups',
+    ]),
+  );
 export type QuotationExportInput = z.infer<typeof quotationExportSchema>;
 
 /**

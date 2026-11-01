@@ -308,6 +308,93 @@ describe('QuotationExportService', () => {
     expect(serialized).not.toContain(IMAGE_KEY);
   });
 
+  it('uses each product markup for preview and Excel while keeping the batch default', async () => {
+    const first = product();
+    const second = product({
+      id: PRODUCT_ID_2,
+      sku: 'SKU-002',
+      translations: [
+        { productId: PRODUCT_ID_2, locale: 'en-US', name: 'Second product', description: null },
+      ],
+    });
+    const { service, prisma } = setup([first, second]);
+    const productIds = [PRODUCT_ID, PRODUCT_ID_2];
+    const productMarkups = [
+      { productId: PRODUCT_ID, markupPercent: '15' },
+      { productId: PRODUCT_ID_2, markupPercent: '30' },
+    ];
+
+    const preview = await service.preview({ ...selection, productIds, productMarkups }, false);
+    expect(preview.markupPercent).toBe('15');
+    expect(preview.items.map((item) => item.markupPercent)).toEqual(['15', '30']);
+    expect(preview.items.map((item) => item.finalUnitPrice)).toEqual(['0.59', '0.67']);
+
+    const exported = await service.export(
+      {
+        ...exportInput,
+        productIds,
+        pricing: { ...exportInput.pricing, productMarkups },
+      },
+      false,
+      'admin-id',
+      'request-id',
+    );
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(
+      exported.buffer as unknown as Parameters<typeof workbook.xlsx.load>[0],
+    );
+    const worksheet = workbook.getWorksheet('Quotation');
+    if (!worksheet) throw new Error('Quotation worksheet missing');
+
+    expect(worksheet.getCell('D8').value).toBe(0.59);
+    expect(worksheet.getCell('D9').value).toBe(0.67);
+    expect(String(worksheet.getCell('A6').value)).toContain('Markup: Per product');
+    expect(prisma.auditLog.create.mock.calls.at(-1)?.[0]?.data?.metadata).toMatchObject({
+      markupPercent: '15',
+      itemMarkupOverrideCount: 1,
+    });
+  });
+
+  it('shows a uniform per-product override in the template markup summary', async () => {
+    const first = product();
+    const second = product({
+      id: PRODUCT_ID_2,
+      sku: 'SKU-002',
+      translations: [
+        { productId: PRODUCT_ID_2, locale: 'en-US', name: 'Second product', description: null },
+      ],
+    });
+    const { service, prisma } = setup([first, second]);
+    const productIds = [PRODUCT_ID, PRODUCT_ID_2];
+    const productMarkups = [
+      { productId: PRODUCT_ID, markupPercent: '20' },
+      { productId: PRODUCT_ID_2, markupPercent: '20' },
+    ];
+
+    const exported = await service.export(
+      {
+        ...exportInput,
+        productIds,
+        pricing: { ...exportInput.pricing, productMarkups },
+      },
+      false,
+      'admin-id',
+      'request-id',
+    );
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(
+      exported.buffer as unknown as Parameters<typeof workbook.xlsx.load>[0],
+    );
+    const worksheet = workbook.getWorksheet('Quotation');
+    if (!worksheet) throw new Error('Quotation worksheet missing');
+
+    expect(String(worksheet.getCell('A6').value)).toContain('Markup: 20%');
+    expect(prisma.auditLog.create.mock.calls.at(-1)?.[0]?.data?.metadata).toMatchObject({
+      markupPercent: '15',
+      itemMarkupOverrideCount: 2,
+    });
+  });
+
   it('preserves the requested product order in preview and exported worksheet rows', async () => {
     const first = product();
     const second = product({

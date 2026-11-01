@@ -16,7 +16,7 @@
 
 ## 1. 功能范围和流程
 
-Admin 新增商品管理子菜单“报价单导出 / Quotation Export”：从“报价模板”中选择一个已启用且结构校验通过的商品报价模板 → 选择一个品类（可包含子品类）→ 获取商品 → 默认全选所有查询结果 → 手动取消/恢复商品 → 填写公司名称、联系人、邮箱、电话、报价表名称、加价率、币种、汇率 → 服务端预览 → 读取所选模板并填充数据，生成 XLSX 下载。
+Admin 新增商品管理子菜单“报价单导出 / Quotation Export”：从“报价模板”中选择一个已启用且结构校验通过的商品报价模板 → 填写公司名称、联系人、邮箱、电话、报价表名称 → 设置批量加价率、币种和汇率 → 选择一个品类（可包含子品类）→ 获取商品并默认全选所有查询结果 → 手动取消/恢复、排序并逐行微调加价率 → 服务端预览 → 读取所选模板并填充数据，生成 XLSX 下载。
 
 MVP 建议单次最多 200 件（必须压测后确认）。默认只允许 published 且 lifecycle != discontinued 商品；未发布商品需要独立权限。商品必须有有效 CNY 成本价、英文名称和有效主图。任一商品验证失败则整份导出失败，不下载部分文件。本期不保存客户联系方式或报价文件、不自动获取汇率、不发邮件。
 
@@ -56,27 +56,14 @@ MVP 建议单次最多 200 件（必须压测后确认）。默认只允许 publ
 
 ## 3. Admin 页面 UI
 
-使用现有 Admin Shell 和 locale/dashboard 路由；页面标题“报价单导出 / Quotation Export”。页面按以下五张卡片组织：
+使用现有 Admin Shell 和 locale/dashboard 路由；页面标题“报价单导出 / Quotation Export”。页面按以下顺序组织：模板 → 报价抬头 → 报价设置 → 品类 → 商品选择与顺序 → 价格预览与导出。
 
 ### 3.1 选择报价模板
 - 必填，选项来自 `GET /api/v1/admin/quotation-export/templates`，只返回 active、`product_quote`、结构校验通过且私有文件可用模板的摘要。
 - 唯一模板自动选中；刷新后当前模板仍有效则保留，否则回退首项；无模板时引导用户前往“报价模板”上传、校验并启用。
 - 选择器只接收 `templateId`，页面不接收或展示 `storageKey`、私有 URL 或文件内容。
 
-### 3.2 选择品类
-- 必填品类树选择器，支持搜索和路径显示。
-- “包含子品类商品”开关默认开启；如现有 API 定义不同，遵循现有业务规则并清晰提示。
-- 品类切换重置已选商品，然后对新查询结果默认全选。
-
-### 3.3 商品选择
-- 搜索 SKU/英文名称，显示商品总数、已选数、全选当前结果、清空。
-- 列：checkbox、后台缩略图、SKU、英文名、品类、箱规摘要、成本可用状态（可报价/缺成本，不显示成本金额）。
-- 默认全选必须覆盖整个查询集，不能仅勾选当前页。建议服务端返回最多 200 个完整 product ID 清单，前端持有 selectedProductIds；超过上限提示先缩小范围。
-- 搜索变化保留已选项，提供“全选当前结果”；选择数为 0 禁用导出。
-- `selectedProductIds` 同时是 Excel 商品行顺序：新勾选项追加到末尾，取消勾选保留其余项顺序；已选顺序面板提供上移/下移按钮和桌面拖拽，搜索不会隐藏或打乱已选项。
-- 商品表显示每项当前导出位次；preview 与 export 都按该数组顺序发送 `productIds`，后端必须按请求顺序逐项构建商品行，不能依赖数据库 `findMany` 的返回顺序。
-
-### 3.4 报价抬头
+### 3.2 报价抬头
 
 |字段|校验|
 |---|---|
@@ -86,18 +73,35 @@ MVP 建议单次最多 200 件（必须压测后确认）。默认只允许 publ
 |Phone|必填，3–40 字符，允许 +、空格、括号、短横线|
 |Quotation Title|必填，1–160 字符|
 
-### 3.5 价格配置
+抬头在模板选择之后、商品筛选之前填写，使页面先完成报价基本信息，再进入商品范围与价格校验。
+
+### 3.3 报价设置
 
 |字段|规则|
 |---|---|
-|Markup (%)|默认 15；0–500；最多 2 位小数|
+|Batch Markup (%)|默认 15；0–500；最多 2 位小数；修改后批量更新当前商品列表各行的默认值|
 |Output Currency|必填，服务端币种白名单|
 |Exchange Rate|必填，大于 0，最多 10 位小数，拒绝科学计数法|
 
 汇率方向固定为 **1 CNY = X 目标货币**。例如 USD 0.1385 表示 1 CNY = 0.1385 USD。UI label 动态显示 `Exchange rate (1 CNY = ? USD)`，不允许只写 Exchange Rate。CNY 自动填 1 并锁定，服务端再次校验为 1。推荐币种 USD/EUR/GBP/CAD/AUD/JPY/CNY，但选项必须来自服务端白名单。汇率由用户手动填写，本期不拉取实时汇率。
 
-### 3.6 价格预览和状态
-- 显示商品数、markup、目标币种、汇率方向；价格预览 3–5 件商品，由 preview API 返回。
+### 3.4 选择品类
+- 必填品类树选择器，支持搜索和路径显示。
+- “包含子品类商品”开关默认开启；如现有 API 定义不同，遵循现有业务规则并清晰提示。
+- 品类切换重置已选商品，然后对新查询结果默认全选。
+
+### 3.5 商品选择与顺序
+- 搜索 SKU/英文名称，显示商品总数、已选数、全选当前结果、清空。
+- 列：checkbox、后台缩略图、SKU、英文名、品类、箱规摘要、成本可用状态、逐商品加价率（可报价/缺成本时仍不显示成本金额）。
+- 逐商品加价率使用 0–500、最多两位小数；初始值来自批量默认值，用户可在单行继续微调。批量值变化只覆盖当前已加载商品的默认值，不阻止后续逐行修改。
+- 默认全选必须覆盖整个查询集，不能仅勾选当前页。服务端返回最多 200 个完整 product ID 清单，前端持有 selectedProductIds；超过上限提示先缩小范围。
+- 搜索变化保留已选项，提供“全选当前结果”；选择数为 0 禁用导出。
+- `selectedProductIds` 同时是 Excel 商品行顺序：新勾选项追加到末尾，取消勾选保留其余项顺序；已选顺序面板提供上移/下移按钮和桌面拖拽，搜索不会隐藏或打乱已选项。
+- 商品表显示每项当前导出位次；preview 与 export 都按该数组顺序发送 `productIds` 和 `productMarkups`，后端必须按请求顺序逐项构建商品行，不能依赖数据库 `findMany` 的返回顺序。
+- 任一已选商品加价率非法时停止自动预览并禁用导出；不可用全局值静默覆盖单行非法值。
+
+### 3.6 价格预览与导出
+- 显示商品数、批量 markup、目标币种、汇率方向；价格预览 3–5 件商品，由 preview API 返回，并显示每件商品实际使用的 markup。
 - preview 和 export 共用同一后端价格函数。
 - 缺成本、汇率错误或商品不合格时禁止导出并显示原因。
 - 导出按钮需 loading、防重复提交、失败提示和 requestId，导出前确认模板名称与版本、商品数/币种/markup/rate。
@@ -110,7 +114,7 @@ MVP 建议单次最多 200 件（必须压测后确认）。默认只允许 publ
 
 `目标币种单价 = CEILING_2(成本价 CNY × (1 + markup% / 100) × 汇率)`
 
-markup=15 表示乘 1.15；rate 表示 1 CNY 可兑换多少目标币。先加价再换汇，最后仅对最终目标币金额向上取整两位。禁止先对 CNY 成本或中间结果进位。禁止 JS number 做金融运算，所有值以 decimal string 传输，由 decimal.js 计算。
+markup=15 表示乘 1.15；rate 表示 1 CNY 可兑换多少目标币。先加价再换汇，最后仅对最终目标币金额向上取整两位。禁止先对 CNY 成本或中间结果进位。禁止 JS number 做金融运算，所有值以 decimal string 传输，由 decimal.js 计算。每件商品优先使用 `pricing.productMarkups` 中与 `productId` 对应的 markup；未提供时回退到批量 `pricing.markupPercent`。preview 和 export 必须用同一映射逐件计算。
 
 ```ts
 import Decimal from 'decimal.js';
@@ -168,7 +172,7 @@ worksheet.addImage(imageId, {
 
 每个接口服务端 guard 校验。商品列表只返 hasCost，不返实际成本。报价 service 由专门导出授权读取成本，不把成本放入通用 Product DTO，也不因此扩大普通商品编辑页的成本可见权限。
 
-审计事件 `QUOTATION_EXCEL_EXPORTED` 记录 actorId、templateId、templateVersion、templateSheetName、categoryId、selectedProductCount、currencyCode、markupPercent、exchangeRate、generatedAt、outputFileSize、requestId、outcome。禁止记录成本逐行明细、完整邮箱/电话、XLSX/Base64、图片 Buffer、storageKey、模板内容、Cookie/session/token。本期不保存报价文件。
+审计事件 `QUOTATION_EXCEL_EXPORTED` 记录 actorId、templateId、templateVersion、templateSheetName、categoryId、selectedProductCount、currencyCode、批量 markupPercent、itemMarkupOverrideCount、exchangeRate、generatedAt、outputFileSize、requestId、outcome。禁止记录成本逐行明细、完整邮箱/电话、XLSX/Base64、图片 Buffer、storageKey、模板内容、Cookie/session/token。本期不保存报价文件。
 
 ## 8. API 契约（按项目约定适配）
 
@@ -185,6 +189,10 @@ worksheet.addImage(imageId, {
   "categoryId": "uuid",
   "includeDescendants": true,
   "productIds": ["uuid-1", "uuid-2"],
+  "productMarkups": [
+    { "productId": "uuid-1", "markupPercent": "15" },
+    { "productId": "uuid-2", "markupPercent": "20" }
+  ],
   "markupPercent": "15",
   "currencyCode": "USD",
   "exchangeRate": "0.1385"
@@ -210,6 +218,10 @@ worksheet.addImage(imageId, {
   },
   "pricing": {
     "markupPercent": "15",
+    "productMarkups": [
+      { "productId": "uuid-1", "markupPercent": "15" },
+      { "productId": "uuid-2", "markupPercent": "20" }
+    ],
     "currencyCode": "USD",
     "exchangeRate": "0.1385"
   }
@@ -398,3 +410,12 @@ ADMIN_API_PROXY_TARGET=http://localhost:3002 pnpm build
 - 尚未使用真实 1/20/100/200 件商品记录 CPU、RSS、耗时、输出体积和失败率；40 MiB 图片总量上限目前是保守保护值，需压测后再决定是否调整。
 - 当前图片校验基于文件签名、尺寸和像素上限，没有对全部图片字节做完整解码沙箱；若后续允许不可信外部上传源，应增加成熟图像解码器/隔离进程。
 - 回滚无需回退数据库 schema：先隐藏或停用 `quote-templates` / `products.quotation-export` 菜单，再撤销 `quote.delete` 及三个 quotation 权限即可停止新入口。已经提交的模板删除任务不能被回滚撤销，必须由 Worker 完成或人工按任务记录核对；已生成报价文件不保存在服务端，不涉及额外文件清理。
+
+### 14.7 2026-10-31 页面顺序、逐商品加价率与 PDF 表头增量验收
+
+- Admin 页面顺序调整为模板 → 报价抬头 → 报价设置 → 品类 → 商品选择与顺序 → 价格预览与导出；批量 markup 修改后初始化当前商品行，单行仍可独立微调。
+- Preview 返回每件商品实际 markup；Export 使用同一逐商品映射重新计算价格并写入模板。混合 markup 时 `[MARKUP]` 显示 `Per product`，全部数值相同时显示实际百分比。
+- `productMarkups` 仅允许已选 `productIds`、禁止重复，并由服务端用 Decimal 逐件计算；旧请求不带该字段时继续回退批量 markup。
+- Validation 13/13、Admin 184/184、Worker 68/68、Quotation API 模块 105/105 通过；根 `pnpm typecheck`、`pnpm lint`、API/Worker/Admin build 通过。
+- 使用真实多页 XLSX 经当前打印规范化和 LibreOffice 转换，生成 7 页 A4 横向 PDF；第一页含公司/联系人/邮箱/电话，后续 6 页只重复报价名称与 `Product SKU` 表头。
+- API 全量测试仍受仓库缺少 `docs/凡士林.xlsx` 测试夹具影响，4 个既有商品导入解析用例失败；本次报价模块定向测试全部通过。全仓 `pnpm format:check` 仍有 123 个既有未格式化文件，本次改动文件已单独通过 Prettier。

@@ -207,7 +207,7 @@ soffice \
 
 PDF 输出必须验证 `%PDF-` 文件签名、可解析页数、非空页面、最大页数与最大输出字节。转换失败不得保留半成品下载入口。
 
-转换前在 OOXML ZIP entry 层生成打印副本，不把 200 MiB 工作簿完整载入 ExcelJS/JSZip 对象模型：媒体和其他部件复用原压缩字节，仅重写 workbook/visible worksheet XML。删除 `_xlnm.Print_Titles`，使公司、联系人、邮箱、电话等模板前几行只在第一页出现；后续页直接输出商品内容。每个工作表强制 A4 横向（`paperSize=9`、`orientation=landscape`）、一页宽缩放（`fitToWidth=1`、`fitToHeight=0`）；PDF 校验阶段拒绝短边小于 595pt 或长边小于 841pt 的输出。
+转换前在 OOXML ZIP entry 层生成打印副本，不把 200 MiB 工作簿完整载入 ExcelJS/JSZip 对象模型：媒体和其他部件复用原压缩字节，仅重写 workbook/visible worksheet XML。删除模板原有的 `_xlnm.Print_Titles` 后，重新生成从报价名称行（第 5 行）到动态 `Product SKU` 表头行的连续打印标题；公司、联系人、邮箱、电话等第 1–4 行只在第一页出现。LibreOffice 对逗号分隔的不连续打印标题只采用首个范围，因此必须写入一个连续范围，不能写成“第 5 行,Product SKU 行”。如果只希望后续页重复报价名称和商品表头两行，第 5 行与 `Product SKU` 行之间的中间行应保持为空；中间行若有内容，也会随连续打印标题重复。每个工作表强制 A4 横向（`paperSize=9`、`orientation=landscape`）、一页宽缩放（`fitToWidth=1`、`fitToHeight=0`）；PDF 校验阶段拒绝短边小于 595pt 或长边小于 841pt 的输出。
 
 ---
 

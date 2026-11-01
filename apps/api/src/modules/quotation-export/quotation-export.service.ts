@@ -17,6 +17,7 @@ import type {
   QuotationExportProductListQueryInput,
 } from '@b2b/validation';
 import type { Prisma, QuoteTemplate } from '@b2b/database';
+import Decimal from 'decimal.js';
 import { ApiError } from '../../common/errors/api-error';
 import { JsonLogger } from '../../common/logger.service';
 import { StorageService } from '../../common/services/storage.service';
@@ -37,10 +38,7 @@ import {
   QuotationTemplateWorkbookError,
   buildQuotationWorkbookFromTemplate,
 } from './quotation-template-workbook';
-import {
-  quotationFilename,
-  type QuotationWorkbookProduct,
-} from './quotation-workbook';
+import { quotationFilename, type QuotationWorkbookProduct } from './quotation-workbook';
 
 type ProductRow = Prisma.ProductGetPayload<{
   include: {
@@ -55,6 +53,7 @@ interface ValidatedProduct {
   sku: string;
   englishName: string;
   costCny: string;
+  markupPercent: string;
   cartonQuantity: number;
   cartonDimensions: string;
   cartonGrossWeightKg: string;
@@ -130,14 +129,16 @@ export class QuotationExportService {
     return exportable.flatMap((template) => {
       const fileName = namesByKey.get(template.storageKey);
       if (fileName === undefined) return [];
-      return [{
-        id: template.id,
-        name: template.name,
-        version: template.version,
-        fileName,
-        sheetName: template.sheetName,
-        status: 'active' as const,
-      }];
+      return [
+        {
+          id: template.id,
+          name: template.name,
+          version: template.version,
+          fileName,
+          sheetName: template.sheetName,
+          status: 'active' as const,
+        },
+      ];
     });
   }
 
@@ -211,6 +212,7 @@ export class QuotationExportService {
       items: prepared.products.map((product) => ({
         productId: product.productId,
         sku: product.sku,
+        markupPercent: product.markupPercent,
         finalUnitPrice: prepared.prices.get(product.productId) ?? '0.00',
         currencyCode: prepared.currencyCode,
       })),
@@ -268,6 +270,15 @@ export class QuotationExportService {
     });
 
     const generatedAt = new Date();
+    const firstMarkup = prepared.products[0]
+      ? new Decimal(prepared.products[0].markupPercent)
+      : null;
+    const hasMixedMarkups = prepared.products.some(
+      (product) => firstMarkup !== null && !new Decimal(product.markupPercent).eq(firstMarkup),
+    );
+    const itemMarkupOverrideCount = prepared.products.filter(
+      (product) => !new Decimal(product.markupPercent).eq(prepared.markupPercent),
+    ).length;
     let buffer: Buffer;
     try {
       buffer = await buildQuotationWorkbookFromTemplate({
@@ -279,6 +290,11 @@ export class QuotationExportService {
         header: input.header,
         currencyCode: prepared.currencyCode,
         markupPercent: prepared.markupPercent,
+        markupDisplay: hasMixedMarkups
+          ? 'Per product'
+          : prepared.products[0]
+            ? `${prepared.products[0].markupPercent}%`
+            : undefined,
         exchangeRate: prepared.exchangeRate,
         products: workbookProducts,
         generatedAt,
@@ -310,6 +326,7 @@ export class QuotationExportService {
           selectedProductCount: prepared.products.length,
           currencyCode: prepared.currencyCode,
           markupPercent: prepared.markupPercent,
+          itemMarkupOverrideCount,
           exchangeRate: prepared.exchangeRate,
           generatedAt: generatedAt.toISOString(),
           outputFileSize: buffer.byteLength,
@@ -455,6 +472,9 @@ export class QuotationExportService {
     const products: ValidatedProduct[] = [];
     const prices = new Map<string, string>();
     const errors: QuotationExportValidationIssue[] = [];
+    const productMarkupById = new Map(
+      (input.productMarkups ?? []).map((item) => [item.productId, item.markupPercent]),
+    );
 
     for (const productId of input.productIds) {
       const product = byId.get(productId);
@@ -478,11 +498,12 @@ export class QuotationExportService {
       if (productIssues.length > 0 || product.priceCny === null) continue;
 
       const costCny = product.priceCny.toString();
+      const markupPercent = productMarkupById.get(product.id) ?? input.markupPercent;
       let unitPrice: string;
       try {
         unitPrice = calculateQuotationUnitPrice({
           costCny,
-          markupPercent: input.markupPercent,
+          markupPercent,
           exchangeRate: input.exchangeRate,
         });
       } catch (error) {
@@ -500,6 +521,7 @@ export class QuotationExportService {
         sku: product.sku,
         englishName: this.englishName(product) ?? '',
         costCny,
+        markupPercent,
         cartonQuantity: product.cartonQuantity ?? 0,
         cartonDimensions: this.cartonDimensions(product),
         cartonGrossWeightKg: product.cartonWeightKg?.toString() ?? '',
@@ -507,9 +529,8 @@ export class QuotationExportService {
         weightGrams: product.weightGrams,
         packaging: product.packaging,
         category:
-          product.category?.translations.find(
-            (translation) => translation.locale === PUBLIC_LOCALE,
-          )?.name ?? null,
+          product.category?.translations.find((translation) => translation.locale === PUBLIC_LOCALE)
+            ?.name ?? null,
         lifecycleStatus: product.lifecycleStatus,
         imageStorageKey: cover.asset?.storageKey ?? cover.storageKey,
         imageWidth: cover.asset?.width ?? cover.width,

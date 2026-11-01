@@ -54,12 +54,15 @@ export interface QuotationExportValidationIssue {
 
 export interface QuotationExportPricingPreview {
   currencyCode: QuotationExportCurrency;
+  /** Batch default shown in quotation settings. */
   markupPercent: string;
   exchangeRate: string;
   itemCount: number;
   items: {
     productId: string;
     sku: string;
+    /** Effective per-product markup used by the server calculation. */
+    markupPercent: string;
     finalUnitPrice: string;
     currencyCode: QuotationExportCurrency;
   }[];
@@ -75,8 +78,16 @@ export interface QuotationExportHeader {
   quotationTitle: string;
 }
 
-export interface QuotationExportPricing {
+export interface QuotationExportItemMarkup {
+  productId: string;
   markupPercent: string;
+}
+
+export interface QuotationExportPricing {
+  /** Batch default used by rows without an override. */
+  markupPercent: string;
+  /** Optional selected-product overrides, matched by `productId`. */
+  productMarkups?: QuotationExportItemMarkup[];
   currencyCode: QuotationExportCurrency;
   exchangeRate: string;
 }

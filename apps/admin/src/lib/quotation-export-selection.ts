@@ -1,4 +1,38 @@
-import type { QuotationExportProduct, QuotationExportTemplateOption } from '@b2b/contracts';
+import type {
+  QuotationExportItemMarkup,
+  QuotationExportProduct,
+  QuotationExportTemplateOption,
+} from '@b2b/contracts';
+
+const QUOTATION_MARKUP_PATTERN = /^\d{1,3}(?:\.\d{1,2})?$/;
+
+/** Mirrors the server markup validation closely enough to prevent bad previews. */
+export function isQuotationMarkupPercent(value: string): boolean {
+  if (!QUOTATION_MARKUP_PATTERN.test(value.trim())) return false;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 && numeric <= 500;
+}
+
+export function setQuotationMarkupsForProducts(
+  current: Readonly<Record<string, string>>,
+  productIds: readonly string[],
+  markupPercent: string,
+): Record<string, string> {
+  const next = { ...current };
+  for (const productId of productIds) next[productId] = markupPercent;
+  return next;
+}
+
+export function quotationProductMarkups(
+  productIds: readonly string[],
+  markups: Readonly<Record<string, string>>,
+  fallbackMarkupPercent: string,
+): QuotationExportItemMarkup[] {
+  return productIds.map((productId) => ({
+    productId,
+    markupPercent: markups[productId] ?? fallbackMarkupPercent,
+  }));
+}
 
 /** Keeps a valid selection across refreshes and otherwise chooses the first active template. */
 export function selectQuotationTemplate(

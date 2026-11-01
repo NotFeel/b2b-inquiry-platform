@@ -7,6 +7,7 @@ import {
 
 const CATEGORY_ID = '11111111-1111-4111-8111-111111111111';
 const PRODUCT_ID = '22222222-2222-4222-8222-222222222222';
+const PRODUCT_ID_2 = '44444444-4444-4444-8444-444444444444';
 const TEMPLATE_ID = '33333333-3333-4333-8333-333333333333';
 
 const preview = {
@@ -67,6 +68,33 @@ describe('quotation export request schemas', () => {
     },
   );
 
+  it('accepts unique product markups and rejects unknown or duplicate product ids', () => {
+    const valid = {
+      ...preview,
+      productIds: [PRODUCT_ID, PRODUCT_ID_2],
+      productMarkups: [
+        { productId: PRODUCT_ID, markupPercent: '15' },
+        { productId: PRODUCT_ID_2, markupPercent: '18.25' },
+      ],
+    };
+    expect(quotationExportPreviewSchema.safeParse(valid).success).toBe(true);
+    expect(
+      quotationExportPreviewSchema.safeParse({
+        ...valid,
+        productMarkups: [{ productId: TEMPLATE_ID, markupPercent: '15' }],
+      }).success,
+    ).toBe(false);
+    expect(
+      quotationExportPreviewSchema.safeParse({
+        ...valid,
+        productMarkups: [
+          { productId: PRODUCT_ID, markupPercent: '15' },
+          { productId: PRODUCT_ID, markupPercent: '20' },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
   it('validates the export header and rejects control characters', () => {
     const request = {
       templateId: TEMPLATE_ID,
@@ -82,17 +110,27 @@ describe('quotation export request schemas', () => {
       },
       pricing: {
         markupPercent: '15',
+        productMarkups: [{ productId: PRODUCT_ID, markupPercent: '18' }],
         currencyCode: 'USD',
         exchangeRate: '0.1385',
       },
     };
     expect(quotationExportSchema.safeParse(request).success).toBe(true);
     expect(
-      quotationExportSchema.safeParse({ ...request, templateId: undefined }).success,
+      quotationExportSchema.safeParse({
+        ...request,
+        pricing: {
+          ...request.pricing,
+          productMarkups: [{ productId: TEMPLATE_ID, markupPercent: '18' }],
+        },
+      }).success,
     ).toBe(false);
-    expect(
-      quotationExportSchema.safeParse({ ...request, templateId: 'not-a-uuid' }).success,
-    ).toBe(false);
+    expect(quotationExportSchema.safeParse({ ...request, templateId: undefined }).success).toBe(
+      false,
+    );
+    expect(quotationExportSchema.safeParse({ ...request, templateId: 'not-a-uuid' }).success).toBe(
+      false,
+    );
     expect(
       quotationExportSchema.safeParse({
         ...request,
