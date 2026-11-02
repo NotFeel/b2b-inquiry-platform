@@ -1,0 +1,652 @@
+# 客户报价计算与订单管理中心 — 第一阶段可执行落地规范
+
+> 文档编号：DOC-39 / B2B-QUOTE-ORDER-CORE-01  
+> 目标分支：`main`  
+> 状态：开发实施基线（不是功能已完成声明）  
+> 本期范围：报价计算页面、商品级核算、订单级费用、海运分摊、人民币/外币计算、报价草稿、订单创建、订单快照、字典、RBAC、测试和部署。  
+> 明确不在本期：Excel/PDF 模板设计与填充、PI 页面/文件生成、物流商 API、Shipment 轨迹同步。数据库关系需为后续阶段预留。
+
+---
+
+## 0. 开发前强制审查结论
+
+本文件基于当前 `main` 分支可读取的 `README.md`、`AGENTS.md`、`database/prisma/schema.prisma`、`docs/04-data-model.md`、`docs/05-api-contract.md`、`docs/18`、`docs/19`、`docs/20`、`docs/36-admin-quotation-excel-export-implementation.md` 进行设计。实现前仍须检查对应应用源码、迁移、seed、API、前端路由和实际测试命令。
+
+### 0.1 当前已存在且必须复用的模型
+
+| 现有模型 | 当前字段/关系 | 本功能处理 |
+|---|---|---|
+| `Product` | `sku`、`priceCny Decimal(18,4)?`、`cartonLengthCm/WidthCm/HeightCm`、`cartonWeightKg Decimal(12,3)?`、`cartonQuantity Int?`、生命周期/发布状态 | 复用成本和箱规来源；确认 `priceCny` 当前语义确为采购成本，不可凭字段名推断；若不是成本，先明确并做兼容迁移 |
+| `ProductTranslation` | 商品多语言 | 报价商品名称取指定 locale 快照，默认 en-US |
+| `DictionaryType/DictionaryItem/DictionaryItemTranslation` | 两层字典、item code、value、翻译、启停、锁定 | 复用，新增币种与体积重系数类型，不建第二套字典表 |
+| `Customer` | `phoneE164 String @unique`、countryCode、displayName、note | 复用客户主档；现有模型没有 email、账单/收货地址，需 additive 扩展 |
+| `PiDocument/PiItem` | 已有 PI 独立模型及商品快照，但没有 orderId | 本期不实现 PI；预留后续 `orderId` 关联，避免重建 PI 表 |
+| `AuditLog` | actor/action/entity/requestId/metadata | 复用审计 |
+| `Menu/MenuTranslation` | 菜单树和双语翻译 | 复用 |
+| `Permission/RolePermission` | 权限事实来源 | 复用，不创建额外授权表 |
+| `OutboxEvent` | 已有持久化 outbox | 需要异步文件导出时后续复用；本期核心计算和订单保存同步完成 |
+
+当前 schema **没有** `Quotation`、`QuotationItem`、`Order`、`OrderItem`、`OrderFee`、`Shipment`、`ShipmentItem`、`TrackingEvent` 模型。不得假设这些表已经存在。当前 `PiDocument` 也没有订单外键。
+
+### 0.2 先解决的字段语义问题
+
+1. 盘点 `Product.priceCny` 在所有代码、表单、导入和现有报价导出中的读写语义。如果它是采购成本，代码与文档统一命名为“内部采购成本（CNY）”；如果它是其他价格，不能直接复用，需新增明确的 `costCny` 字段并制定回填/兼容计划。
+2. 现有 Product 箱规字段是整数厘米、单箱毛重 Decimal、每箱数量；它们可作为默认值，但报价必须允许按本次交易覆盖并将覆盖值快照保存，不能修改 Product 主档。
+3. 当前 Customer 的 `phoneE164` 是必填唯一字段。正式客户资料允许电话可选的业务需求与当前模型冲突。实现前选择：正式订单要求电话必填（本文件默认）；或改成 nullable 并设计重复客户识别/合并规则。不得用空字符串或虚构号码填充。
+4. Customer 现有 `displayName` 可作为客户名称，但 email、账单地址、收货地址应 additive 增加；历史订单必须保存客户快照，不能依赖客户主档当前值。
+5. 现有 `PiDocument` 和 `PiItem` 保留；后续为 `PiDocument` 增加 `orderId`，而不是本期重建 PI。
+
+---
+
+## 1. 产品目标与业务术语
+
+该模块是 B2B 交易系统核心入口，统一称为 **客户报价计算与订单管理中心 / Quotation & Order Center**。
+
+业务实体严格区分：
+
+- **临时计算**：浏览器可即时计算和预览，不要求保存，不创建报价编号或订单编号。
+- **报价草稿 Quotation Draft**：用户主动选择“保存草稿”后入库，可恢复、编辑、复制、转订单。
+- **正式订单 Order**：可由已保存报价转化，也可由计算器直接创建；订单一经创建即保存客户、商品、包装、费用、币种、汇率、计算结果快照。
+- **PI / Shipment**：未来阶段独立实体，关联 Order；本期只预留关系设计。
+
+本期不实现 Excel/PDF 导出。页面暂时提供计算结果展示、保存报价草稿、直接创建订单、报价转订单。不要将旧商品报价 Excel 导出页面 `docs/36` 混为本模块；两者业务用途不同，可在后续统一入口但不应破坏既有功能。
+
+### 1.1 本期明确业务决定
+
+| 决策 | 固定规则 |
+|---|---|
+| 基础核算币种 | CNY |
+| 汇率方向 | 1 CNY = X 目标货币 |
+| 汇率来源 | 人工录入；保存汇率值、日期、录入人 |
+| 外币展示 | 固定两位小数，包括 JPY；按业务明确规则，不自动套 ISO minor unit |
+| 外币舍入 | 订单最终外币金额向上进位到两位小数，Decimal ROUND_UP/CEIL 对非负金额等价 |
+| 明细与总额 | 先精确计算 CNY；外币最终总额只舍入一次；外币分项通过尾差分配保证加总等于订单总额 |
+| 报价保存 | 可选择保存草稿，也可不保存直接计算；未保存计算不创建任何业务记录 |
+| 订单创建 | 同时支持“已保存报价转订单”和“计算器直接创建订单” |
+| 商品定价 | 商品级独立核算，采购成本按百分比加价 |
+| 订单费用 | 海运费、配送费、其他附加费统一作为订单级费用输入/保存 |
+| 海运分摊 | 仅为商品级成本分析展示分摊；订单财务费用仍只计入一次 |
+| 物流计费重量 | 订单总体积重与订单总毛重取较大值 |
+| 模板导出 | 延后下一版，不在本期范围 |
+| 字典 | 币种、体积重系数由现有两层字典管理 |
+
+---
+
+## 2. 管理端菜单、页面与权限
+
+### 2.1 菜单
+
+在 Admin Shell 中新增一级菜单或业务菜单组下的子菜单，具体父节点需先检查现有菜单树，避免重复创建。建议：
+
+- 中文：客户报价与订单
+- 英文：Quotation & Orders
+- 子菜单 1：报价计算器 / Quotation Calculator，route `/[locale]/quotation-calculator`
+- 子菜单 2：报价记录 / Quotations，route `/[locale]/quotations`
+- 子菜单 3：订单管理 / Orders，route `/[locale]/orders`
+
+若当前菜单管理策略要求 route 不包含 locale，则按项目既有 Admin locale 规则使用实际路由；不得在代码中自行拼接第二套路由规则。
+
+### 2.2 页面结构
+
+报价计算器采用单页分区/步骤式工作台，桌面端可左右布局，手机端单列：
+
+1. **客户与报价信息**：模式切换（临时计算/保存报价草稿/直接创建订单）、客户选择或新增、客户名称、联系人、电话、邮箱、国家、账单地址、收货地址、报价日期、有效期、订单日期（创建订单时）。
+2. **商品明细**：商品搜索/选择、SKU、商品名称、数量、采购成本 CNY、涨幅百分比、销售单价 CNY、商品金额 CNY。
+3. **包装与物流参数**：每个商品的箱数、每箱数量、单箱长宽高、单箱毛重、体积重系数（从字典选取）；展示商品总体积重、总毛重。
+4. **订单级费用**：海运单价（CNY/kg 或业务选定计价单位）、配送费、其他费用行；统一录入、统一汇总。
+5. **货币与汇率**：报价币种（字典）、人工汇率；明确显示 `1 CNY = X USD`。
+6. **实时计算摘要**：商品金额合计、订单总体积重、总毛重、计费重量、海运费、配送费、其他费用、人民币订单总额、目标币种总额。
+7. **操作区**：重新计算、保存报价草稿、从报价生成订单、直接创建订单；未选择保存/创建时只保留本地临时状态。
+
+### 2.3 商品明细 UI
+
+商品表格每行展示：
+
+| 字段 | 输入/来源 | 规则 |
+|---|---|---|
+| 商品 | 产品选择器 | 读取后台可报价商品 |
+| SKU/名称 | Product 快照 | 不可将客户端提交值作为权威数据 |
+| 数量 | 人工输入 | Decimal 正数，单位默认 pcs |
+| 采购成本 CNY | Product 默认值，可按报价覆盖 | 成本权限控制；仅内部可见 |
+| 涨幅 % | 人工输入 | 0–500，最多 4 位小数；每商品独立 |
+| 销售单价 CNY | 自动计算 | 成本 × (1 + 涨幅/100)，中间精度保留 |
+| 商品金额 CNY | 自动计算 | 单价 × 数量 |
+| 箱数 | 人工输入/默认值 | 正整数 |
+| 每箱数量 | Product 默认/本次覆盖 | 正整数；允许与订单数量不一致，提示但不擅自改数量 |
+| 单箱尺寸 | Product 默认/本次覆盖 | 长宽高完整填写或全部为空 |
+| 单箱毛重 kg | Product 默认/本次覆盖 | 非负，正式物流报价要求有效正数 |
+| 体积重系数 | 字典选择 | 必须来自启用的 volumetric divisor 字典项 |
+
+商品成本和利润率只允许有相应权限的后台用户查看/修改。任何公共 Storefront DTO、公开页面、SEO、缓存、产品接口都不得出现内部成本、涨幅、销售报价或订单数据。
+
+### 2.4 权限码建议
+
+新增权限前先查询 Permission seed 与权限目录，避免重复 code。建议：
+
+| 权限码 | 用途 |
+|---|---|
+| `quotation.read` | 访问报价计算器、读取报价草稿/报价详情 |
+| `quotation.calculate` | 调用后端计算预览 |
+| `quotation.create` | 保存报价草稿 |
+| `quotation.update` | 修改未锁定报价草稿 |
+| `quotation.delete` | 删除/归档报价草稿（不得删除已转订单的来源记录） |
+| `quotation.convert_to_order` | 从报价草稿创建订单 |
+| `order.read` | 查看订单及订单明细 |
+| `order.create` | 直接创建订单 |
+| `order.update` | 修改允许编辑的订单字段 |
+| `order.cancel` | 取消订单；须检查 PI/Shipment 关联状态 |
+| `quotation.cost.read` | 查看商品采购成本与利润相关数据 |
+| `quotation.cost.update` | 在报价中覆盖采购成本（可选，默认仅高权限角色） |
+| `order.cost.read` | 查看订单成本快照及商品运费分摊 |
+
+每个 API 独立执行服务端 RBAC。菜单可见和按钮隐藏不构成授权。角色授权事实只使用 Permission + RolePermission。权限 seed 必须幂等，并将权限按模块归类。初始授予策略由现有 super_admin/业务角色 seed 决定，不得自动给所有角色授权。
+
+### 2.5 UI 状态与交互
+
+必须实现并测试：Initial、LoadingProducts、NoProducts、Editing、Calculating、CalculationError、UnsavedChanges、SavingDraft、DraftSaved、CreatingOrder、OrderCreated、PermissionDenied、DictionaryUnavailable、InvalidExchangeRate、InvalidPackaging、FreightAllocationUnavailable。
+
+- 临时计算模式不强制客户资料。
+- 保存报价草稿时，至少要求报价标题/客户资料按业务策略填写；无客户时允许匿名草稿需由产品决定，本文件建议客户可空但需填写报价名称。
+- 创建正式订单必须有客户名称、电话、国家/地区、完整收货地址和订单日期；邮箱按业务可选。
+- 客户账单地址可以与收货地址不同。
+- 客户选择已有 Customer 时只填充表单初值；提交时仍保存订单客户快照。
+- 离开页面有未保存变更提示；草稿保存/订单创建后显示编号和详情链接。
+- 计算器页面在 360px、768px、桌面断点适配，商品表格局部横向滚动，不允许整页横向溢出。
+- 所有中英文文案进入现有 i18n 资源，不在组件硬编码。
+
+---
+
+## 3. 统一计算规则
+
+### 3.1 商品销售价格
+
+每个商品独立输入涨幅百分比：
+
+`unitSalePriceCny = costCny × (1 + markupPercent / 100)`
+
+`itemAmountCny = unitSalePriceCny × quantity`
+
+示例：采购成本 ¥5，涨幅 20%，销售单价 ¥6；数量 100 时商品金额 ¥600。
+
+内部成本、销售单价、金额使用 Decimal；不在每一步强制保留两位。人民币精度建议 4–6 位，最终订单外币按两位小数舍入。
+
+### 3.2 包装数据与重量
+
+对商品 i：
+
+- `cartonCount_i`：本次报价箱数。
+- `unitsPerCarton_i`：每箱数量。
+- `cartonLengthCm_i`、`cartonWidthCm_i`、`cartonHeightCm_i`：单箱外箱尺寸。
+- `cartonGrossWeightKg_i`：单箱毛重。
+- `volumetricDivisor_i`：体积重系数，例如 6000。
+
+单箱体积重：
+
+`cartonVolumeWeightKg = L × W × H / volumetricDivisor`
+
+商品总体积重：
+
+`itemTotalVolumeWeightKg = cartonVolumeWeightKg × cartonCount`
+
+商品总毛重：
+
+`itemTotalGrossWeightKg = cartonGrossWeightKg × cartonCount`
+
+订单总体积重和总毛重：
+
+`orderVolumeWeightKg = Σ itemTotalVolumeWeightKg`
+
+`orderGrossWeightKg = Σ itemTotalGrossWeightKg`
+
+订单计费重量：
+
+`chargeableWeightKg = max(orderVolumeWeightKg, orderGrossWeightKg)`
+
+体积重系数来自字典；不得硬编码 6000。商品尺寸必须三项同时有效或全部为空。正式使用海运计算时所有参与商品必须有可用的包装重量数据；若缺失，阻止正式订单确认并指出具体商品。
+
+### 3.3 海运费与商品级分摊
+
+海运单价按订单统一输入（例如 CNY/kg），海运费只作为一条订单级费用保存：
+
+`orderFreightCny = chargeableWeightKg × freightRateCnyPerKg`
+
+分摊规则严格按用户确定的逻辑：
+
+1. 若订单总体积重 > 订单总毛重：按各商品总体积重占订单总体积重的比例分摊。
+2. 若订单总毛重 > 订单总体积重：按各商品总毛重占订单总毛重的比例分摊。
+3. 若二者相等：默认按总体积重分摊（两种占比相同）。
+4. 如果被选中的分摊依据合计为 0，不能除零；若海运费为 0 可将各行分摊为 0，否则阻止计算并提示缺失包装数据。
+
+商品 i 的分摊：
+
+`allocatedFreight_i = orderFreightCny × itemBasis_i / Σ itemBasis`
+
+计算精度保留足够小数。按商品行顺序计算前 n-1 行，最后一行承接剩余尾差，确保：
+
+`Σ allocatedFreight_i = orderFreightCny`
+
+如果费用币种展示为外币，同样只转换订单级费用总额一次；商品外币分摊使用同一尾差策略，确保分摊合计等于外币海运费。
+
+**关键财务规则：** 海运费分摊仅用于展示商品 landed-cost / 内部成本分析。订单汇总时海运费只加一次，不能先把分摊海运费加入每个商品销售金额后又将订单海运费再加一次。
+
+### 3.4 订单级其他费用
+
+所有运费及附加费在订单级统一录入和汇总，不强制拆成商品级收费：
+
+- 海运费：由计费重量 × 海运单价自动计算；用户可设置人工覆盖时必须保存覆盖原因和操作者（默认不开放）。
+- 配送费：订单级固定金额 CNY。
+- 其他费用：可添加多行，字段包括费用类型、名称、金额 CNY、备注；费用类型可使用字典，非核心类型可配置。
+- 保险费、报关费、文件费等如未来需要，作为其他费用行，不要为每一种费用重复新增金额列。
+- 所有费用金额不得为负数；折扣如未来支持应单独建模，不允许伪装为负费用。
+
+订单人民币总额：
+
+`totalAmountCny = Σ itemAmountCny + orderFreightCny + deliveryFeeCny + Σ otherFeesCny`
+
+若业务未来决定销售报价中不向客户收取部分费用，应增加“内部成本费用/客户报价费用”分类，而不是从合计中静默漏掉。
+
+### 3.5 汇率、外币与舍入
+
+统一定义：
+
+`exchangeRate = targetCurrency units per 1 CNY`
+
+例如 `1 CNY = 0.1380 USD`。
+
+`foreignExact = totalAmountCny × exchangeRate`
+
+`foreignTotal = CEIL_TO_2_DECIMALS(foreignExact)`
+
+使用 Decimal.js 或现有 Decimal 工具；禁止 JavaScript Number、parseFloat 参与金融运算。汇率必须为正数；CNY 汇率固定为 1 并锁定。拒绝科学计数法、NaN、Infinity、超出精度、零或负数。
+
+本项目本功能明确所有币种展示两位小数（包括 JPY），不按币种默认小数位自动改变规则。对非负报价金额，使用 Decimal ROUND_UP 到两位；如金额可能出现负值，先拒绝/走单独退款业务规则。
+
+**不要逐个商品先 CEIL 再求和。** 推荐先得到精确人民币商品金额和订单费用，算出订单总外币金额后向上进位两位。商品外币明细、费用外币明细应使用“总额舍入 + 分币尾差分配”方式，确保：
+
+`Σ foreign item lines + foreign order fees = foreignTotal`
+
+汇率、汇率日期、录入人、基础币种、目标币种、舍入规则、计算引擎版本都应保存。报价/订单历史不随字典汇率、商品成本或字典配置后续变化。
+
+### 3.6 计算服务唯一事实来源
+
+前端可以做即时预览，但正式计算 API、保存报价、报价转订单、直接创建订单和后续文件导出必须调用同一个后端 Calculator。请求只传输入项；后端重新读取商品默认值和字典项、验证权限和范围、重算结果，不信任前端传来的最终单价、总金额、重量、汇率字典 label 或分摊结果。
+
+建议计算模块边界：
+
+```text
+QuotationModule
+  ├── QuotationController
+  ├── QuotationService
+  ├── QuotationCalculationService
+  ├── FreightAllocationService
+  ├── CurrencyConversionService
+  ├── QuotationOrderConversionService
+  ├── dto/
+  └── calculators/
+```
+
+---
+
+## 4. 数据库设计与 Prisma 迁移
+
+### 4.1 设计原则
+
+- 先复用现有 Product、Customer、Dictionary、PiDocument、AuditLog、Permission、Menu。
+- 报价与订单是独立实体；订单创建时复制完整快照。
+- 历史记录不依赖实时 Product、Customer、Dictionary 数据来还原当时金额。
+- 金额和重量使用 PostgreSQL NUMERIC / Prisma Decimal。
+- 不用 Float/Double 保存成本、价格、汇率、重量或分摊结果。
+- 业务编码唯一，UUID 主键。
+- 订单创建和报价转换使用事务与幂等保护。
+- 数据库关系预留 PI、Shipment，但不提前实现完整物流业务。
+
+### 4.2 新增模型建议
+
+以下为逻辑模型，最终字段/关系须结合 Prisma 版本和现有命名风格实现并生成迁移；不得直接复制后跳过 schema validate。
+
+#### Quotation
+
+主字段建议：
+
+- id UUID、quotationNo unique、version Int、status（DRAFT/CONVERTED/EXPIRED/ARCHIVED）。
+- title、customerId nullable、createdById、validUntil、quotedAt。
+- currencyCode、exchangeRate Decimal、exchangeRateBase（CNY）、exchangeRateDate、exchangeRateSource（MANUAL）、exchangeRateEnteredById。
+- roundingMode（CEIL_2）、calculationVersion。
+- subtotalCny、freightCny、deliveryFeeCny、otherFeesCny、totalAmountCny、totalAmountForeignExact、totalAmountForeign。
+- customerSnapshot Json（保存客户名称、联系人、电话、邮箱、国家、账单/收货地址）。
+- calculationSnapshot Json（输入与完整计算结果快照）。
+- convertedOrderId nullable；convertedAt nullable。
+- createdAt/updatedAt。
+- 关系：items、fees、customer optional、createdBy、convertedOrder optional（唯一约束按产品决定）。
+
+约束：`quotationNo` 唯一；`version >= 1`；状态转换由服务层控制；已转订单报价不可覆盖修改，修订需新版本。
+
+#### QuotationItem
+
+- id、quotationId、lineNo unique per quotation。
+- productId nullable（产品删除/归档后保留快照，不依赖外键级联）；skuSnapshot、productNameSnapshot、descriptionSnapshot。
+- quantity Decimal、unit。
+- costCny、markupPercent、unitSalePriceCny、lineAmountCny。
+- cartonCount、unitsPerCarton、cartonLengthCm、cartonWidthCm、cartonHeightCm、cartonGrossWeightKg、volumetricDivisor。
+- totalVolumeWeightKg、totalGrossWeightKg、freightAllocationBasis、allocatedFreightCny、allocatedFreightForeign。
+- currencyCode、unitSalePriceForeign、lineAmountForeign（外币尾差分配结果）。
+- productDataSnapshot Json、packagingSnapshot Json。
+- createdAt/updatedAt。
+
+#### QuotationFee
+
+- id、quotationId、lineNo、feeTypeCode、nameSnapshot、amountCny、amountForeign、isFreight、notes。
+- 海运费可以作为固定 fee row；避免同时在主表和费用表重复计入。若主表保留 freightCny 作为聚合缓存，必须保证它与唯一 freight row 一致并由同一事务维护。
+
+#### Order
+
+- id、orderNo unique、status（DRAFT/CONFIRMED/CANCELLED 等有限状态机）。
+- sourceQuotationId nullable、sourceQuotationVersion nullable、createdById、customerId nullable。
+- orderDate、requestedDeliveryDate nullable、confirmedAt nullable。
+- currencyCode、exchangeRate、exchangeRateBase、exchangeRateDate、exchangeRateSource、roundingMode、calculationVersion。
+- customerSnapshot Json、billingAddressSnapshot Json、shippingAddressSnapshot Json。
+- subtotalCny、freightCny、deliveryFeeCny、otherFeesCny、totalAmountCny、totalAmountForeignExact、totalAmountForeign。
+- calculationSnapshot Json。
+- createdAt/updatedAt。
+- 关系：items、fees、quotations (source/converted)、piDocuments（未来）、shipments（未来）。
+
+#### OrderItem
+
+字段与 QuotationItem 的商品/价格/包装/重量快照等价；额外 orderId、lineNo。订单商品快照不能只存 productId；productId 可 nullable 作为回溯关联，历史 SKU、名称、数量、价格、包装参数必须保留。
+
+#### OrderFee
+
+字段与 QuotationFee 等价，归属订单。海运费、配送费和其他费用只在此表作为订单级费用记录。订单主表金额字段为聚合快照，不得重复累加。
+
+### 4.3 Customer additive 扩展
+
+现有 Customer 仅有 phoneE164、countryCode、displayName、note。建议增加：
+
+- email nullable（不建议唯一，多个客户可能共用采购邮箱）。
+- contactName nullable。
+- billingAddress Json nullable。
+- defaultShippingAddress Json nullable。
+- companyName 可复用 displayName 或新增字段，需统一语义。
+- address snapshot 仍必须复制进 Quotation/Order，不依赖 Customer 地址后续变化。
+
+电话唯一策略：当前 `phoneE164 @unique NOT NULL`。如果允许没有电话的客户，需迁移为 nullable，并为非空电话建立部分唯一索引（Prisma 表达能力不足时用 SQL migration）；同时不能用空字符串代替 null。默认第一版创建订单要求电话必填，减少 schema 改动。
+
+### 4.4 PI / Shipment 预留关系
+
+本期不创建 Shipment/TrackingEvent 表，不实现物流 API；但需在设计上明确下一阶段：
+
+- 给现有 `PiDocument` 增加 nullable `orderId` UUID 外键，指向 Order；迁移可在 PI 阶段执行，当前不必为未用关系提前改动。
+- 一个 Order 可关联多个 PiDocument revision；`PiDocument` 现有 `piNo + revisionNo` 唯一规则保留。
+- Shipment、ShipmentItem、TrackingEvent 未来独立建表：Order 1:N Shipment；Shipment 1:N ShipmentItem；Shipment 1:N TrackingEvent。
+- ShipmentItem 必须引用 OrderItem，并记录 shippedQuantity；后端校验累计发货量不超过订单数量（如允许超发需显式权限和审计）。
+- 物流商 adapter、凭证、Webhook secret 不进入 Admin 前端或订单快照。
+
+### 4.5 字典设计（复用两层模型）
+
+新增并 seed 以下系统字典类型（先查现有 type code，不重复创建）：
+
+| typeCode | itemCode 示例 | DictionaryItem.value | 用途 |
+|---|---|---|---|
+| `currency` | `CNY`, `USD`, `EUR`, `GBP`, `JPY`, `CAD`, `AUD` | 货币符号（如 ¥、$、€、£、¥、C$、A$） | 报价目标货币 |
+| `volumetric_weight_divisor` | `6000`, `5000`, `8000` | 与 code 相同的正整数字符串 | 体积重计算除数 |
+| `quotation_fee_type` | `delivery`, `customs`, `insurance`, `handling`, `other` | 可选 | 订单级费用分类 |
+
+- 币种 code 使用 ISO 4217 大写 code；label 通过 DictionaryItemTranslation 多语言维护。
+- 币种符号只用于展示；计算始终使用 code。
+- 本功能所有币种强制显示两位小数，不能从字典 value 推断精度。
+- 体积重 divisor 读取 item.value 或稳定 code；服务端校验为正整数，且 item 必须属于 `volumetric_weight_divisor`、enabled=true。
+- 禁止把系数 6000 写死在前端/后端；如业务希望 6000/5000/8000 可由字典维护。
+- 历史报价/订单保存 divisor 数值快照；禁用字典项不得改变历史结果。
+- 字典类型/系统核心项按 docs/20 的 systemLocked、引用保护规则管理。
+
+### 4.6 Prisma 迁移实施顺序
+
+1. 先在分支中备份并核对当前 schema/migrations；确认 Product.priceCny 成本语义。
+2. 添加 Customer 扩展字段（若采用电话必填则不改 phone nullable）。
+3. 新增 Quotation、QuotationItem、QuotationFee、Order、OrderItem、OrderFee 模型及索引、外键。
+4. 新增 dictionary seed（幂等 upsert），不重复创建已存在 type/item；核对中英文翻译。
+5. 新增 Permission seed、Menu seed、i18n key。
+6. 执行 `prisma format`、`prisma validate`、生成 client、migration diff 检查；生成版本化迁移。
+7. 在临时 PostgreSQL 数据库执行 migrate deploy，再执行回填/seed 和完整测试。
+8. 生产部署先执行迁移，再部署兼容代码；不要在 API 容器启动时自动执行破坏性 schema push。
+9. 每步保留 SQL 对账结果和回滚方案。新表可先回滚应用代码，删除新表仅限确认无数据且经审批；已写入报价/订单后禁止自动 DROP 数据。
+
+---
+
+## 5. API 契约建议
+
+所有路径遵循项目现有 `/api/v1/admin`、认证、错误结构和分页规范；先搜索已有等价接口，避免重复 endpoint。
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/admin/quotation-calculator/config` | 返回可用币种、体积重系数、默认值、舍入策略、单位 |
+| GET | `/admin/quotation-calculator/products` | 商品搜索/选择，返回可报价商品摘要和箱规默认值；成本字段需成本权限 |
+| POST | `/admin/quotation-calculator/preview` | 服务端计算预览，不持久化 |
+| POST | `/admin/quotations` | 保存报价草稿 |
+| GET | `/admin/quotations` | 报价草稿列表 |
+| GET | `/admin/quotations/:id` | 报价详情 |
+| PATCH | `/admin/quotations/:id` | 更新未转订单草稿，使用 revision/updatedAt 乐观锁 |
+| POST | `/admin/quotations/:id/convert-to-order` | 报价转订单 |
+| POST | `/admin/orders` | 直接创建订单（提交计算输入，不接受最终金额） |
+| GET | `/admin/orders` | 订单列表 |
+| GET | `/admin/orders/:id` | 订单详情 |
+| PATCH | `/admin/orders/:id` | 按状态和权限修改允许字段，金额修改必须重新计算并审计 |
+
+### 5.1 预览请求规则
+
+请求包含 customer draft、items（productId、quantity、markup、包装覆盖值、divisorItemId）、订单费用输入、currencyCode、exchangeRate。不要接受客户端提供的成本、最终售价、分摊结果作为权威值。若有成本覆盖功能，必须单独权限并明确区分 `costOverrideCny` 与 Product 成本。
+
+响应包括：
+- items：SKU/名称快照、成本（仅有成本读取权限）、markup、CNY unit price/line amount、重量、分摊依据、allocated freight。
+- freight：volume total、gross total、chargeable weight、rate、freight amount。
+- fees：每条费用 CNY 和分配后的外币展示值。
+- totals：subtotal CNY、freight CNY、delivery CNY、other CNY、total CNY、exchange rate、foreign exact、foreign total。
+- warnings：例如每箱数量与总数量不整除、产品箱规被覆盖。
+- errors：结构化 code、field、productId。
+
+### 5.2 幂等与并发
+
+- 保存草稿/创建订单/报价转订单必须支持 Idempotency-Key 或等价幂等 token；相同用户、相同 key、相同 payload 返回同一结果。
+- 报价转订单在事务内锁定报价行（或使用条件更新）并确保只生成一个订单；并发第二次请求返回已转换订单，不创建重复订单。
+- 草稿更新使用 `updatedAt` 或 revision 做乐观锁；版本冲突返回 409。
+- OrderNo/QuotationNo 通过数据库唯一约束和安全编号生成器处理冲突重试；不以 count(*) + 1 生成编号。
+- 订单事务内写主表、明细、费用、审计记录；任何一步失败全部回滚。
+
+---
+
+## 6. 订单状态与业务保护
+
+第一期状态保持简单：
+
+- Quotation：DRAFT → CONVERTED / EXPIRED / ARCHIVED。
+- Order：DRAFT → CONFIRMED → CANCELLED（如直接创建即确认，明确由 API 事务创建状态为 CONFIRMED；不允许前端随意传 status）。
+
+建议第一版创建订单即 `CONFIRMED`，若业务需要审核可增加订单 DRAFT，但必须明确确认按钮和状态权限。取消订单不删除数据；取消前检查是否已有 PI/Shipment（后续阶段）并执行相应规则。
+
+订单创建后：
+- Product、Customer、Dictionary 后续变化不影响 OrderItem/OrderFee/Order 快照。
+- 不允许直接修改已确认订单的历史金额；需要订单变更单/修订机制，至少记录修改前后快照、原因、操作者。
+- 订单删除采用归档/取消，不物理删除。
+- 已转换报价锁定其原始计算快照；若客户要求改价，创建新报价版本或订单变更记录。
+
+---
+
+## 7. 测试与验收清单
+
+### 7.1 Decimal 与商品金额
+
+- [ ] 成本 ¥5，markup 20%，销售单价 = ¥6。
+- [ ] 数量 100，商品金额 = ¥600。
+- [ ] markup 0、500、负数、超过 500、超精度分别测试。
+- [ ] Decimal 极小数、长小数、字符串输入；拒绝 NaN/Infinity/科学计数法。
+- [ ] 任何计算不得通过 JS Number 累加。
+
+### 7.2 体积重、毛重、海运分摊
+
+- [ ] L=40cm、W=30cm、H=30cm、divisor=6000，单箱体积重 = 6kg。
+- [ ] 2 箱，商品总体积重 = 12kg。
+- [ ] 单箱毛重 8kg，2 箱商品总毛重 = 16kg。
+- [ ] 订单总体积重 150kg、总毛重 126kg：按体积重分摊。
+- [ ] 订单总体积重 100kg、总毛重 160kg：按毛重分摊。
+- [ ] 两者相等：按体积重分摊，比例与毛重相同。
+- [ ] 海运费 375 CNY，分摊结果逐行相加严格等于 375。
+- [ ] 分摊比例 1/3、2/3 或小数重量造成尾差时，最后一行承接尾差。
+- [ ] 计费依据为 0、重量缺失、箱数为 0、尺寸部分缺失时返回明确错误，不除零、不静默按 0 计算。
+- [ ] 验证商品海运分摊只用于展示，订单总额没有重复计入。
+
+### 7.3 汇率与舍入
+
+- [ ] CNY rate 自动为 1 且不可编辑。
+- [ ] USD 0.1380 表示 1 CNY = 0.1380 USD。
+- [ ] ¥1,000 × 0.1380 = $138.00。
+- [ ] 外币精确结果 137.5001 → 最终 $137.51（向上到两位）。
+- [ ] 精确结果 137.5000 → $137.50。
+- [ ] 明细外币分配后总和严格等于外币订单总额。
+- [ ] JPY 仍按本功能要求展示两位小数。
+- [ ] 汇率为空、0、负数、过长、科学计数法、NaN 均拒绝。
+- [ ] 改变币种字典 label/symbol 不改变历史订单币种和金额。
+
+### 7.4 草稿、订单和幂等
+
+- [ ] 临时预览不创建 Quotation/Order/Customer 记录。
+- [ ] 用户主动保存后只创建 Quotation DRAFT，不创建 Order。
+- [ ] 报价详情刷新后恢复所有商品、包装、费用、汇率、计算快照。
+- [ ] 报价转订单后保存 Order、OrderItem、OrderFee 快照，Quotation 标记 CONVERTED。
+- [ ] 并发双击/重放转换接口只产生一个订单。
+- [ ] 直接创建订单不要求先保存报价，但仍保存相同订单快照。
+- [ ] 两种订单创建方式的计算结果一致。
+- [ ] 修改 Product 成本、Customer 地址、字典 label 后，历史订单数据不变。
+- [ ] 订单创建中任一明细写入失败，事务整体回滚。
+- [ ] 未授权用户无法读取成本、保存报价、创建订单或转换报价。
+
+### 7.5 字典、菜单和权限
+
+- [ ] 币种选项只来自启用的 `currency` 字典项。
+- [ ] 体积重系数只来自启用的 `volumetric_weight_divisor` 字典项。
+- [ ] 传入其他字典类型的 itemId 返回 400/422。
+- [ ] 禁用系数不允许新报价选择，历史订单仍显示快照数值。
+- [ ] 菜单 zh-CN/en-US 正确；无权限用户不显示菜单但直接调用 API 仍 403。
+- [ ] Permission seed、Menu seed、Dictionary seed 多次运行结果一致，无重复行。
+
+### 7.6 UI、回归和发布
+
+- [ ] 360px、768px、桌面布局无整页横向溢出。
+- [ ] 商品增删、排序、数量修改、包装覆盖后自动重新计算。
+- [ ] 字典接口加载失败时禁用报价提交并提示，不使用硬编码 fallback。
+- [ ] 所有输入有 label、错误提示、loading/disabled 和键盘可用性。
+- [ ] Storefront 公共 API、HTML、SSR、缓存无成本/报价/订单字段。
+- [ ] 运行相关 unit、integration、e2e、lint、typecheck、build；报告真实结果，不把未运行项标成通过。
+
+---
+
+## 8. 开发实施顺序（建议拆 PR）
+
+### PR-1：审计与数据库基线
+- 阅读 AGENTS 与 docs/04/05/18/19/20。
+- 审查 Product.priceCny 成本语义、Customer 使用情况、PiDocument、Dictionary seed、Permission/Menu seed。
+- 输出当前字段映射和差异清单；没有明确语义不得迁移。
+- 新增 Prisma 模型和 migration；本地 PostgreSQL migrate deploy、seed、schema validate。
+
+### PR-2：字典、RBAC、API 基础
+- 新增 currency、volumetric_weight_divisor、quotation_fee_type 字典 seed。
+- 新增权限 seed 和菜单翻译。
+- API config/products/preview；后端 Decimal Calculator、FreightAllocationService、CurrencyConversionService。
+- 单元/集成测试覆盖计算、权限、字典引用验证。
+
+### PR-3：报价草稿
+- Admin 计算器 UI、商品编辑表格、客户表单、费用区、币种/汇率。
+- 临时预览不落库；保存草稿事务创建 Quotation + Item + Fee + snapshot。
+- 报价列表/详情/编辑、乐观锁、审计、权限。
+
+### PR-4：订单创建
+- 报价转订单与直接创建订单两条路径。
+- Order/Item/Fee 快照、编号、幂等键、事务、订单列表/详情。
+- 状态与订单金额保护。
+
+### PR-5：回归与部署验收
+- 端到端流程、性能/并发、公共价格泄漏、响应式、备份/恢复。
+- 更新 API 文档、README 导航、部署/回滚 runbook。
+- 未完成 Excel/PDF 模板和 PI/物流功能，不得在菜单显示为已完成入口。
+
+---
+
+## 9. 推荐源码目录（以现有项目实际目录为准）
+
+后端优先沿用现有 NestJS module 组织：
+
+```text
+apps/api/src/modules/
+  quotation/
+    quotation.module.ts
+    quotation.controller.ts
+    quotation.service.ts
+    quotation-calculation.service.ts
+    freight-allocation.service.ts
+    currency-conversion.service.ts
+    quotation-order-conversion.service.ts
+    dto/
+    calculators/
+  orders/
+    orders.module.ts
+    orders.controller.ts
+    orders.service.ts
+    dto/
+```
+
+Admin 按当前 Next.js locale route 和 feature folder 规范组织：
+
+```text
+apps/admin/
+  app/[locale]/quotation-calculator/
+  app/[locale]/quotations/
+  app/[locale]/orders/
+  features/quotation/
+  features/orders/
+```
+
+不得仅为了符合上述示意而重排现有目录；先检查实际 apps 结构与组件复用情况。
+
+---
+
+## 10. 安全、审计、性能与运维
+
+- 内部成本/利润数据只向有权限的 Admin API 返回；日志不记录逐行成本和客户完整 PII。
+- 客户地址、电话、邮箱属于个人信息；接口按权限最小化返回，审计 metadata 脱敏。
+- 订单、报价、费用保存均用事务；编号依赖 unique constraint，不用 count+1。
+- 大批量商品预览采用分页/上限；第一版建议最多 100 个商品行，压测后可调整。
+- 计算接口应限流，避免用户输入每次按键都请求后端；前端 debounce，服务端仍做请求限流。
+- 计算引擎保存 `calculationVersion`，以后公式变化可识别历史规则版本。
+- 本期计算为同步轻量操作；不要为简单 Decimal 计算新增 Redis/BullMQ。未来 Excel/PDF 或批量导出可复用现有 PostgreSQL durable task + Worker。
+- 监控 preview P95、计算失败率、草稿保存失败、订单创建失败、事务冲突、字典加载失败。
+- 数据库备份覆盖新增报价/订单/客户字段；上线前做恢复演练。
+
+---
+
+## 11. 发布、迁移与回滚
+
+1. PR 合并前执行 Prisma validate、migration diff review、unit/integration/e2e、lint/typecheck/build。
+2. 备份数据库并确认可恢复。
+3. 发布顺序：数据库 additive migration → 字典/权限/菜单 seed → API → Admin。
+4. 新菜单可先仅对 super_admin/测试角色开放，验收后再分配业务角色。
+5. 若应用发布失败，先回滚 API/Admin 镜像；保留 additive schema 和已创建业务数据，不自动 DROP 新表。
+6. 若迁移失败，在任何应用切换前修复或执行经过审核的 down migration；不要手工删除生产数据。
+7. 订单数据一旦产生，回滚应用不得丢失订单、报价、客户快照和审计记录。
+8. 恢复验证：随机抽取报价和订单，核对商品行、人民币总额、汇率、外币总额、海运分摊合计与计算快照。
+
+---
+
+## 12. 本期完成定义
+
+- [ ] 现有 Schema/seed/API/UI 审计完成，字段语义确认。
+- [ ] 新增 Quotation/Order 相关表和版本化迁移，复用现有 Customer、Product、Dictionary、PiDocument。
+- [ ] 币种与体积重系数由两层字典管理，无硬编码业务选项。
+- [ ] 临时计算、保存报价草稿、报价转订单、直接创建订单四条路径完整。
+- [ ] 商品级涨幅、商品金额、包装、体积重/毛重、海运分摊正确。
+- [ ] 所有订单级费用只汇总一次，分摊不重复计入总价。
+- [ ] CNY 先核算，外币汇率人工录入，最终订单金额向上进位两位小数。
+- [ ] 历史报价/订单快照不受 Product/Customer/Dictionary 修改影响。
+- [ ] 菜单、权限、API guard、审计、双语、响应式完成。
+- [ ] 单元/集成/E2E/lint/typecheck/build 结果真实记录。
+- [ ] Excel/PDF 模板导出、PI 页面、发货和物流 API 明确列为后续版本，不宣称已完成。
+
+**实现原则：先确认现有数据语义，再做最小 additive migration；先保证计算正确、快照可靠、权限完整，再扩展模板导出、PI 和物流。**
