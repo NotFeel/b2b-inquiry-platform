@@ -51,6 +51,7 @@
 | `docs/08-excel-pdf-pi.md` | 商品报价单 Excel、PI 与 Excel 转 PDF 当前状态 |
 | `docs/30-remove-excel-to-pdf-keep-quote-excel.md` | Excel 转 PDF 的历史下线决策记录（后续重新引入方式见 `docs/38`） |
 | `docs/38-admin-excel-to-pdf-conversion-implementation.md` | Admin Excel 转 PDF：200 MiB 分块上传、安全校验、Worker 转换、RBAC、部署、测试与回滚 |
+| `docs/39-admin-quotation-calculator-and-order-center.md` | 客户报价计算与订单管理中心：商品级核算、订单级费用、海运分摊、CNY/外币舍入、字典、报价草稿/订单创建、数据库快照、菜单权限、测试与部署；Excel/PDF 模板、PI、物流 API 延后 |
 | `docs/31-lightweight-deployment-sqlite-redis-image-optimization.md` | 轻量化部署、SQLite/Redis 取舍、数据库任务表、图片优化与旧架构评估（补充文档） |
 | `docs/32-cloudflare-frontend-server-api-deployment.md` | Cloudflare 前后台、Next.js 兼容性、认证/缓存安全与迁移路线（专题文档） |
 | `docs/33-lightweight-cloudflare-neon-r2-implementation.md` | **当前目标架构实施基线**：Cloudflare Workers + Neon PostgreSQL + R2 + 单台 2C/1G NestJS、PG 任务队列替代 Redis、部署、测试、验收和回滚 |
