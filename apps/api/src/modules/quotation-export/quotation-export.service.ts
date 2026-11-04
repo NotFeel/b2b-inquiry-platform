@@ -590,7 +590,10 @@ export class QuotationExportService {
     }
     const dimensions = [product.cartonLengthCm, product.cartonWidthCm, product.cartonHeightCm];
     const populated = dimensions.filter((value) => value !== null).length;
-    if (populated !== 0 && (populated !== 3 || dimensions.some((value) => (value ?? 0) <= 0))) {
+    if (
+      populated !== 0 &&
+      (populated !== 3 || dimensions.some((value) => value !== null && !value.gt(0)))
+    ) {
       issues.push(this.issue(product, 'cartonDimensions', 'INVALID_CARTON_DIMENSIONS'));
     }
     if (product.cartonWeightKg === null || product.cartonWeightKg.lte(0)) {
@@ -656,7 +659,7 @@ export class QuotationExportService {
     ) {
       return '-';
     }
-    return `${product.cartonLengthCm} × ${product.cartonWidthCm} × ${product.cartonHeightCm} cm`;
+    return `${product.cartonLengthCm.toString()} × ${product.cartonWidthCm.toString()} × ${product.cartonHeightCm.toString()} cm`;
   }
 
   private productSize(product: ProductRow): string {

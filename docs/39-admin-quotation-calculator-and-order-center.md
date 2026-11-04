@@ -31,10 +31,59 @@
 ### 0.2 先解决的字段语义问题
 
 1. 盘点 `Product.priceCny` 在所有代码、表单、导入和现有报价导出中的读写语义。如果它是采购成本，代码与文档统一命名为“内部采购成本（CNY）”；如果它是其他价格，不能直接复用，需新增明确的 `costCny` 字段并制定回填/兼容计划。
-2. 现有 Product 箱规字段是整数厘米、单箱毛重 Decimal、每箱数量；它们可作为默认值，但报价必须允许按本次交易覆盖并将覆盖值快照保存，不能修改 Product 主档。
+2. 现有 Product 箱规长宽高为 Decimal(12,3) 厘米、单箱毛重 Decimal、每箱数量；它们可作为默认值，但报价必须允许按本次交易覆盖并将覆盖值快照保存，不能修改 Product 主档。
 3. 当前 Customer 的 `phoneE164` 是必填唯一字段。正式客户资料允许电话可选的业务需求与当前模型冲突。实现前选择：正式订单要求电话必填（本文件默认）；或改成 nullable 并设计重复客户识别/合并规则。不得用空字符串或虚构号码填充。
 4. Customer 现有 `displayName` 可作为客户名称，但 email、账单地址、收货地址应 additive 增加；历史订单必须保存客户快照，不能依赖客户主档当前值。
 5. 现有 `PiDocument` 和 `PiItem` 保留；后续为 `PiDocument` 增加 `orderId`，而不是本期重建 PI。
+
+### 0.3 本次代码审计结论（2026-11-02）
+
+- `Product.priceCny` 的实际语义确认为**内部采购成本（CNY）**：商品表单字段由 `product.cost.update` 保护，批量导入映射为内部成本，商品详情仅由 `product.cost.read` 控制返回；现有动态报价 Excel 服务将其映射到 `costCny` 并用 Decimal 参与涨幅计算。
+- 本次不新增 `Product.costCny`，避免双字段及历史值回填风险；后台中英文标签统一显示“内部采购成本（CNY）/Internal purchase cost (CNY)”。公共商品 DTO 继续不含该字段。
+- Customer、PI、Dictionary、Permission、Menu 模型和服务均已存在，Quotation/Order 及其明细/费用表此前不存在。Customer 电话维持现有必填唯一策略；客户联系方式和地址新增 nullable 字段，报价/订单保存客户快照。
+- 本期迁移新增报价/订单表、状态 enum、客户扩展字段和可空 `PiDocument.orderId` 预留外键；不改变既有 PI 计算/状态，不创建 Shipment 表。
+
+### 0.4 本次实施记录（2026-11-02）
+
+- 已部署 additive migrations：`20261102120000_quotation_order_core`（报价/订单及明细、费用、Customer 扩展、PI order 预留）与 `20261102130000_quotation_order_idempotency`（创建者范围的幂等 key/hash 唯一索引）。报价/订单号使用 UTC 日期 + cryptographic UUID 随机后缀，不依赖 `count(*)`。
+- 已复用 `currency`、`volumetric_weight_divisor`、`quotation_fee_type` 字典；报价费用默认项由版本化数据迁移和参考数据 seed 幂等补齐，已存在的管理员启停状态和翻译会保留。报价/订单权限与双语菜单继续由参考数据 seed 维护；菜单新增在 `quotes-files` 组下，API 仍由逐端点 RBAC 授权。
+- 已实现服务端商品成本读取、字典校验、Decimal 预览计算、箱规覆盖快照、订单级费用、海运分摊、汇率总额舍入、报价草稿保存/查询、报价转订单和计算器直接创建订单。创建写入为数据库事务；相同幂等 key + 相同 payload 重放返回同一记录，payload 不同返回冲突；报价转单以唯一 `sourceQuotationId` 处理并发重放。
+- 已实现 `/[locale]/quotation-calculator`、`/[locale]/quotations`、`/[locale]/orders` Admin 页面。报价草稿支持保存、查询和转单；直接订单要求客户名称、E.164 电话、国家、完整收货地址及订单日期。创建新客户时按唯一电话原子复用/创建 Customer，但不覆盖已有主档信息。
+- CNY 商品单价/金额、箱规重量及运费分摊按数据库 NUMERIC 精度归一后计算和保存，所有总额通过 Decimal；外币总额一次 ROUND_UP 到两位，订单级外币组成与商品级海运分摊按最小单位尾差分配。
+- 成本、涨幅和商品级运费分摊需要成本读取权限；客户端不能提交成本或计算结果作为权威值。操作审计记录不含客户电话、邮箱、地址或成本明细。
+- 验证：本地 PostgreSQL 两个 migration 均成功部署，`check:menu-translations` 通过（33 菜单 × 2 locale），`check:production-reference-data` 通过；计算引擎、输入 DTO、RBAC wiring 单测及 Admin 单测已通过。全量 API 测试的 4 项商品导入测试因仓库未提供 `docs/凡士林.xlsx` 夹具失败，其余 367 项通过。
+- 回滚：先回退 API/Admin 发布，保留 additive schema 和已写业务数据；禁止自动 DROP 新表或订单/报价数据。若尚无业务记录且确需回滚 schema，须单独审核反向迁移；幂等列/索引可在确认没有并发写入后单独移除。
+
+### 0.5 计算器体验与校验修复（2026-11-02）
+
+- 预览接口 400 根因：预览与草稿/订单创建共用要求 `title` 非空的 schema，而页面允许不填标题直接计算。现拆分 `quotationPreviewSchema`，空标题预览默认转换为 `Temporary calculation`；保存报价和创建订单仍要求标题。
+- 商品明细初始改为空表；通过“添加商品”打开选择弹窗，复用启用品类树，选择父品类时按整个后代范围筛选；SKU/名称使用服务端不区分大小写包含搜索。列表显示主图、SKU、名称、可授权查看的内部成本和发布状态，复选框支持多选。
+- 已选商品以表格展示，整行可鼠标拖放排序，键盘聚焦行后可用方向键调整顺序；行操作位于最后一列。没有成本读取权限时搜索结果不返回成本值。
+- 报价费用继续由 `quotation_fee_type` 字典驱动；活动默认项为包装费用、清关费用、其他费用。旧配送、保险、操作选项保留字典记录但 seed 停用，避免历史快照引用被删除。
+- 新增预览空标题校验和商品搜索/成本脱敏测试。无 schema 变更，本次不新增数据库 migration；本地 reference seed 已同步。
+- 验证：验证包相关测试 20 项、API 计算/商品搜索/RBAC wiring 测试 17 项、Admin 全量 184 项通过；lint、API/Admin typecheck 与 build 通过。
+
+### 0.6 海运双报价与订单级体积系数修订（2026-11-03）
+
+- 报价接口同时计算 CBM 与 KG 两种 CNY 海运报价，费率不随目标币种切换；页面选择 CBM 或 KG 后，只有选中报价计入 CNY 订单总额并按汇率换算为目标币种。两种报价、计费依据、汇率换算结果及商品分摊均写入报价/订单快照。
+- 体积重系数改为订单级选择并应用于所有商品。复用现有 `volumetric_weight_divisor` 字典项 5000、6000、8000；服务端校验字典类型、启用状态和值为正整数。商品行保留旧系数列以读取历史记录，新计算不再写入该列。
+- Decimal 引擎按实际尺寸计算 CBM，CBM 与 KG 重量分别使用正确公式；KG 计费重量不按整数或 0.5 kg 进位。海运分摊按用户选择的 CBM/重量依据计算，末行承接尾差，人民币内部成本分摊与报价币种分摊分开保存。
+- 新增 additive migration `20261103100000_order_level_dual_freight_quotes`，保存双报价、系数 ID/code/value、汇总 CBM/重量、选择方式和分摊快照；CBM 精度扩展到 15 位，重量精度扩展到 12 位。既有单行系数历史值保留。
+- 回滚：先回退 API/Admin；迁移中的新增快照列允许旧代码忽略。不要自动删除新列或枚举；确认没有任何报价/订单使用新快照后，才可单独审核反向 migration。重量/分摊列精度缩回前，先检查数据库中是否存在超过旧精度的值。新旧计算格式的报价不能混算，旧报价转换订单会被拒绝并提示重新计算保存。
+- 验证记录：本次代码实现尚未执行 migration；本轮未运行测试套件。
+
+### 0.7 报价计算器图片、排序和费用字典修复（2026-11-03）
+
+- 商品搜索结果改用 FileAsset ID 生成登录态 Admin 图片预览 URL。原实现通过公开文件 URL 请求受保护的商品原图，公开文件接口会返回 404；缺少 FileAsset 关联的旧图片不再生成失效 URL。
+- 商品明细表格整行支持鼠标拖动排序，移除可见的拖动柄和上下移动按钮；聚焦行后可用上/下方向键排序，移除商品按钮仍保留在最后一列。
+- 新增 `20261103110000_quotation_fee_type_reference_data` 数据迁移，缺少时补齐 `quotation_fee_type` 及包装费用、清关费用、其他费用和中英文翻译；参考 seed 同步同样仅补缺失项，不覆盖已有管理员启停设置和翻译。无 schema 变化。
+- 回滚：回退 API/Admin 后保留字典数据；字典项由管理员维护，迁移新增的默认项不自动删除，避免误删后续自定义或历史引用。无需缩回 schema。
+
+### 0.8 计算器筛选与预览校验修复（2026-11-04）
+
+- 商品筛选树保留停用品类作为禁用祖先节点，避免只筛启用品类时丢失其下仍启用、可关联的后代；节点选择仍只允许启用品类，后端商品搜索按所选节点包含全部后代。
+- 预览调用前校验 CBM、KG 两种费率为正数且最多 8 位小数；缺失或格式错误时显示双语字段提示，不再发送必然触发 400 的费率请求。其他业务校验仍由服务端 DTO 执行，接口错误保留错误码。
+- 商品表格把商品与包装回显字段（含单箱毛重）排在计算输出之前；销售单价和 CBM/体积重/总毛重计算值放到后半部分。无 schema 变更。
 
 ---
 
@@ -93,7 +142,7 @@
 1. **客户与报价信息**：模式切换（临时计算/保存报价草稿/直接创建订单）、客户选择或新增、客户名称、联系人、电话、邮箱、国家、账单地址、收货地址、报价日期、有效期、订单日期（创建订单时）。
 2. **商品明细**：商品搜索/选择、SKU、商品名称、数量、采购成本 CNY、涨幅百分比、销售单价 CNY、商品金额 CNY。
 3. **包装参数**：每个商品的箱数、每箱数量、单箱长宽高、单箱毛重；展示每行单箱 CBM、商品总 CBM、商品总体积重和总毛重。商品行不单独选择体积重系数。
-4. **海运双报价与订单级费用**：同时配置 CBM 单价和 KG 单价；两种货代报价币种必须相同，且必须与本次报价目标币种一致。KG 报价区域统一选择一个体积重系数（来自字典），应用于整个订单。页面并列展示两种报价、重量依据及金额，由用户选择一种作为本次订单实际海运费；另录入配送费和其他费用行。
+4. **海运双报价与订单级费用**：同时配置 CNY/CBM 和 CNY/kg 单价；海运费率固定使用 CNY，不随报价目标币种切换。KG 报价区域统一选择一个体积重系数（来自字典），应用于整个订单。页面以 CNY 并列展示两种报价、重量依据及金额，由用户选择一种作为本次订单实际海运费；计入目标币种总额时再按汇率转换。另录入配送费和其他费用行。
 5. **货币与汇率**：报价币种（字典）、人工汇率；明确显示 `1 CNY = X USD`。
 6. **实时计算摘要**：商品金额合计、订单总 CBM、总体积重、总毛重、KG 计费重量、CBM 海运报价、KG 海运报价、当前选中的海运费、配送费、其他费用、人民币订单总额、目标币种总额。
 7. **操作区**：重新计算、保存报价草稿、从报价生成订单、直接创建订单；未选择保存/创建时只保留本地临时状态。
@@ -118,6 +167,8 @@
 | 单箱 CBM | 自动计算 | 长 × 宽 × 高 ÷ 1,000,000，单位 CBM |
 | 单箱体积重 | 自动计算 | 长 × 宽 × 高 ÷ 订单统一体积重系数，单位 KG；系数由 KG 报价配置提供 |
 | 商品总 CBM/体积重/毛重 | 自动计算 | 分别按箱数汇总；同一订单所有商品使用同一个 KG 体积重系数 |
+
+报价计算器商品表格和计算摘要中的数值（含数量、销售单价、金额、CBM、体积重和运费分摊）保留计算结果精度，仅去掉小数末尾无意义的 0；不补零、不额外舍入，计算、保存和 API 数据继续保留原始 Decimal 精度。
 
 商品成本和利润率只允许有相应权限的后台用户查看/修改。任何公共 Storefront DTO、公开页面、SEO、缓存、产品接口都不得出现内部成本、涨幅、销售报价或订单数据。
 
@@ -216,7 +267,7 @@
 
 ### 3.3 海运双报价、择一采用与商品级分摊
 
-系统必须使用同一批商品和包装数据，同时计算两种独立的货代报价；不得让用户先选择一种方式才计算另一种。CBM 与 KG 两种报价单价必须使用相同币种，且该币种必须与本次报价选择的目标币种 `currencyCode` 一致。币种不一致、单价缺失或非正数时，不得将报价标记为有效，也不得用 0 代替未录入报价。
+系统必须使用同一批商品和包装数据，同时计算两种独立的货代报价；不得让用户先选择一种方式才计算另一种。CBM 和 KG 两种海运单价及其计算结果固定为 CNY，独立于本次报价目标币种 `currencyCode`。只有商品报价、其他 CNY 费用合计换算为目标币种时才应用汇率。单价缺失或非正数时，不得将报价标记为有效，也不得用 0 代替未录入报价。
 
 **A. CBM 体积计费**
 
@@ -240,7 +291,7 @@ KG 计费重量不进位，使用完整计算精度的实际重量计算费用�
 
 **C. 同时展示并择一采用**
 
-两种报价同时展示：CBM 总 CBM、CBM 单价、CBM 运费；KG 体积重系数、总体积重、总毛重、计费重量、计费依据、KG 单价、KG 运费。用户选择 `freightBillingMethod = CBM | KG` 其中一种作为最终采用方案。只有被选中的金额计入订单总额；另一种报价仅作为比较数据保存，不参与订单费用求和。由于两种报价币种强制一致，页面可以直接比较金额。
+两种报价同时以 CNY 展示：CBM 总 CBM、CBM 单价、CBM 运费；KG 体积重系数、总体积重、总毛重、计费重量、计费依据、KG 单价、KG 运费。用户选择 `freightBillingMethod = CBM | KG` 其中一种作为最终采用方案。只有被选中的 CNY 海运费计入人民币订单总额；另一种报价仅作为比较数据保存，不参与订单费用求和。换算成目标币种时，选中的 CNY 海运费按报价汇率转换，并参与订单外币总额舍入与尾差分配。
 
 **D. 商品级运费分摊**
 
@@ -249,9 +300,9 @@ KG 计费重量不进位，使用完整计算精度的实际重量计算费用�
 - 最终选择 KG 且 `kgChargeableBasis = GROSS_WEIGHT`：按 `itemTotalGrossWeightKg_i / orderTotalGrossWeightKg` 分摊。
 - KG 两种重量相等时按总体积重分摊。
 
-`allocatedFreight_i = selectedFreightAmount × itemBasis_i / Σ itemBasis`
+`allocatedFreightCny_i = selectedFreightCny × itemBasis_i / Σ itemBasis`
 
-按商品行顺序计算前 n-1 行，最后一行承接尾差，确保商品分摊合计严格等于选中的海运费。分摊金额使用本次报价币种；如需内部 CNY 成本分析，应通过本次汇率反向换算并单独标明，不能覆盖客户报价金额。
+按商品行顺序计算前 n-1 行，最后一行承接尾差，确保 CNY 商品分摊合计严格等于选中的海运费。需要目标币种分摊值时，将 CNY 分摊额按报价汇率转换并单独保存，不能覆盖客户报价金额。
 
 如果所选依据合计为 0，不能除零；若选中海运费为 0，可将各行分摊设为 0，否则阻止计算并提示缺失包装数据。
 
@@ -261,7 +312,7 @@ KG 计费重量不进位，使用完整计算精度的实际重量计算费用�
 
 所有运费及附加费在订单级统一录入和汇总，不强制拆成商品级收费：
 
-- 海运费：由 CBM/KG 双报价模块分别计算，用户选择一种；最终只将选中金额作为唯一海运费用行保存。两种报价的原始单价、币种、计算量、KG 系数及未选报价金额保存在报价/订单快照中。第一版不开放人工覆盖。
+- 海运费：由 CBM/KG 双报价模块按 CNY 单价分别计算，用户选择一种；最终只将选中 CNY 金额作为唯一海运费用行保存。两种报价的原始单价、CNY 币种、计算量、KG 系数及未选报价金额保存在报价/订单快照中。第一版不开放人工覆盖；目标币种金额按报价汇率换算。
 - 配送费：订单级固定金额 CNY。
 - 其他费用：可添加多行，字段包括费用类型、名称、金额 CNY、备注；费用类型可使用字典，非核心类型可配置。
 - 保险费、报关费、文件费等如未来需要，作为其他费用行，不要为每一种费用重复新增金额列。
@@ -340,7 +391,7 @@ QuotationModule
 - title、customerId nullable、createdById、validUntil、quotedAt。
 - currencyCode、exchangeRate Decimal、exchangeRateBase（CNY）、exchangeRateDate、exchangeRateSource（MANUAL）、exchangeRateEnteredById。
 - roundingMode（CEIL_2）、calculationVersion。
-- 海运双报价快照：`freightBillingMethod`（CBM/KG）、`freightCurrencyCode`（必须等于 `currencyCode`）、`cbmRatePerCbm`、`orderTotalCbm`、`cbmFreightAmount`、`kgRatePerKg`、`volumetricDivisorItemId`、`volumetricDivisorCode/value` 快照、`orderTotalVolumeWeightKg`、`orderTotalGrossWeightKg`、`chargeableWeightKg`、`kgChargeableBasis`、`kgFreightAmount`、`selectedFreightAmount`、`freightAllocationSnapshot`。未选择的报价结果也必须保存，便于还原比较过程。
+- 海运双报价快照：`freightBillingMethod`（CBM/KG）、`freightCurrencyCode`（固定为 CNY，与 `currencyCode` 无关）、`cbmRatePerCbm`、`orderTotalCbm`、`cbmFreightAmount`、`kgRatePerKg`、`volumetricDivisorItemId`、`volumetricDivisorCode/value` 快照、`orderTotalVolumeWeightKg`、`orderTotalGrossWeightKg`、`chargeableWeightKg`、`kgChargeableBasis`、`kgFreightAmount`、`selectedFreightAmount`（CNY）、`freightAllocationSnapshot`（CNY 分摊和单独记录的目标币种分摊）。未选择的报价结果也必须保存，便于还原比较过程。
 - subtotalCny、freightCny、deliveryFeeCny、otherFeesCny、totalAmountCny、totalAmountForeignExact、totalAmountForeign。
 - customerSnapshot Json（保存客户名称、联系人、电话、邮箱、国家、账单/收货地址）。
 - calculationSnapshot Json（输入与完整计算结果快照）。
@@ -423,7 +474,7 @@ QuotationModule
 
 - 币种 code 使用 ISO 4217 大写 code；label 通过 DictionaryItemTranslation 多语言维护。
 - 币种符号只用于展示；计算始终使用 code。
-- 本功能所有币种强制显示两位小数，不能从字典 value 推断精度。
+- 本功能金额仍按既有业务规则舍入（最终外币金额两位小数）；报价计算器预览摘要仅在展示时去掉末尾无意义的 0，不补零、不改变金额值。不能从字典 value 推断精度。
 - 体积重 divisor 读取 item.value 或稳定 code；服务端校验为正整数，且 item 必须属于 `volumetric_weight_divisor`、enabled=true。
 - 禁止把系数 6000 写死在前端/后端；如业务希望 6000/5000/8000 可由字典维护。
 - 历史报价/订单保存 divisor 数值快照；禁用字典项不得改变历史结果。
@@ -464,11 +515,11 @@ QuotationModule
 
 ### 5.1 预览请求规则
 
-请求包含 customer draft、items（productId、quantity、markup、包装覆盖值）、订单级 KG 报价 `volumetricDivisorItemId`、CBM/KG 单价、`freightCurrencyCode`、`freightBillingMethod`、订单费用输入、`currencyCode`、`exchangeRate`。服务端校验 freightCurrencyCode 必须与 currencyCode 相同。不要接受客户端提供的成本、最终售价、分摊结果作为权威值。若有成本覆盖功能，必须单独权限并明确区分 `costOverrideCny` 与 Product 成本。
+请求包含 customer draft、items（productId、quantity、markup、包装覆盖值）、订单级 KG 报价 `volumetricDivisorItemId`、CNY/CBM 与 CNY/kg 单价、`freightCurrencyCode=CNY`、`freightBillingMethod`、订单费用输入、`currencyCode`、`exchangeRate`。服务端校验 freightCurrencyCode 必须为 CNY，并重新计算选中的海运费及目标币种总额。不要接受客户端提供的成本、最终售价、分摊结果作为权威值。若有成本覆盖功能，必须单独权限并明确区分 `costOverrideCny` 与 Product 成本。
 
 响应包括：
 - items：SKU/名称快照、成本（仅有成本读取权限）、markup、CNY unit price/line amount、单箱 CBM、商品总 CBM、商品总体积重、商品总毛重、分摊依据、allocated freight。
-- freight：总 CBM、CBM 单价/金额；订单统一体积重系数、总体积重、总毛重、KG 计费重量、计费依据、KG 单价/金额；报价币种、最终选择方式、最终采用海运费、商品分摊。两种报价同时返回。
+- freight：总 CBM、CNY/CBM 单价/金额；订单统一体积重系数、总体积重、总毛重、KG 计费重量、计费依据、CNY/kg 单价/金额；海运费币种 CNY、最终选择方式、最终采用 CNY 海运费、目标币种金额与商品分摊。两种报价同时返回。
 - fees：每条费用 CNY 和分配后的外币展示值。
 - totals：subtotal CNY、freight CNY、delivery CNY、other CNY、total CNY、exchange rate、foreign exact、foreign total。
 - warnings：例如每箱数量与总数量不整除、产品箱规被覆盖。
@@ -522,7 +573,7 @@ QuotationModule
 - [ ] KG 报价订单总体积重 150kg、总毛重 126kg：计费重量按实际 150kg，不进位，按体积重分摊。
 - [ ] KG 报价订单总体积重 100kg、总毛重 160kg：计费重量按实际 160kg，不进位，按毛重分摊。
 - [ ] KG 两者相等：按体积重分摊，比例与毛重相同。
-- [ ] 同一批商品同时计算 CBM 和 KG 两种报价；两种报价币种必须相同且等于订单目标币种。
+- [ ] 同一批商品同时计算 CBM 和 KG 两种报价；两种单价和报价金额固定使用 CNY，与订单目标币种相互独立。
 - [ ] 切换最终计费方式只改变选中海运费、分摊和订单总额，不丢失另一种报价结果。
 - [ ] 未选中的报价不参与订单金额汇总；不得双重计入。
 - [ ] KG 计费重量 233.3333kg × 单价 2，按 233.3333kg 计算，不进位到 234kg 或 233.5kg。
@@ -675,9 +726,9 @@ apps/admin/
 
 ## 12. 本期完成定义
 
-- [ ] 现有 Schema/seed/API/UI 审计完成，字段语义确认。
-- [ ] 新增 Quotation/Order 相关表和版本化迁移，复用现有 Customer、Product、Dictionary、PiDocument。
-- [ ] 币种与体积重系数由两层字典管理，无硬编码业务选项。
+- [x] 现有 Schema/seed/API/UI 审计完成，字段语义确认。
+- [x] 新增 Quotation/Order 相关表和版本化迁移，复用现有 Customer、Product、Dictionary、PiDocument。
+- [x] 币种与体积重系数由两层字典管理，无硬编码业务选项。
 - [ ] 临时计算、保存报价草稿、报价转订单、直接创建订单四条路径完整。
 - [ ] 商品级涨幅、商品金额、包装、CBM、体积重/毛重、CBM/KG 双报价、计费方式选择及对应海运分摊正确。
 - [ ] 所有订单级费用只汇总一次，分摊不重复计入总价。
@@ -685,6 +736,6 @@ apps/admin/
 - [ ] 历史报价/订单快照不受 Product/Customer/Dictionary 修改影响。
 - [ ] 菜单、权限、API guard、审计、双语、响应式完成。
 - [ ] 单元/集成/E2E/lint/typecheck/build 结果真实记录。
-- [ ] Excel/PDF 模板导出、PI 页面、发货和物流 API 明确列为后续版本，不宣称已完成。
+- [x] Excel/PDF 模板导出、PI 页面、发货和物流 API 明确列为后续版本，不宣称已完成。
 
 **实现原则：先确认现有数据语义，再做最小 additive migration；先保证计算正确、快照可靠、权限完整，再扩展模板导出、PI 和物流。**

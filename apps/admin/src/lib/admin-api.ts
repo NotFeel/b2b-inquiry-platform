@@ -48,6 +48,7 @@ async function request<T>(
   path: string,
   body?: unknown,
   query?: Record<string, QueryValue>,
+  extraHeaders?: Record<string, string>,
 ): Promise<T> {
   const response = await fetch(buildApiUrl(path, query), {
     method,
@@ -55,7 +56,7 @@ async function request<T>(
     // Admin data is per-session and includes locale/authorization-filtered
     // navigation; browser caches must never reuse it across users or locales.
     cache: 'no-store',
-    headers: body ? { 'content-type': 'application/json' } : undefined,
+    headers: body ? { 'content-type': 'application/json', ...extraHeaders } : extraHeaders,
     body: body ? JSON.stringify(body) : undefined,
   });
 
@@ -115,6 +116,8 @@ export const adminApi = {
   get: <T>(path: string, query?: Record<string, QueryValue>) =>
     request<T>('GET', path, undefined, query),
   post: <T>(path: string, body?: unknown) => request<T>('POST', path, body),
+  postWithHeaders: <T>(path: string, body: unknown, headers: Record<string, string>) =>
+    request<T>('POST', path, body, undefined, headers),
   patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body),
   put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body),
   delete: <T>(path: string) => request<T>('DELETE', path),

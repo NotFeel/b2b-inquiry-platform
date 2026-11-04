@@ -537,7 +537,7 @@ export function ProductForm({ mode, detail }: ProductFormProps) {
                 inputId={inputId}
                 describedBy={describedBy}
                 type="number"
-                min={1}
+                min="0.001"
                 unit="g"
                 value={state.specs.weightGrams}
                 invalid={Boolean(errors['specs.weightGrams'])}
@@ -579,7 +579,9 @@ export function ProductForm({ mode, detail }: ProductFormProps) {
                 inputId={inputId}
                 describedBy={describedBy}
                 type="number"
-                min={1}
+                min="0.001"
+                max={100000}
+                step="0.001"
                 unit="cm"
                 value={state.specs.cartonLengthCm}
                 invalid={Boolean(errors['specs.cartonLengthCm'])}
@@ -593,7 +595,9 @@ export function ProductForm({ mode, detail }: ProductFormProps) {
                 inputId={inputId}
                 describedBy={describedBy}
                 type="number"
-                min={1}
+                min="0.001"
+                max={100000}
+                step="0.001"
                 unit="cm"
                 value={state.specs.cartonWidthCm}
                 invalid={Boolean(errors['specs.cartonWidthCm'])}
@@ -611,6 +615,8 @@ export function ProductForm({ mode, detail }: ProductFormProps) {
                 describedBy={describedBy}
                 type="number"
                 min={1}
+                max={100000}
+                step="0.001"
                 unit="cm"
                 value={state.specs.cartonHeightCm}
                 invalid={Boolean(errors['specs.cartonHeightCm'])}

@@ -93,9 +93,9 @@ XLSX 解析和字段校验在事务外完成。commit 阶段重新检查关键�
 | I | Unit Height (cm) | 否 | 同上 → Product.heightMm |
 | J | Unit Weight (g) | 否 | 非负整数 → Product.weightGrams |
 | K | Packaging Type | 否 | 只接受现有启用包装字典 code；当前 Product.packaging 是字符串，必须检查现有表单/服务映射，不能凭空解释 code |
-| L | Carton Length (cm) | 否 | 非负数 → Product.cartonLengthCm |
-| M | Carton Width (cm) | 否 | 非负数 → Product.cartonWidthCm |
-| N | Carton Height (cm) | 否 | 非负数 → Product.cartonHeightCm |
+| L | Carton Length (cm) | 否 | 0–100000，最多 3 位小数 → Product.cartonLengthCm |
+| M | Carton Width (cm) | 否 | 0–100000，最多 3 位小数 → Product.cartonWidthCm |
+| N | Carton Height (cm) | 否 | 0–100000，最多 3 位小数 → Product.cartonHeightCm |
 | O | Carton Gross Weight (kg) | 否 | 非负 Decimal → Product.cartonWeightKg |
 | P | Carton Quantity (pcs) | 推荐 | 正整数；空值 null → Product.cartonQuantity |
 | Q | Unit Price (CNY) [internal] | 否 | 纯数值、禁止公式、需要 product.cost.update → Product.priceCny |

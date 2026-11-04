@@ -227,9 +227,9 @@ export class ProductsService {
       heightMm: product.heightMm,
       weightGrams: product.weightGrams,
       packaging: product.packaging,
-      cartonLengthCm: product.cartonLengthCm,
-      cartonWidthCm: product.cartonWidthCm,
-      cartonHeightCm: product.cartonHeightCm,
+      cartonLengthCm: product.cartonLengthCm?.toNumber() ?? null,
+      cartonWidthCm: product.cartonWidthCm?.toNumber() ?? null,
+      cartonHeightCm: product.cartonHeightCm?.toNumber() ?? null,
       cartonWeightKg: product.cartonWeightKg?.toString() ?? null,
       cartonQuantity: product.cartonQuantity,
       translations: Object.fromEntries(
@@ -299,9 +299,9 @@ export class ProductsService {
           heightMm: input.heightMm ?? null,
           weightGrams: input.weightGrams ?? null,
           packaging: input.packaging ?? null,
-          cartonLengthCm: input.cartonLengthCm ?? null,
-          cartonWidthCm: input.cartonWidthCm ?? null,
-          cartonHeightCm: input.cartonHeightCm ?? null,
+          cartonLengthCm: input.cartonLengthCm?.toString() ?? null,
+          cartonWidthCm: input.cartonWidthCm?.toString() ?? null,
+          cartonHeightCm: input.cartonHeightCm?.toString() ?? null,
           cartonWeightKg: input.cartonWeightKg ?? null,
           cartonQuantity: input.cartonQuantity ?? null,
           createdById: actorId,
@@ -436,9 +436,15 @@ export class ProductsService {
             ...(input.heightMm !== undefined ? { heightMm: input.heightMm } : {}),
             ...(input.weightGrams !== undefined ? { weightGrams: input.weightGrams } : {}),
             ...(input.packaging !== undefined ? { packaging: input.packaging } : {}),
-            ...(input.cartonLengthCm !== undefined ? { cartonLengthCm: input.cartonLengthCm } : {}),
-            ...(input.cartonWidthCm !== undefined ? { cartonWidthCm: input.cartonWidthCm } : {}),
-            ...(input.cartonHeightCm !== undefined ? { cartonHeightCm: input.cartonHeightCm } : {}),
+            ...(input.cartonLengthCm !== undefined
+              ? { cartonLengthCm: input.cartonLengthCm?.toString() ?? null }
+              : {}),
+            ...(input.cartonWidthCm !== undefined
+              ? { cartonWidthCm: input.cartonWidthCm?.toString() ?? null }
+              : {}),
+            ...(input.cartonHeightCm !== undefined
+              ? { cartonHeightCm: input.cartonHeightCm?.toString() ?? null }
+              : {}),
             ...(input.cartonWeightKg !== undefined ? { cartonWeightKg: input.cartonWeightKg } : {}),
             ...(input.cartonQuantity !== undefined ? { cartonQuantity: input.cartonQuantity } : {}),
           },

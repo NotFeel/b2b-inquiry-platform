@@ -178,6 +178,19 @@ export const PERMISSIONS = {
   quotationExportRead: 'quotation.export.read',
   quotationExportCreate: 'quotation.export.create',
   quotationExportUnpublished: 'quotation.export.unpublished',
+  quotationRead: 'quotation.read',
+  quotationCalculate: 'quotation.calculate',
+  quotationCreate: 'quotation.create',
+  quotationUpdate: 'quotation.update',
+  quotationDelete: 'quotation.delete',
+  quotationConvertToOrder: 'quotation.convert_to_order',
+  quotationCostRead: 'quotation.cost.read',
+  quotationCostUpdate: 'quotation.cost.update',
+  orderRead: 'order.read',
+  orderCreate: 'order.create',
+  orderUpdate: 'order.update',
+  orderCancel: 'order.cancel',
+  orderCostRead: 'order.cost.read',
   /** Private Excel-to-PDF conversion (docs/38). */
   excelPdfRead: 'excel_pdf.read',
   excelPdfCreate: 'excel_pdf.create',
@@ -507,6 +520,9 @@ export const PROTECTED_MENU_CODES: readonly string[] = [
   'products',
   'products.bulk-import',
   'products.quotation-export',
+  'quotation-calculator',
+  'quotations',
+  'orders',
   'categories',
   'tags',
   'leads-analytics',
@@ -550,6 +566,9 @@ export const DICTIONARY_TYPES = {
   paymentTerms: 'payment_terms',
   packagingType: 'packaging_type',
   credentialType: 'credential_type',
+  currency: 'currency',
+  volumetricWeightDivisor: 'volumetric_weight_divisor',
+  quotationFeeType: 'quotation_fee_type',
 } as const;
 
 export type DictionaryTypeCode = (typeof DICTIONARY_TYPES)[keyof typeof DICTIONARY_TYPES];
@@ -567,6 +586,8 @@ export const SYSTEM_LOCKED_DICTIONARY_TYPES: readonly string[] = [
   DICTIONARY_TYPES.productPublishStatus,
   DICTIONARY_TYPES.inquirySource,
   DICTIONARY_TYPES.adPlacement,
+  DICTIONARY_TYPES.currency,
+  DICTIONARY_TYPES.volumetricWeightDivisor,
 ];
 
 /** Locale fallback chain for dictionary labels: requested → en-US → zh-CN → code. */

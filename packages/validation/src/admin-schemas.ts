@@ -837,6 +837,13 @@ export type QuotationExportInput = z.infer<typeof quotationExportSchema>;
  * absent - they are attached, ordered and deleted through their own endpoints so
  * a form save can never replace a gallery (and never lose a storage key).
  */
+const cartonDimensionSchema = z
+  .union([z.string(), z.number()])
+  .transform((value) => String(value).trim())
+  .refine((value) => /^\d{1,6}(?:\.\d{1,3})?$/.test(value), 'validation.decimal.invalid')
+  .refine((value) => Number(value) <= 100_000, 'validation.decimal.tooLarge')
+  .transform(Number);
+
 export const createProductSchema = z.object({
   sku: skuSchema,
   slug: slugSchema,
@@ -858,9 +865,9 @@ export const createProductSchema = z.object({
   heightMm: positiveIntSchema(1_000_000).nullable().optional(),
   weightGrams: positiveIntSchema(100_000_000).nullable().optional(),
   packaging: optionalText(500),
-  cartonLengthCm: positiveIntSchema(100_000).nullable().optional(),
-  cartonWidthCm: positiveIntSchema(100_000).nullable().optional(),
-  cartonHeightCm: positiveIntSchema(100_000).nullable().optional(),
+  cartonLengthCm: cartonDimensionSchema.nullable().optional(),
+  cartonWidthCm: cartonDimensionSchema.nullable().optional(),
+  cartonHeightCm: cartonDimensionSchema.nullable().optional(),
   cartonWeightKg: decimalStringSchema().nullable().optional(),
   cartonQuantity: positiveIntSchema(1_000_000).nullable().optional(),
   /** Structured tag references; the legacy code array is still accepted. */
@@ -886,9 +893,9 @@ export const updateProductSchema = z.object({
   heightMm: positiveIntSchema(1_000_000).nullable().optional(),
   weightGrams: positiveIntSchema(100_000_000).nullable().optional(),
   packaging: optionalText(500),
-  cartonLengthCm: positiveIntSchema(100_000).nullable().optional(),
-  cartonWidthCm: positiveIntSchema(100_000).nullable().optional(),
-  cartonHeightCm: positiveIntSchema(100_000).nullable().optional(),
+  cartonLengthCm: cartonDimensionSchema.nullable().optional(),
+  cartonWidthCm: cartonDimensionSchema.nullable().optional(),
+  cartonHeightCm: cartonDimensionSchema.nullable().optional(),
   cartonWeightKg: decimalStringSchema().nullable().optional(),
   cartonQuantity: positiveIntSchema(1_000_000).nullable().optional(),
   tagIds: z.array(uuidSchema).max(30).optional(),
@@ -1460,6 +1467,106 @@ export const auditLogQuerySchema = paginationQuerySchema.extend({
   to: z.string().trim().max(40).optional(),
   sortOrder: z.enum(['asc', 'desc']).default('desc'),
 });
+
+const quotationAddressSchema = z.object({
+  recipient: z.string().trim().min(1).max(160),
+  countryCode: countryCodeSchema,
+  region: z.string().trim().max(120).default(''),
+  city: z.string().trim().min(1).max(120),
+  postalCode: z.string().trim().max(40).default(''),
+  line1: z.string().trim().min(1).max(240),
+  line2: z.string().trim().max(240).default(''),
+});
+
+const quotationDecimalStringSchema = (scale = 12) =>
+  z
+    .string()
+    .trim()
+    .max(40)
+    .regex(/^\d{1,16}(?:\.\d{1,12})?$/, 'validation.decimal.invalid')
+    .refine((value) => (value.split('.')[1]?.length ?? 0) <= scale, 'validation.decimal.invalid');
+
+export const quotationProductSearchQuerySchema = z.object({
+  q: z.string().trim().max(120).optional(),
+  categoryId: uuidSchema.optional(),
+  locale: z.enum(['zh-CN', 'en-US']).default('en-US'),
+});
+export type QuotationProductSearchQuery = z.infer<typeof quotationProductSearchQuerySchema>;
+
+const quotationInputItemSchema = z.object({
+  productId: uuidSchema,
+  quantity: quotationDecimalStringSchema(3),
+  markupPercent: quotationDecimalStringSchema(4),
+  cartonCount: z.number().int().min(1).max(100000).nullable().optional(),
+  unitsPerCarton: z.number().int().min(1).max(100000).nullable().optional(),
+  cartonLengthCm: quotationDecimalStringSchema(3).nullable().optional(),
+  cartonWidthCm: quotationDecimalStringSchema(3).nullable().optional(),
+  cartonHeightCm: quotationDecimalStringSchema(3).nullable().optional(),
+  cartonGrossWeightKg: quotationDecimalStringSchema(6).nullable().optional(),
+});
+
+const quotationFeeInputSchema = z.object({
+  feeTypeCode: z.string().trim().min(1).max(60),
+  name: z.string().trim().min(1).max(160),
+  amountCny: quotationDecimalStringSchema(8),
+  notes: z.string().trim().max(500).nullable().optional(),
+});
+
+const quotationFormObjectSchema = z.object({
+  title: z.string().trim().min(1).max(180),
+  customerId: uuidSchema.nullable().optional(),
+  customer: z
+    .object({
+      companyName: z.string().trim().max(180).default(''),
+      contactName: z.string().trim().max(160).default(''),
+      phoneE164: z.string().trim().max(24).default(''),
+      email: emailSchema.nullable().optional(),
+      countryCode: countryCodeSchema.nullable().optional(),
+      billingAddress: quotationAddressSchema.nullable().optional(),
+      shippingAddress: quotationAddressSchema.nullable().optional(),
+    })
+    .default({ companyName: '', contactName: '', phoneE164: '' }),
+  quotedAt: z.string().datetime().optional(),
+  validUntil: z.string().datetime().nullable().optional(),
+  orderDate: z.string().date().nullable().optional(),
+  currencyCode: z.string().regex(/^[A-Z]{3}$/),
+  exchangeRate: quotationDecimalStringSchema(12),
+  exchangeRateDate: z.string().date(),
+  freightCurrencyCode: z.literal('CNY'),
+  freightBillingMethod: z.enum(['CBM', 'KG']),
+  cbmRatePerCbm: quotationDecimalStringSchema(8).refine((value) => /[1-9]/.test(value)),
+  kgRatePerKg: quotationDecimalStringSchema(8).refine((value) => /[1-9]/.test(value)),
+  volumetricDivisorItemId: uuidSchema,
+  deliveryFeeCny: quotationDecimalStringSchema(8),
+  items: z.array(quotationInputItemSchema).min(1).max(100),
+  fees: z.array(quotationFeeInputSchema).max(50).default([]),
+});
+
+const quotationFormSchema = quotationFormObjectSchema;
+
+/** Preview is intentionally usable before a quotation title is entered. */
+export const quotationPreviewSchema = quotationFormObjectSchema.extend({
+  title: z
+    .string()
+    .trim()
+    .max(180)
+    .optional()
+    .transform((value) => value || 'Temporary calculation'),
+});
+export const quotationCalculationSchema = quotationFormSchema;
+export type QuotationCalculationInput = z.infer<typeof quotationCalculationSchema>;
+
+export const quotationListQuerySchema = paginationQuerySchema.extend({
+  q: z.string().trim().max(120).optional(),
+  status: z.enum(['DRAFT', 'CONVERTED', 'EXPIRED', 'ARCHIVED']).optional(),
+});
+export type QuotationListQuery = z.infer<typeof quotationListQuerySchema>;
+
+export const orderListQuerySchema = paginationQuerySchema.extend({
+  q: z.string().trim().max(120).optional(),
+  status: z.enum(['CONFIRMED', 'CANCELLED']).optional(),
+});
+export type OrderListQuery = z.infer<typeof orderListQuerySchema>;
 
 export const idParamSchema = z.object({ id: uuidSchema });
 

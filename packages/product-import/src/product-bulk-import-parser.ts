@@ -352,11 +352,16 @@ export class ProductBulkImportParser {
       }
     }
 
+    const skuByRow = new Map(drafts.map((draft) => [draft.rowNumber, draft.sku]));
     const errors = [
       ...cellImages.errors,
       ...drawingErrors,
       ...drafts.flatMap((draft) => draft.errors),
-    ];
+    ].map((issue) =>
+      issue.sku || issue.rowNumber === null
+        ? issue
+        : { ...issue, sku: skuByRow.get(issue.rowNumber) || null },
+    );
     this.detectDuplicates(drafts, errors);
     const rows = drafts.map((draft) => ({ ...draft.row, images: draft.images }));
     return {
@@ -734,14 +739,19 @@ export class ProductBulkImportParser {
           heightMm: this.optionalDimensionMm(row.getCell(9), rowNumber, 'heightMm', errors),
           weightGrams: this.optionalInteger(row.getCell(10), rowNumber, 'weightGrams', errors),
           packaging: this.optionalText(row.getCell(11), rowNumber, 'packaging', errors, 500),
-          cartonLengthCm: this.optionalInteger(
+          cartonLengthCm: this.optionalCartonDimension(
             row.getCell(12),
             rowNumber,
             'cartonLengthCm',
             errors,
           ),
-          cartonWidthCm: this.optionalInteger(row.getCell(13), rowNumber, 'cartonWidthCm', errors),
-          cartonHeightCm: this.optionalInteger(
+          cartonWidthCm: this.optionalCartonDimension(
+            row.getCell(13),
+            rowNumber,
+            'cartonWidthCm',
+            errors,
+          ),
+          cartonHeightCm: this.optionalCartonDimension(
             row.getCell(14),
             rowNumber,
             'cartonHeightCm',
@@ -995,6 +1005,51 @@ export class ProductBulkImportParser {
     return value;
   }
 
+  private optionalCartonDimension(
+    cell: ExcelJS.Cell,
+    rowNumber: number,
+    field: string,
+    errors: ProductImportIssue[],
+  ): number | null {
+    const raw = this.rawCell(cell);
+    if (raw === null) return null;
+    if (cell.type === ExcelJS.ValueType.Formula) {
+      errors.push(
+        this.issue(
+          rowNumber,
+          null,
+          field,
+          ERROR_CODES.importFormulaNotAllowed,
+          'products.import.errors.formula',
+        ),
+      );
+      return null;
+    }
+    try {
+      const value = new Decimal(String(raw).trim());
+      if (
+        !value.isFinite() ||
+        value.isNegative() ||
+        value.gt(100_000) ||
+        value.decimalPlaces() > 3
+      ) {
+        throw new Error('invalid carton dimension');
+      }
+      return value.toNumber();
+    } catch {
+      errors.push(
+        this.issue(
+          rowNumber,
+          null,
+          field,
+          ERROR_CODES.importFieldInvalid,
+          'products.import.errors.cartonDimension',
+        ),
+      );
+      return null;
+    }
+  }
+
   private optionalDecimal(
     cell: ExcelJS.Cell,
     rowNumber: number,
@@ -1163,7 +1218,7 @@ export class ProductBulkImportParser {
           null,
           'cartonDimensions',
           ERROR_CODES.importFieldInvalid,
-          'products.import.errors.dimensions',
+          'products.import.errors.cartonDimension',
         ),
       );
       return [null, null, null];
@@ -1171,7 +1226,14 @@ export class ProductBulkImportParser {
     const values = parts.map((part) => {
       try {
         const value = new Decimal(part);
-        if (!value.isInteger() || value.isNegative()) return null;
+        if (
+          !value.isFinite() ||
+          value.isNegative() ||
+          value.gt(100_000) ||
+          value.decimalPlaces() > 3
+        ) {
+          return null;
+        }
         return value.toNumber();
       } catch {
         return null;
@@ -1184,7 +1246,7 @@ export class ProductBulkImportParser {
           null,
           'cartonDimensions',
           ERROR_CODES.importFieldInvalid,
-          'products.import.errors.dimensions',
+          'products.import.errors.cartonDimension',
         ),
       );
     }

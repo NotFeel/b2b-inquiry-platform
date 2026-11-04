@@ -203,7 +203,14 @@ export function validateProductForm(
   for (const [field, message] of numberFields) {
     const value = state.specs[field];
     if (value === '') continue;
-    if (!/^\d+$/.test(value.trim()) || Number(value) <= 0) errors[`specs.${field}`] = message;
+    const isCartonDimension =
+      field === 'cartonLengthCm' || field === 'cartonWidthCm' || field === 'cartonHeightCm';
+    const validNumber = isCartonDimension
+      ? /^\d+(?:\.\d{1,3})?$/.test(value.trim())
+      : /^\d+$/.test(value.trim());
+    if (!validNumber || Number(value) <= 0 || (isCartonDimension && Number(value) > 100_000)) {
+      errors[`specs.${field}`] = message;
+    }
   }
   if (state.specs.cartonWeightKg !== '') {
     const value = state.specs.cartonWeightKg.trim();
@@ -303,9 +310,9 @@ export function toWritePayload(
     heightMm: centimetresToMillimetres(state.specs.heightCm),
     weightGrams: intOrNull(state.specs.weightGrams),
     packaging: textOrNull(state.specs.packaging),
-    cartonLengthCm: intOrNull(state.specs.cartonLengthCm),
-    cartonWidthCm: intOrNull(state.specs.cartonWidthCm),
-    cartonHeightCm: intOrNull(state.specs.cartonHeightCm),
+    cartonLengthCm: decimalNumberOrNull(state.specs.cartonLengthCm),
+    cartonWidthCm: decimalNumberOrNull(state.specs.cartonWidthCm),
+    cartonHeightCm: decimalNumberOrNull(state.specs.cartonHeightCm),
     cartonWeightKg: textOrNull(state.specs.cartonWeightKg),
     cartonQuantity: intOrNull(state.specs.cartonQuantity),
     tagIds: state.tagIds,
@@ -329,6 +336,13 @@ function intOrNull(value: string | undefined): number | null {
   const trimmed = (value ?? '').trim();
   if (trimmed === '') return null;
   const parsed = Number.parseInt(trimmed, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function decimalNumberOrNull(value: string | undefined): number | null {
+  const trimmed = (value ?? '').trim();
+  if (trimmed === '') return null;
+  const parsed = Number(trimmed);
   return Number.isFinite(parsed) ? parsed : null;
 }
 

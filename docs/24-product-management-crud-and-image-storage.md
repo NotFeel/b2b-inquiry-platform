@@ -110,9 +110,9 @@
 | sizeHeightCm | 商品高度 (cm) | 大于 0 或空；允许一位小数，提交时转换为现有 `heightMm` 整数字段 |
 | weightG | 商品重量 (g) | Decimal，大于 0 或空 |
 | packagingTypeCode | 包装方式 | 优先从已有字典 API 选取；如当前仍为自由文本，须按现状兼容迁移，不能在 UI 假装已完成字典化 |
-| cartonLengthCm | 箱规长度 (cm) | Decimal，大于 0 或空 |
-| cartonWidthCm | 箱规宽度 (cm) | Decimal，大于 0 或空 |
-| cartonHeightCm | 箱规高度 (cm) | Decimal，大于 0 或空 |
+| cartonLengthCm | 箱规长度 (cm) | Decimal(12,3)，大于 0 或空；最多 3 位小数 |
+| cartonWidthCm | 箱规宽度 (cm) | Decimal(12,3)，大于 0 或空；最多 3 位小数 |
+| cartonHeightCm | 箱规高度 (cm) | Decimal(12,3)，大于 0 或空；最多 3 位小数 |
 | cartonWeightKg | 箱规重量 (kg) | Decimal，大于 0 或空 |
 | cartonQty | 每箱数量 | 正整数，大于 0 或空 |
 
@@ -397,6 +397,7 @@ DELETE 请求体/查询参数不得允许指定 arbitrary storageKey。`productI
 - [ ] 新建草稿，保存后可在列表搜索到，语言字段正确回显。
 - [ ] 重复 SKU、重复 slug 被服务端拒绝，错误定位到对应字段。
 - [ ] 编辑英文/中文名称、描述、品类、规格、包装、标签、标记后刷新仍一致。
+- [ ] 箱规长宽高支持最多 3 位小数，保存并重新打开后数值保持一致；批量导入错误报告显示本地化表头、字段名和修复说明。
 - [ ] 品类必须从实际树选择，错误/已删除 categoryId 会被服务端拒绝。
 - [ ] 长宽高标签独立、单位正确；负数、非数字、数量小数等非法值被拒绝。
 - [ ] 发布和下架分开执行，生命周期状态不覆盖发布状态。

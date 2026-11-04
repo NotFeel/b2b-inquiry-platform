@@ -338,9 +338,9 @@ export class PublicCatalogService {
     heightMm: number | null;
     weightGrams: number | null;
     packaging: string | null;
-    cartonLengthCm: number | null;
-    cartonWidthCm: number | null;
-    cartonHeightCm: number | null;
+    cartonLengthCm: Prisma.Decimal | null;
+    cartonWidthCm: Prisma.Decimal | null;
+    cartonHeightCm: Prisma.Decimal | null;
     cartonWeightKg: unknown;
     cartonQuantity: number | null;
   }): PublicProductSpecs {
@@ -350,9 +350,9 @@ export class PublicCatalogService {
       heightMm: product.heightMm,
       weightGrams: product.weightGrams,
       packaging: product.packaging,
-      cartonLengthCm: product.cartonLengthCm,
-      cartonWidthCm: product.cartonWidthCm,
-      cartonHeightCm: product.cartonHeightCm,
+      cartonLengthCm: product.cartonLengthCm?.toNumber() ?? null,
+      cartonWidthCm: product.cartonWidthCm?.toNumber() ?? null,
+      cartonHeightCm: product.cartonHeightCm?.toNumber() ?? null,
       cartonWeightKg: product.cartonWeightKg === null ? null : String(product.cartonWeightKg),
       cartonQuantity: product.cartonQuantity,
     };

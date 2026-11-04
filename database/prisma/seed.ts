@@ -75,6 +75,19 @@ export const REFERENCE_PERMISSIONS: { code: string; module: string; nameKey: str
   ['quotation.export.read', 'quotation'],
   ['quotation.export.create', 'quotation'],
   ['quotation.export.unpublished', 'quotation'],
+  ['quotation.read', 'quotation'],
+  ['quotation.calculate', 'quotation'],
+  ['quotation.create', 'quotation'],
+  ['quotation.update', 'quotation'],
+  ['quotation.delete', 'quotation'],
+  ['quotation.convert_to_order', 'quotation'],
+  ['quotation.cost.read', 'quotation'],
+  ['quotation.cost.update', 'quotation'],
+  ['order.read', 'order'],
+  ['order.create', 'order'],
+  ['order.update', 'order'],
+  ['order.cancel', 'order'],
+  ['order.cost.read', 'order'],
   ['excel_pdf.read', 'excel-pdf'],
   ['excel_pdf.create', 'excel-pdf'],
   ['excel_pdf.download', 'excel-pdf'],
@@ -173,6 +186,19 @@ export const REFERENCE_ROLES: {
       // products remain a separate, intentionally ungranted capability.
       'quotation.export.read',
       'quotation.export.create',
+      'quotation.read',
+      'quotation.calculate',
+      'quotation.create',
+      'quotation.update',
+      'quotation.delete',
+      'quotation.convert_to_order',
+      'quotation.cost.read',
+      'quotation.cost.update',
+      'order.read',
+      'order.create',
+      'order.update',
+      'order.cancel',
+      'order.cost.read',
       // Business forms (product status, payment terms) read their options from
       // the shared dictionary endpoint (docs/20 §10).
       'dictionary.option.read',
@@ -226,6 +252,12 @@ export const REFERENCE_ROLES: {
       'lead.update',
       'customer.read',
       'customer.create',
+      'quotation.read',
+      'quotation.calculate',
+      'quotation.create',
+      'quotation.convert_to_order',
+      'order.read',
+      'order.create',
       'analytics.read',
       'pi.read',
       'pi.create',
@@ -257,7 +289,7 @@ const DICTIONARIES: {
   code: string;
   nameKey: string;
   systemLocked: boolean;
-  items: { code: string; value?: string; labels: Record<string, string> }[];
+  items: { code: string; value?: string; enabled?: boolean; labels: Record<string, string> }[];
 }[] = [
   {
     code: 'product_lifecycle',
@@ -349,6 +381,86 @@ const DICTIONARIES: {
     ],
   },
   {
+    code: 'currency',
+    nameKey: 'dictionary.currency',
+    systemLocked: true,
+    items: [
+      {
+        code: 'CNY',
+        value: '¥',
+        labels: { 'zh-CN': '人民币（CNY）', 'en-US': 'Chinese yuan (CNY)' },
+      },
+      { code: 'USD', value: '$', labels: { 'zh-CN': '美元（USD）', 'en-US': 'US dollar (USD)' } },
+      { code: 'EUR', value: '€', labels: { 'zh-CN': '欧元（EUR）', 'en-US': 'Euro (EUR)' } },
+      {
+        code: 'GBP',
+        value: '£',
+        labels: { 'zh-CN': '英镑（GBP）', 'en-US': 'Pound sterling (GBP)' },
+      },
+      {
+        code: 'JPY',
+        value: '¥',
+        labels: { 'zh-CN': '日元（JPY）', 'en-US': 'Japanese yen (JPY)' },
+      },
+      {
+        code: 'CAD',
+        value: 'C$',
+        labels: { 'zh-CN': '加拿大元（CAD）', 'en-US': 'Canadian dollar (CAD)' },
+      },
+      {
+        code: 'AUD',
+        value: 'A$',
+        labels: { 'zh-CN': '澳元（AUD）', 'en-US': 'Australian dollar (AUD)' },
+      },
+    ],
+  },
+  {
+    code: 'volumetric_weight_divisor',
+    nameKey: 'dictionary.volumetric_weight_divisor',
+    systemLocked: true,
+    items: [
+      { code: '6000', value: '6000', labels: { 'zh-CN': '6000', 'en-US': '6000' } },
+      { code: '5000', value: '5000', labels: { 'zh-CN': '5000', 'en-US': '5000' } },
+      { code: '8000', value: '8000', labels: { 'zh-CN': '8000', 'en-US': '8000' } },
+    ],
+  },
+  {
+    code: 'quotation_fee_type',
+    nameKey: 'dictionary.quotation_fee_type',
+    systemLocked: false,
+    items: [
+      {
+        code: 'packaging',
+        value: 'packaging',
+        labels: { 'zh-CN': '包装费用', 'en-US': 'Packaging fee' },
+      },
+      {
+        code: 'delivery',
+        value: 'delivery',
+        enabled: false,
+        labels: { 'zh-CN': '配送费', 'en-US': 'Delivery' },
+      },
+      {
+        code: 'customs',
+        value: 'customs',
+        labels: { 'zh-CN': '清关费用', 'en-US': 'Customs clearance fee' },
+      },
+      {
+        code: 'insurance',
+        value: 'insurance',
+        enabled: false,
+        labels: { 'zh-CN': '保险费', 'en-US': 'Insurance' },
+      },
+      {
+        code: 'handling',
+        value: 'handling',
+        enabled: false,
+        labels: { 'zh-CN': '操作费', 'en-US': 'Handling' },
+      },
+      { code: 'other', value: 'other', labels: { 'zh-CN': '其他费用', 'en-US': 'Other' } },
+    ],
+  },
+  {
     // Purely configurable options: the product form offers these as suggestions
     // while `Product.packaging` stays free text, so historical values keep
     // working (docs/20 §7.5).
@@ -430,14 +542,12 @@ async function applyPermissionsAndRoles(
   // grant a new feature to its default roles without rebuilding their complete
   // permission sets or restoring previously removed grants.
   const existingPermissionCodes = new Set(
-    (await tx.permission.findMany({ select: { code: true } })).map(
-      (permission) => permission.code,
-    ),
+    (await tx.permission.findMany({ select: { code: true } })).map((permission) => permission.code),
   );
   const newPermissionCodes = new Set(
-    REFERENCE_PERMISSIONS.filter(
-      (permission) => !existingPermissionCodes.has(permission.code),
-    ).map((permission) => permission.code),
+    REFERENCE_PERMISSIONS.filter((permission) => !existingPermissionCodes.has(permission.code)).map(
+      (permission) => permission.code,
+    ),
   );
 
   for (const permission of REFERENCE_PERMISSIONS) {
@@ -490,10 +600,10 @@ async function applyPermissionsAndRoles(
 }
 
 async function seedPermissionsAndRoles(options: { referenceOnly?: boolean } = {}) {
-  const result = await prisma.$transaction(
-    (tx) => applyPermissionsAndRoles(tx, options),
-    { maxWait: 10_000, timeout: 60_000 },
-  );
+  const result = await prisma.$transaction((tx) => applyPermissionsAndRoles(tx, options), {
+    maxWait: 10_000,
+    timeout: 60_000,
+  });
 
   console.log(
     `seeded ${REFERENCE_PERMISSIONS.length} permissions and ${REFERENCE_ROLES.length} roles; ${result.newPermissions} new permission codes, ${result.grantsAdded} role grants added`,
@@ -586,7 +696,11 @@ async function seedMenus(
 
 async function seedDictionaries(
   client: Prisma.TransactionClient,
-  options: { systemLockedOnly?: boolean } = {},
+  options: {
+    systemLockedOnly?: boolean;
+    includeCodes?: readonly string[];
+    preserveExistingManagedData?: boolean;
+  } = {},
 ) {
   // The two product-status types must mirror the Prisma enums exactly, otherwise
   // the staged enum → dictionary migration could not backfill (docs/20 §7.4, §8).
@@ -613,7 +727,7 @@ async function seedDictionaries(
   }
 
   const dictionaries = options.systemLockedOnly
-    ? DICTIONARIES.filter((type) => type.systemLocked)
+    ? DICTIONARIES.filter((type) => type.systemLocked || options.includeCodes?.includes(type.code))
     : DICTIONARIES;
 
   for (const type of dictionaries) {
@@ -642,18 +756,24 @@ async function seedDictionaries(
           value: item.value ?? null,
           sortOrder,
           systemLocked: type.systemLocked,
+          enabled: item.enabled ?? true,
         },
         update: {
-          value: item.value ?? null,
-          systemLocked: type.systemLocked,
-          ...(type.systemLocked ? { enabled: true } : {}),
+          ...(options.preserveExistingManagedData && !type.systemLocked
+            ? {}
+            : {
+                value: item.value ?? null,
+                systemLocked: type.systemLocked,
+                ...(item.enabled !== undefined ? { enabled: item.enabled } : {}),
+                ...(type.systemLocked ? { enabled: true } : {}),
+              }),
         },
       });
       for (const [locale, label] of Object.entries(item.labels)) {
         await client.dictionaryItemTranslation.upsert({
           where: { itemId_locale: { itemId: itemRecord.id, locale } },
           create: { itemId: itemRecord.id, locale, label },
-          update: { label },
+          update: options.preserveExistingManagedData && !type.systemLocked ? {} : { label },
         });
       }
       sortOrder += 10;
@@ -1072,7 +1192,11 @@ export async function syncReferenceData(client: PrismaClient = prisma) {
         disableStaleMenus: false,
         reactivateSeededMenus: false,
       });
-      const dictionaries = await seedDictionaries(tx, { systemLockedOnly: true });
+      const dictionaries = await seedDictionaries(tx, {
+        systemLockedOnly: true,
+        includeCodes: ['quotation_fee_type'],
+        preserveExistingManagedData: true,
+      });
 
       return { ...permissions, ...menus, ...dictionaries };
     },

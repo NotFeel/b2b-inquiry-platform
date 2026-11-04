@@ -109,8 +109,21 @@ export default function ProductBulkImportPage() {
     invalidate();
   };
 
-  const errorText = (code: string): string =>
-    code.startsWith('products.') ? t(code) : translateError(locale, code);
+  const errorText = (messageKey: string): string => {
+    if (messageKey.startsWith('products.import.')) {
+      return t(messageKey.replace('products.import.', 'productsImport.'));
+    }
+    if (messageKey.startsWith('productsImport.')) return t(messageKey);
+    return translateError(locale, messageKey);
+  };
+
+  const errorField = (field: string): string => {
+    try {
+      return t(`productsImport.fields.${field}`);
+    } catch {
+      return field;
+    }
+  };
 
   const validate = async () => {
     if (!file || !settings.categoryId) return;
@@ -208,12 +221,20 @@ export default function ProductBulkImportPage() {
       return `"${safe.replace(/"/g, '""')}"`;
     };
     const lines = [
-      ['rowNumber', 'sku', 'field', 'code', 'message'].map(csvCell).join(','),
+      [
+        t('productsImport.errors.row'),
+        t('productsImport.errors.sku'),
+        t('productsImport.errors.field'),
+        t('productsImport.errors.code'),
+        t('productsImport.errors.message'),
+      ]
+        .map(csvCell)
+        .join(','),
       ...validation.errors.map((issue) =>
         [
           String(issue.rowNumber ?? ''),
           issue.sku ?? '',
-          issue.field,
+          errorField(issue.field),
           issue.code,
           errorText(issue.messageKey),
         ]
@@ -452,7 +473,7 @@ export default function ProductBulkImportPage() {
                       <tr key={`${issue.rowNumber}-${issue.field}-${issue.code}-${index}`}>
                         <td>{issue.rowNumber ?? '—'}</td>
                         <td className="mono">{issue.sku ?? '—'}</td>
-                        <td>{issue.field}</td>
+                        <td>{errorField(issue.field)}</td>
                         <td>{errorText(issue.messageKey)}</td>
                       </tr>
                     ))}
