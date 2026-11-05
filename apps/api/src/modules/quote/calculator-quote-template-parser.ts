@@ -15,8 +15,16 @@ const REQUIRED_HEADERS: readonly {
   { column: 3, field: 'product.name', pattern: /^product\s*name$/i },
   { column: 4, field: 'product.category', pattern: /^material$/i },
   { column: 5, field: 'quotation.quantity', pattern: /^quantity\s*pcs$/i },
-  { column: 6, field: 'quotation.unit_price', pattern: /^unit\s*price(?:\s*[a-z]{3})?$/i },
-  { column: 7, field: 'quotation.total_price', pattern: /^total\s*price(?:\s*[a-z]{3})?$/i },
+  {
+    column: 6,
+    field: 'quotation.unit_price',
+    pattern: /^unit\s*price(?:\s*(?:[a-z]{3}|\[\s*currency\s*\]))?$/i,
+  },
+  {
+    column: 7,
+    field: 'quotation.total_price',
+    pattern: /^total\s*price(?:\s*(?:[a-z]{3}|\[\s*currency\s*\]))?$/i,
+  },
 ];
 
 function textValue(value: ExcelJS.CellValue): string {

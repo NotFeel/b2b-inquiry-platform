@@ -27,6 +27,28 @@ interface WorkbookMedia {
   extension?: string;
 }
 
+interface PreviewImageAnchor {
+  imageId?: number | string;
+  range?: {
+    tl?: {
+      nativeRow?: number;
+      nativeCol?: number;
+      row?: number;
+      col?: number;
+    };
+    br?: {
+      nativeRow?: number;
+      nativeCol?: number;
+      row?: number;
+      col?: number;
+    };
+    ext?: {
+      width?: number;
+      height?: number;
+    };
+  } | null;
+}
+
 const EMPTY_STYLE: QuoteTemplatePreviewCellStyle = {
   bold: false,
   italic: false,
@@ -187,7 +209,13 @@ function previewImages(
 
   for (const image of worksheet.getImages()) {
     if (images.length >= MAX_PREVIEW_IMAGES || totalBytes >= MAX_PREVIEW_IMAGE_TOTAL_BYTES) break;
-    const mediaIndex = Number(image.imageId);
+    // ExcelJS returns one-cell anchors with `tl` + `ext`; `br` is intentionally absent.
+    const previewImage = image as unknown as PreviewImageAnchor;
+    const range = previewImage.range;
+    const topLeft = range?.tl;
+    if (!topLeft) continue;
+
+    const mediaIndex = Number(previewImage.imageId);
     if (!Number.isInteger(mediaIndex) || mediaIndex < 0) continue;
     const item = media[mediaIndex] as WorkbookMedia | undefined;
     if (!item?.buffer || item.buffer.length > MAX_PREVIEW_IMAGE_BYTES) continue;
@@ -195,29 +223,55 @@ function previewImages(
     const mimeType = imageMimeType(item.extension);
     if (!mimeType) continue;
 
+    const topRow = nativeCoordinate(topLeft.nativeRow, topLeft.row);
+    const leftColumn = nativeCoordinate(topLeft.nativeCol, topLeft.col);
+    const bottomRight = range.br;
+    const rowSpan = bottomRight
+      ? Math.max(1, nativeCoordinate(bottomRight.nativeRow, bottomRight.row) - topRow)
+      : 1;
+    const columnSpan = bottomRight
+      ? Math.max(1, nativeCoordinate(bottomRight.nativeCol, bottomRight.col) - leftColumn)
+      : 1;
+    const fallbackWidth = spanDimension(worksheet, leftColumn, columnSpan, 'column');
+    const fallbackHeight = spanDimension(worksheet, topRow, rowSpan, 'row');
+    const width = bottomRight
+      ? fallbackWidth
+      : previewImageDimension(range.ext?.width, fallbackWidth);
+    const height = bottomRight
+      ? fallbackHeight
+      : previewImageDimension(range.ext?.height, fallbackHeight);
+
     totalBytes += item.buffer.length;
-    const rowSpan = Math.max(1, image.range.br.nativeRow - image.range.tl.nativeRow);
-    const columnSpan = Math.max(1, image.range.br.nativeCol - image.range.tl.nativeCol);
     images.push({
-      row: nativeCoordinate(image.range.tl.nativeRow, image.range.tl.row) + 1,
-      column: nativeCoordinate(image.range.tl.nativeCol, image.range.tl.col) + 1,
-      width: Math.max(
-        16,
-        Array.from({ length: columnSpan }, (_entry, offset) =>
-          normalizedDimension(worksheet.getColumn(image.range.tl.nativeCol + offset + 1).width, 12),
-        ).reduce((total, width) => total + Math.round(width * 7), 0),
-      ),
-      height: Math.max(
-        16,
-        Array.from({ length: rowSpan }, (_entry, offset) =>
-          normalizedDimension(worksheet.getRow(image.range.tl.nativeRow + offset + 1).height, 20),
-        ).reduce((total, height) => total + Math.round(height * 1.333), 0),
-      ),
+      row: topRow + 1,
+      column: leftColumn + 1,
+      width,
+      height,
       mimeType,
       dataUrl: `data:${mimeType};base64,${item.buffer.toString('base64')}`,
     });
   }
   return images;
+}
+
+function spanDimension(
+  worksheet: ExcelJS.Worksheet,
+  start: number,
+  span: number,
+  axis: 'column' | 'row',
+): number {
+  const total = Array.from({ length: span }, (_entry, offset) => {
+    if (axis === 'column') {
+      return Math.round(normalizedDimension(worksheet.getColumn(start + offset + 1).width, 12) * 7);
+    }
+    return Math.round(normalizedDimension(worksheet.getRow(start + offset + 1).height, 20) * 1.333);
+  }).reduce((sum, dimension) => sum + dimension, 0);
+  return Math.max(16, total);
+}
+
+function previewImageDimension(value: number | undefined, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return fallback;
+  return Math.min(2_000, Math.max(16, Math.round(value)));
 }
 
 function safeCellText(value: string): string {

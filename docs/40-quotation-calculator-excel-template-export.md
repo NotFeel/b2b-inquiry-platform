@@ -51,13 +51,13 @@
 | C | Product Name | 商品英文名称 |
 | D | Material | 商品所属品类树最底层末端节点的英文名称 |
 | E | Quantity (PCS) | 页面输入的商品总件数 |
-| F | Unit price(CNY) | 加价后的目标币种单件销售价格 |
-| G | Total Price(CNY) | 商品总件数 × 目标币种单价 |
+| F | Unit Price([CURRENCY]) | 加价后的目标币种单件销售价格 |
+| G | Total Price([CURRENCY]) | 商品总件数 × 目标币种单价 |
 
 ### 1.2 不填充区域
 
 - 第 1～5 行保持模板原样，不填充业务数据、不重写样式、不删除 Logo。
-- 第 6 行保持原有表头文案和样式；只按用户确认的规则动态更新 F6、G6 中的币种后缀。
+- 第 6 行保持原有样式；F6、G6 的 `[CURRENCY]` 占位符由导出时的目标币种 code 替换。
 - 不替换或重写第 1～5 行的任何内容。
 - 模板中的 WPS `DISPIMG` 公式不是标准 Excel 图片嵌入方式，不得依赖或复制该公式实现商品图片。
 
@@ -470,6 +470,7 @@ DOC-39 的实施记录说明已保存商品、包装、价格、费用及计算�
 - DOC-36 的 `product_quote` 导出路径保持不变。计算器模板使用独立的 `calculator_quote` 类型，复用 `QuoteTemplate`、私有 `FileAsset` 和现有 Storage Adapter；数据库中的模板用途为字符串，未新增 Prisma 列或 migration。
 - 当前计算、报价草稿和订单导出均通过同一个 Workbook Builder。模板上传校验独立识别 `Quotation` 工作表、A:G 表头和连续三条汇总行；导出时再次读取并校验启用模板。
 - 当前计算导出由服务端重跑现有 Decimal 计算，保留请求商品顺序；模板单价使用 CNY 销售单价乘当前汇率后逐商品向上舍入两位，行总价按已舍入单价乘件数并舍入两位。Shipping Cost 使用本次计算产生的目标币种费用行总和。
+- 商品表头和 Product Subtotal、Shipping Cost、Total Cost 汇总标签中的 `[CURRENCY]` 在导出时统一替换成目标币种 code；解析器同时兼容旧模板中固定的三位币种后缀。现有产品报价模板的五处货币单位标记均使用 `[CURRENCY]`。
 - 报价与订单快照新增 JSON 键：`categoryId`、`categoryLeafNameEn`、`categoryLocale`、`imageSnapshotStatus`、`imageSnapshotAssetId`。新记录要求有英文商品名与可唯一解析的末端英文品类；商品主图存在时复制到 `private/quotation-snapshots/` 并登记为私有 `FileAsset`。报价转订单会复用该快照引用。
 - 商品原图的 `FileAsset` 必须是 `ready`、`product-image` 且 `isPublic=true`（代表获准用于公开商品展示）；`product-image/` 原图仍由 Storage Adapter 路由到私有存储。导出只在服务端读取该受管原图，再把历史副本写入 `isPublic=false` 的私有快照资产。
 - 历史导出只使用报价/订单保存时的商品名、SKU、品类、图片引用、单价、汇率与费用金额。历史记录缺少商品/品类/图片状态或运费快照时返回 `QUOTATION_EXPORT_SNAPSHOT_MISSING`，不会读取当前商品或当前汇率补值。Shipping Cost 累加保存时 `amountForeign`，不重新推导运费。

@@ -129,6 +129,9 @@ function asExcelNumber(value: string): number {
 }
 
 function replaceCurrencySuffix(value: string, currencyCode: string): string {
+  if (/\[\s*CURRENCY\s*\]/i.test(value)) {
+    return value.replace(/\[\s*CURRENCY\s*\]/gi, currencyCode);
+  }
   const suffix = new RegExp('\\(([A-Z]{3})\\)\\s*$', 'i');
   return suffix.test(value)
     ? value.replace(suffix, `(${currencyCode})`)
