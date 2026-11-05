@@ -22,8 +22,57 @@ export IMAGE_TAG="$NEW_TAG"
 : "${GHCR_READ_TOKEN:?Missing GHCR_READ_TOKEN}"
 PREVIOUS=""
 [[ -f "$STATE" ]] && PREVIOUS="$(cat "$STATE")"
+# Pull release images one service at a time. A failed pull must stop the deployment
+# before PostgreSQL startup, backups, migrations, or application container changes.
+PULL_MAX_ATTEMPTS="${PULL_MAX_ATTEMPTS:-3}"
+PULL_RETRY_DELAY_SECONDS="${PULL_RETRY_DELAY_SECONDS:-15}"
+[[ "$PULL_MAX_ATTEMPTS" =~ ^[1-9][0-9]*$ ]] && (( PULL_MAX_ATTEMPTS <= 10 )) || { echo "PULL_MAX_ATTEMPTS must be an integer between 1 and 10" >&2; exit 2; }
+[[ "$PULL_RETRY_DELAY_SECONDS" =~ ^[0-9]+$ ]] && (( PULL_RETRY_DELAY_SECONDS <= 300 )) || { echo "PULL_RETRY_DELAY_SECONDS must be an integer between 0 and 300" >&2; exit 2; }
+
+pull_images_with_retry(){
+  local tag="$1"
+  local svc image attempt started finished elapsed total_started total_elapsed
+  local -a services=(api worker storefront admin)
+  total_started="$(date +%s)"
+  export IMAGE_TAG="$tag"
+  echo "Starting sequential image pull for $tag (max attempts: $PULL_MAX_ATTEMPTS; retry delay: ${PULL_RETRY_DELAY_SECONDS}s)."
+
+  for svc in "${services[@]}"; do
+    image="ghcr.io/notfeel/b2b-inquiry-platform-${svc}:${tag}"
+    started="$(date +%s)"
+    echo "===== Pulling $svc: $image ====="
+    for ((attempt=1; attempt<=PULL_MAX_ATTEMPTS; attempt++)); do
+      echo "[$svc] attempt $attempt/$PULL_MAX_ATTEMPTS"
+      if dc pull "$svc" && docker image inspect "$image" >/dev/null 2>&1; then
+        finished="$(date +%s)"
+        elapsed=$((finished - started))
+        echo "[$svc] SUCCESS in ${elapsed}s: $image"
+        break
+      fi
+
+      echo "[$svc] WARNING: pull attempt $attempt failed for $image" >&2
+      if (( attempt < PULL_MAX_ATTEMPTS )); then
+        echo "[$svc] Retrying in ${PULL_RETRY_DELAY_SECONDS}s..." >&2
+        sleep "$PULL_RETRY_DELAY_SECONDS"
+      else
+        finished="$(date +%s)"
+        elapsed=$((finished - started))
+        total_elapsed=$((finished - total_started))
+        echo "ERROR: image pull failed after $PULL_MAX_ATTEMPTS attempts: $image" >&2
+        echo "[$svc] elapsed: ${elapsed}s; total pull elapsed: ${total_elapsed}s" >&2
+        echo "Deployment stopped before database startup, backup, migration, or service replacement." >&2
+        return 1
+      fi
+    done
+  done
+
+  finished="$(date +%s)"
+  total_elapsed=$((finished - total_started))
+  echo "All four release images are present locally. Total image-pull time: ${total_elapsed}s."
+}
+
 printf '%s' "$GHCR_READ_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
-dc pull api worker storefront admin
+pull_images_with_retry "$NEW_TAG"
 dc up -d postgres
 for i in $(seq 1 30); do
   dc exec -T postgres pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1 && break
@@ -51,7 +100,7 @@ healthy(){
 rollback(){
   [[ -n "$PREVIOUS" ]] || { echo "No previous tag to roll back to" >&2; return 1; }
   export IMAGE_TAG="$PREVIOUS"
-  dc pull api worker storefront admin
+  pull_images_with_retry "$PREVIOUS"
   dc up -d --no-deps api worker storefront admin
   healthy
 }
