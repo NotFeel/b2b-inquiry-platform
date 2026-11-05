@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Prisma } from '@b2b/database';
-import { ERROR_CODES } from '@b2b/contracts';
+import { DICTIONARY_TYPES, ERROR_CODES, QUOTATION_EXPORT_LIMITS } from '@b2b/contracts';
 import Decimal from 'decimal.js';
 import type {
   QuotationCalculationInput,
@@ -11,13 +11,40 @@ import type {
 import { ApiError } from '../../common/errors/api-error';
 import { AuditService } from '../../common/services/audit.service';
 import { StorageService } from '../../common/services/storage.service';
+import { JsonLogger } from '../../common/logger.service';
 import { CategoriesService } from '../categories/categories.service';
+import { isManagedProductImageKey } from '../products/product-image-policy';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   calculateQuotation,
   QuotationEngineError,
   type QuotationEngineInput,
 } from './quotation-engine';
+import { detectQuotationImage } from './quotation-image';
+
+interface CategorySnapshotNode {
+  id: string;
+  parentId: string | null;
+  translations: { locale: string; name: string }[];
+}
+
+interface ItemProductHistorySnapshot {
+  categoryId: string | null;
+  categoryLeafNameEn: string | null;
+  categoryLocale: 'en-US';
+  imageSnapshotStatus: 'READY' | 'NO_IMAGE';
+  imageSnapshotAssetId: string | null;
+}
+
+interface StagedSnapshotAsset {
+  id: string;
+  storageKey: string;
+}
+
+interface PreparedProductHistorySnapshots {
+  byProductId: Map<string, ItemProductHistorySnapshot>;
+  stagedAssets: StagedSnapshotAsset[];
+}
 
 @Injectable()
 export class QuotationOrderService {
@@ -26,12 +53,21 @@ export class QuotationOrderService {
     private readonly audit: AuditService,
     private readonly storage: StorageService,
     private readonly categories: CategoriesService,
+    private readonly logger: JsonLogger,
   ) {}
 
   async config(locale: string) {
     const rows = await this.prisma.dictionaryType.findMany({
       where: {
-        code: { in: ['currency', 'volumetric_weight_divisor', 'quotation_fee_type'] },
+        code: {
+          in: [
+            DICTIONARY_TYPES.currency,
+            DICTIONARY_TYPES.volumetricWeightDivisor,
+            DICTIONARY_TYPES.quotationFeeType,
+            DICTIONARY_TYPES.productPublishStatus,
+            DICTIONARY_TYPES.productLifecycle,
+          ],
+        },
         enabled: true,
       },
       include: {
@@ -43,22 +79,28 @@ export class QuotationOrderService {
       },
     });
     const types = new Map(rows.map((row) => [row.code, row]));
+    const optionsFor = (typeCode: string) =>
+      (types.get(typeCode)?.items ?? []).map((item) => ({
+        code: item.code,
+        label: this.label(item.translations, locale, item.code),
+      }));
     return {
-      currencies: (types.get('currency')?.items ?? []).map((item) => ({
+      currencies: (types.get(DICTIONARY_TYPES.currency)?.items ?? []).map((item) => ({
         code: item.code,
         symbol: item.value,
         label: this.label(item.translations, locale, item.code),
       })),
-      volumetricDivisors: (types.get('volumetric_weight_divisor')?.items ?? []).map((item) => ({
-        id: item.id,
-        code: item.code,
-        value: item.value,
-        label: this.label(item.translations, locale, item.code),
-      })),
-      feeTypes: (types.get('quotation_fee_type')?.items ?? []).map((item) => ({
-        code: item.code,
-        label: this.label(item.translations, locale, item.code),
-      })),
+      volumetricDivisors: (types.get(DICTIONARY_TYPES.volumetricWeightDivisor)?.items ?? []).map(
+        (item) => ({
+          id: item.id,
+          code: item.code,
+          value: item.value,
+          label: this.label(item.translations, locale, item.code),
+        }),
+      ),
+      feeTypes: optionsFor(DICTIONARY_TYPES.quotationFeeType),
+      publishStatuses: optionsFor(DICTIONARY_TYPES.productPublishStatus),
+      productLifecycles: optionsFor(DICTIONARY_TYPES.productLifecycle),
       roundingMode: 'CEIL_2',
     };
   }
@@ -68,6 +110,7 @@ export class QuotationOrderService {
     categoryId: string | undefined,
     canReadCost: boolean,
     locale: string,
+    publishStatus?: 'published' | 'unpublished',
   ) {
     const categoryIds = categoryId
       ? await this.categories.resolveAdminCategoryScope(categoryId, true)
@@ -90,6 +133,11 @@ export class QuotationOrderService {
           : {}),
         priceCny: { not: null },
         lifecycleStatus: { not: 'DISCONTINUED' },
+        publishStatus: publishStatus
+          ? publishStatus === 'published'
+            ? 'PUBLISHED'
+            : 'UNPUBLISHED'
+          : { not: 'DRAFT' },
       },
       orderBy: [{ sku: 'asc' }],
       take: 50,
@@ -103,6 +151,7 @@ export class QuotationOrderService {
         cartonWeightKg: true,
         cartonQuantity: true,
         publishStatus: true,
+        lifecycleStatus: true,
         translations: { where: { locale }, select: { name: true } },
         images: {
           where: { deleteState: 'READY' },
@@ -121,6 +170,7 @@ export class QuotationOrderService {
         : null,
       imageAlt: product.images[0]?.altText ?? product.translations[0]?.name ?? product.sku,
       publishStatus: product.publishStatus.toLowerCase(),
+      lifecycleStatus: product.lifecycleStatus.toLowerCase(),
       costCny: canReadCost ? (product.priceCny?.toString() ?? null) : null,
       packaging: {
         cartonLengthCm: product.cartonLengthCm?.toString() ?? null,
@@ -175,6 +225,7 @@ export class QuotationOrderService {
     const result = this.calculate(prepared);
     const customerSnapshot = this.customerSnapshot(input);
     const no = this.number('Q');
+    const historySnapshots = await this.snapshotProductHistory(prepared, actorId);
     const quotation = await this.prisma
       .$transaction(async (tx) => {
         const customerId = await this.ensureCustomer(tx, input);
@@ -203,7 +254,9 @@ export class QuotationOrderService {
             totalAmountForeign: result.totals.totalAmountForeign,
             customerSnapshot: customerSnapshot as Prisma.InputJsonValue,
             calculationSnapshot: { input, result } as unknown as Prisma.InputJsonValue,
-            items: { create: this.persistableItems(prepared, result) },
+            items: {
+              create: this.persistableItems(prepared, result, historySnapshots.byProductId),
+            },
             fees: {
               create: result.fees.map((fee, lineNo) => ({
                 lineNo: lineNo + 1,
@@ -220,6 +273,7 @@ export class QuotationOrderService {
         });
       })
       .catch(async (error: unknown) => {
+        await this.discardSnapshotAssets(historySnapshots.stagedAssets);
         const concurrent = await this.prisma.quotation.findUnique({
           where: { createdById_idempotencyKey: { createdById: actorId, idempotencyKey } },
           include: { items: { orderBy: { lineNo: 'asc' } }, fees: { orderBy: { lineNo: 'asc' } } },
@@ -266,6 +320,7 @@ export class QuotationOrderService {
     const prepared = await this.prepare(input);
     const result = this.calculate(prepared);
     const customerSnapshot = this.customerSnapshot(input);
+    const historySnapshots = await this.snapshotProductHistory(prepared, actorId);
     const order = await this.prisma
       .$transaction(async (tx) => {
         const customerId = await this.ensureCustomer(tx, input);
@@ -295,7 +350,9 @@ export class QuotationOrderService {
               Prisma.InputJsonValue | undefined,
             shippingAddressSnapshot: input.customer.shippingAddress as Prisma.InputJsonValue,
             calculationSnapshot: { input, result } as unknown as Prisma.InputJsonValue,
-            items: { create: this.persistableItems(prepared, result) },
+            items: {
+              create: this.persistableItems(prepared, result, historySnapshots.byProductId),
+            },
             fees: {
               create: result.fees.map((fee, lineNo) => ({
                 lineNo: lineNo + 1,
@@ -312,6 +369,7 @@ export class QuotationOrderService {
         });
       })
       .catch(async (error: unknown) => {
+        await this.discardSnapshotAssets(historySnapshots.stagedAssets);
         const concurrent = await this.prisma.order.findUnique({
           where: { createdById_idempotencyKey: { createdById: actorId, idempotencyKey } },
           include: { items: { orderBy: { lineNo: 'asc' } }, fees: { orderBy: { lineNo: 'asc' } } },
@@ -590,8 +648,32 @@ export class QuotationOrderService {
     const ids = [...new Set(input.items.map((item) => item.productId))];
     const products = await this.prisma.product.findMany({
       where: { id: { in: ids }, lifecycleStatus: { not: 'DISCONTINUED' }, priceCny: { not: null } },
-      include: { translations: { where: { locale: 'en-US' } } },
+      include: {
+        translations: { where: { locale: 'en-US' } },
+        category: { include: { translations: { where: { locale: 'en-US' } } } },
+        images: {
+          where: { deleteState: 'READY' },
+          orderBy: [{ isCover: 'desc' }, { sortOrder: 'asc' }, { id: 'asc' }],
+          take: 1,
+          include: {
+            asset: {
+              select: {
+                id: true,
+                storageKey: true,
+                mimeType: true,
+                status: true,
+                purpose: true,
+                isPublic: true,
+              },
+            },
+          },
+        },
+      },
     });
+    const categoryNodes = await this.prisma.category.findMany({
+      select: { id: true, parentId: true, translations: { select: { locale: true, name: true } } },
+    });
+    const categorySnapshots = new Map(categoryNodes.map((node) => [node.id, node] as const));
     if (products.length !== ids.length)
       throw ApiError.validation('One or more products are unavailable for quotation.');
     const productById = new Map(products.map((row) => [row.id, row]));
@@ -607,6 +689,7 @@ export class QuotationOrderService {
         : null;
       return {
         product,
+        categorySnapshot: terminalCategorySnapshot(product.categoryId, categorySnapshots),
         engine: {
           productId: product.id,
           sku: product.sku,
@@ -645,6 +728,12 @@ export class QuotationOrderService {
     return { items, engineInput, divisor };
   }
 
+  /** Internal trusted calculation result used only by the calculator Excel export. */
+  async calculateForExcelExport(input: QuotationCalculationInput) {
+    const prepared = await this.prepare(input);
+    return { prepared, result: this.calculate(prepared) };
+  }
+
   private calculate(prepared: Awaited<ReturnType<QuotationOrderService['prepare']>>) {
     try {
       return calculateQuotation(prepared.engineInput);
@@ -656,6 +745,186 @@ export class QuotationOrderService {
       throw ApiError.validation(`Quotation calculation failed: ${error.code}.`, {
         [field]: `quotation.validation.${error.code.toLowerCase()}`,
       });
+    }
+  }
+
+  private async snapshotProductHistory(
+    prepared: Awaited<ReturnType<QuotationOrderService['prepare']>>,
+    actorId: string,
+  ): Promise<PreparedProductHistorySnapshots> {
+    const byProductId = new Map<string, ItemProductHistorySnapshot>();
+    const stagedAssets: StagedSnapshotAsset[] = [];
+    const archivedBySourceKey = new Map<string, StagedSnapshotAsset>();
+    let totalImageBytes = 0;
+
+    try {
+      for (const source of prepared.items) {
+        if (!source.product.translations[0]?.name.trim()) {
+          throw new ApiError(
+            ERROR_CODES.quotationExportValidationFailed,
+            'A product must have an English name before it can be saved in quotation history.',
+            { status: 422 },
+          );
+        }
+        if (!source.categorySnapshot) {
+          throw new ApiError(
+            ERROR_CODES.quotationExportValidationFailed,
+            'A product must have an unambiguous terminal category with an English name before it can be saved in quotation history.',
+            { status: 422 },
+          );
+        }
+        const cover = source.product.images[0] ?? null;
+        let imageSnapshotAssetId: string | null = null;
+        let imageSnapshotStatus: ItemProductHistorySnapshot['imageSnapshotStatus'] = 'NO_IMAGE';
+
+        if (cover) {
+          const sourceKey = cover.asset?.storageKey ?? cover.storageKey;
+          // Product gallery sources are publication-approved, but the managed
+          // product-image/ key still routes the original object to private storage.
+          if (
+            !isManagedProductImageKey(sourceKey) ||
+            (cover.asset !== null &&
+              (cover.asset.status !== 'ready' ||
+                !cover.asset.isPublic ||
+                cover.asset.purpose !== 'product-image'))
+          ) {
+            throw new ApiError(
+              ERROR_CODES.quotationExportImageUnavailable,
+              'The product image cannot be archived safely for the quotation history.',
+            );
+          }
+
+          let archived = archivedBySourceKey.get(sourceKey);
+          if (!archived) {
+            let buffer: Buffer;
+            try {
+              buffer = await this.storage.get(sourceKey);
+            } catch {
+              throw new ApiError(
+                ERROR_CODES.storageUnavailable,
+                'A product image could not be archived. Retry saving the quotation.',
+              );
+            }
+            if (
+              buffer.byteLength > QUOTATION_EXPORT_LIMITS.maxImageBytes ||
+              totalImageBytes + buffer.byteLength > QUOTATION_EXPORT_LIMITS.maxTotalImageBytes
+            ) {
+              throw new ApiError(
+                ERROR_CODES.quotationExportImageUnavailable,
+                'The quotation product images exceed the safe archive size limit.',
+              );
+            }
+            const detected = detectQuotationImage(buffer);
+            if (
+              !detected ||
+              detected.width * detected.height > QUOTATION_EXPORT_LIMITS.maxImagePixels
+            ) {
+              throw new ApiError(
+                ERROR_CODES.quotationExportImageUnavailable,
+                'A product image is not a supported, valid PNG/JPEG file.',
+              );
+            }
+            totalImageBytes += buffer.byteLength;
+
+            const assetId = randomUUID();
+            const storageKey = this.storage.buildKey(
+              'private/quotation-snapshots',
+              `quotation-snapshot-${assetId}`,
+              `.${detected.extension}`,
+            );
+            const mimeType = detected.extension === 'png' ? 'image/png' : 'image/jpeg';
+            const sha256 = createHash('sha256').update(buffer).digest('hex');
+            const asset = await this.prisma.fileAsset.create({
+              data: {
+                id: assetId,
+                storageKey,
+                originalName: `quotation-snapshot-${assetId}.${detected.extension}`,
+                mimeType,
+                sizeBytes: BigInt(buffer.byteLength),
+                sha256,
+                width: detected.width,
+                height: detected.height,
+                purpose: 'quotation-snapshot-image',
+                status: 'processing',
+                isPublic: false,
+                uploadedById: actorId,
+              },
+            });
+            archived = { id: asset.id, storageKey: asset.storageKey };
+            stagedAssets.push(archived);
+            try {
+              await this.storage.put(storageKey, buffer, mimeType);
+              await this.prisma.fileAsset.update({
+                where: { id: assetId },
+                data: { status: 'ready' },
+              });
+            } catch {
+              throw new ApiError(
+                ERROR_CODES.storageUnavailable,
+                'A product image could not be archived. Retry saving the quotation.',
+              );
+            }
+            archivedBySourceKey.set(sourceKey, archived);
+          }
+
+          imageSnapshotAssetId = archived.id;
+          imageSnapshotStatus = 'READY';
+        }
+
+        byProductId.set(source.product.id, {
+          categoryId: source.categorySnapshot?.id ?? null,
+          categoryLeafNameEn: source.categorySnapshot?.name ?? null,
+          categoryLocale: 'en-US',
+          imageSnapshotStatus,
+          imageSnapshotAssetId,
+        });
+      }
+      return { byProductId, stagedAssets };
+    } catch (error) {
+      await this.discardSnapshotAssets(stagedAssets);
+      throw error;
+    }
+  }
+
+  private async discardSnapshotAssets(assets: StagedSnapshotAsset[]): Promise<void> {
+    for (const asset of assets) {
+      try {
+        await this.storage.delete(asset.storageKey);
+        await this.prisma.fileAsset.deleteMany({ where: { id: asset.id } });
+      } catch {
+        try {
+          await this.prisma.$transaction(async (transaction) => {
+            await transaction.fileDeletionJob.upsert({
+              where: { idempotencyKey: `quotation-snapshot:${asset.id}` },
+              create: {
+                storageKey: asset.storageKey,
+                entityType: 'file_asset',
+                entityId: asset.id,
+                status: 'QUEUED',
+                idempotencyKey: `quotation-snapshot:${asset.id}`,
+              },
+              update: {
+                status: 'QUEUED',
+                runAfter: new Date(),
+                lockedBy: null,
+                lockedUntil: null,
+                heartbeatAt: null,
+                lastErrorCode: null,
+              },
+            });
+            await transaction.fileAsset.deleteMany({ where: { id: asset.id } });
+          });
+        } catch {
+          // The dry-run orphan-asset maintenance script remains the recovery path
+          // if both immediate removal and durable task creation fail.
+          this.logger.error(
+            'quotation.snapshot_image_cleanup_failed',
+            undefined,
+            'QuotationOrderService',
+            { assetId: asset.id },
+          );
+        }
+      }
     }
   }
 
@@ -691,10 +960,15 @@ export class QuotationOrderService {
   private persistableItems(
     prepared: Awaited<ReturnType<QuotationOrderService['prepare']>>,
     result: ReturnType<typeof calculateQuotation>,
+    historySnapshots: Map<string, ItemProductHistorySnapshot>,
   ) {
     return result.items.map((item, index) => {
       const source = prepared.items[index]!;
       const packaging = item.packaging;
+      const productHistory = historySnapshots.get(source.product.id);
+      if (!productHistory) {
+        throw new Error('A product history snapshot was not prepared.');
+      }
       return {
         lineNo: item.lineNo,
         productId: item.productId,
@@ -727,6 +1001,11 @@ export class QuotationOrderService {
           sku: source.product.sku,
           priceCny: source.product.priceCny!.toString(),
           name: item.productName,
+          categoryId: productHistory.categoryId,
+          categoryLeafNameEn: productHistory.categoryLeafNameEn,
+          categoryLocale: productHistory.categoryLocale,
+          imageSnapshotStatus: productHistory.imageSnapshotStatus,
+          imageSnapshotAssetId: productHistory.imageSnapshotAssetId,
         } as Prisma.InputJsonValue,
         packagingSnapshot: packaging as Prisma.InputJsonValue,
       };
@@ -1145,5 +1424,38 @@ export class QuotationOrderService {
 
   private date(value: string) {
     return new Date(`${value}T00:00:00.000Z`);
+  }
+}
+
+function terminalCategorySnapshot(
+  categoryId: string | null,
+  categories: Map<string, CategorySnapshotNode>,
+): { id: string; name: string } | null {
+  if (!categoryId) return null;
+  let currentNode: CategorySnapshotNode | null = categories.get(categoryId) ?? null;
+  if (!currentNode) return null;
+  const childrenByParent = new Map<string, CategorySnapshotNode[]>();
+  for (const candidate of categories.values()) {
+    if (!candidate.parentId) continue;
+    const siblings = childrenByParent.get(candidate.parentId) ?? [];
+    siblings.push(candidate);
+    childrenByParent.set(candidate.parentId, siblings);
+  }
+  const visited = new Set<string>();
+  while (true) {
+    if (!currentNode) return null;
+    if (visited.has(currentNode.id)) return null;
+    visited.add(currentNode.id);
+    const children: CategorySnapshotNode[] = childrenByParent.get(currentNode.id) ?? [];
+    if (children.length === 0) {
+      const name = currentNode.translations
+        .find((translation) => translation.locale === 'en-US')
+        ?.name.trim();
+      return name ? { id: currentNode.id, name } : null;
+    }
+    // A product attached to a non-leaf category can be resolved only when its
+    // tree has one unambiguous terminal descendant.
+    if (children.length !== 1) return null;
+    currentNode = children[0] ?? null;
   }
 }

@@ -7,9 +7,11 @@ import { useBreadcrumb } from '../../../../components/use-breadcrumb';
 import { QuotationProductPickerDialog } from '../../../../components/quotation-product-picker-dialog';
 import { useSession } from '../../../../components/session-provider';
 import { AdminApiError } from '../../../../lib/admin-api';
+import { translateError } from '../../../../lib/i18n';
 import {
   quotationOrderApi,
   type CalculatorInput,
+  type CalculatorExcelTemplateOption,
   type CalculatorProduct,
   type CalculationResult,
   type QuotationConfig,
@@ -60,6 +62,29 @@ function formatCalculatedValue(value: string): string {
   return trimmed.endsWith('.') ? trimmed.slice(0, -1) : trimmed;
 }
 
+/** Show CBM at up to eight fractional places, rounding half up and omitting trailing zeros. */
+function formatCbmValue(value: string): string {
+  if (!/^-?\d+(?:\.\d+)?$/.test(value)) return value;
+  const negative = value.startsWith('-');
+  const [whole = '0', fraction = ''] = (negative ? value.slice(1) : value).split('.');
+  if (fraction.length <= 8) return formatCalculatedValue(value);
+
+  const scale = 100_000_000n;
+  const scaled = BigInt(`${whole}${fraction.slice(0, 8)}`);
+  const rounded = scaled + (fraction[8]! >= '5' ? 1n : 0n);
+  const roundedValue = `${rounded / scale}.${(rounded % scale).toString().padStart(8, '0')}`;
+  return formatCalculatedValue(`${negative ? '-' : ''}${roundedValue}`);
+}
+
+/** Display sale prices as a two-decimal ceiling without binary floating-point math. */
+function formatSaleUnitPrice(value: string): string {
+  if (!/^\d+(?:\.\d+)?$/.test(value)) return value;
+  const [whole = '0', fraction = ''] = value.split('.');
+  const cents = BigInt(`${whole}${fraction.slice(0, 2).padEnd(2, '0')}`);
+  const roundedCents = cents + (/[1-9]/.test(fraction.slice(2)) ? 1n : 0n);
+  return `${roundedCents / 100n}.${(roundedCents % 100n).toString().padStart(2, '0')}`;
+}
+
 export default function QuotationCalculatorPage() {
   const { t, locale, can } = useSession();
   const breadcrumb = useBreadcrumb();
@@ -74,6 +99,10 @@ export default function QuotationCalculatorPage() {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<CalculationResult | null>(null);
+  const [previewSignature, setPreviewSignature] = useState('');
+  const [excelTemplates, setExcelTemplates] = useState<CalculatorExcelTemplateOption[]>([]);
+  const [excelTemplateId, setExcelTemplateId] = useState('');
+  const [exportingExcel, setExportingExcel] = useState(false);
   const [title, setTitle] = useState('');
   const [currencyCode, setCurrencyCode] = useState('USD');
   const [exchangeRate, setExchangeRate] = useState('0.1380');
@@ -105,20 +134,26 @@ export default function QuotationCalculatorPage() {
   const canSave = can('quotation.create');
   const canCreateOrder = can('order.create');
   const canReadFreightAllocation = can('quotation.cost.read') || can('product.cost.read');
-
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const [nextConfig, nextCustomers] = await Promise.all([
+      const [nextConfig, nextCustomers, nextExcelTemplates] = await Promise.all([
         quotationOrderApi.config(locale),
         can('customer.read') ? quotationOrderApi.customers() : Promise.resolve({ data: [] }),
+        canCalculate ? quotationOrderApi.calculatorExcelTemplates() : Promise.resolve([]),
       ]);
       setConfig(nextConfig);
       setVolumetricDivisorItemId(
         (current) => current || nextConfig.volumetricDivisors[0]?.id || '',
       );
       setCustomers(nextCustomers.data);
+      setExcelTemplates(nextExcelTemplates);
+      setExcelTemplateId((current) =>
+        nextExcelTemplates.some((template) => template.id === current)
+          ? current
+          : (nextExcelTemplates[0]?.id ?? ''),
+      );
       setCurrencyCode((current) =>
         nextConfig.currencies.some((currency) => currency.code === current)
           ? current
@@ -129,7 +164,7 @@ export default function QuotationCalculatorPage() {
     } finally {
       setLoading(false);
     }
-  }, [can, locale, t]);
+  }, [can, canCalculate, locale, t]);
 
   useEffect(() => {
     void load();
@@ -244,10 +279,13 @@ export default function QuotationCalculatorPage() {
     setPreviewRatesInvalid(false);
     setSaving(true);
     setError('');
+    setPreviewSignature('');
     try {
       setResult(await quotationOrderApi.preview(input));
+      setPreviewSignature(JSON.stringify(input));
     } catch (cause) {
       setResult(null);
+      setPreviewSignature('');
       setError(
         cause instanceof AdminApiError
           ? `${cause.message} (${cause.code})`
@@ -267,7 +305,13 @@ export default function QuotationCalculatorPage() {
       const saved = await quotationOrderApi.saveDraft(buildInput());
       toast.success(t('quotationCenter.draftSaved', { number: saved.quotationNo }));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t('quotationCenter.saveError'));
+      setError(
+        cause instanceof AdminApiError
+          ? translateError(locale, cause.code)
+          : cause instanceof Error
+            ? cause.message
+            : t('quotationCenter.saveError'),
+      );
     } finally {
       setSaving(false);
     }
@@ -282,13 +326,39 @@ export default function QuotationCalculatorPage() {
     } catch (cause) {
       setError(
         cause instanceof AdminApiError
-          ? `${cause.message} (${cause.code})`
+          ? translateError(locale, cause.code)
           : cause instanceof Error
             ? cause.message
             : t('quotationCenter.saveError'),
       );
     } finally {
       setSaving(false);
+    }
+  };
+
+  const currentInputSignature = JSON.stringify(buildInput());
+  const previewMatchesCurrentInput = Boolean(
+    result && previewSignature && previewSignature === currentInputSignature,
+  );
+
+  const exportCurrentExcel = async () => {
+    if (!excelTemplateId || !previewMatchesCurrentInput) return;
+    setExportingExcel(true);
+    setError('');
+    try {
+      const file = await quotationOrderApi.exportCalculatorExcel(excelTemplateId, buildInput());
+      quotationOrderApi.saveQuotationExcelDownload(file);
+      toast.success(t('quotationCenter.excelExported'));
+    } catch (cause) {
+      setError(
+        cause instanceof AdminApiError
+          ? translateError(locale, cause.code)
+          : cause instanceof Error
+            ? cause.message
+            : t('quotationCenter.excelExportFailed'),
+      );
+    } finally {
+      setExportingExcel(false);
     }
   };
 
@@ -462,10 +532,11 @@ export default function QuotationCalculatorPage() {
                     <th scope="col">{t('quotationCenter.quantity')}</th>
                     <th scope="col">{t('quotationCenter.markup')}</th>
                     <th scope="col">{t('quotationCenter.cartons')}</th>
-                    <th scope="col">{t('quotationCenter.unitsPerCarton')}</th>
                     <th scope="col">{t('quotationCenter.dimensions')}</th>
                     <th scope="col">{t('quotationCenter.cartonWeight')}</th>
-                    <th scope="col">{t('quotationCenter.unitPriceCny')}</th>
+                    <th scope="col">
+                      {t('quotationCenter.unitPrice', { currency: currencyCode })}
+                    </th>
                     <th scope="col">{t('quotationCenter.cartonVolumeCbm')}</th>
                     <th scope="col">{t('quotationCenter.totalCbm')}</th>
                     <th scope="col">{t('quotationCenter.cartonVolumeWeightKg')}</th>
@@ -477,7 +548,7 @@ export default function QuotationCalculatorPage() {
                 <tbody>
                   {items.length === 0 ? (
                     <tr>
-                      <td colSpan={16}>{t('quotationCenter.emptyItems')}</td>
+                      <td colSpan={15}>{t('quotationCenter.emptyItems')}</td>
                     </tr>
                   ) : (
                     items.map((item, index) => {
@@ -589,18 +660,6 @@ export default function QuotationCalculatorPage() {
                             />
                           </td>
                           <td>
-                            <Input
-                              inputMode="numeric"
-                              aria-label={t('quotationCenter.unitsPerCartonForSku', {
-                                sku: product?.sku ?? '',
-                              })}
-                              value={item.unitsPerCarton}
-                              onChange={(event) =>
-                                changeItem(index, 'unitsPerCarton', event.target.value)
-                              }
-                            />
-                          </td>
-                          <td>
                             <div
                               style={{
                                 display: 'grid',
@@ -639,17 +698,13 @@ export default function QuotationCalculatorPage() {
                           </td>
                           <td>
                             {calculatedItem
-                              ? `¥${formatCalculatedValue(calculatedItem.unitSalePriceCny)}`
+                              ? `${currencyCode} ${formatSaleUnitPrice(calculatedItem.unitSalePriceForeign)}`
                               : '—'}
                           </td>
                           <td>
-                            {calculatedItem
-                              ? formatCalculatedValue(calculatedItem.cartonVolumeCbm)
-                              : '—'}
+                            {calculatedItem ? formatCbmValue(calculatedItem.cartonVolumeCbm) : '—'}
                           </td>
-                          <td>
-                            {calculatedItem ? formatCalculatedValue(calculatedItem.totalCbm) : '—'}
-                          </td>
+                          <td>{calculatedItem ? formatCbmValue(calculatedItem.totalCbm) : '—'}</td>
                           <td>
                             {calculatedItem
                               ? formatCalculatedValue(calculatedItem.cartonVolumeWeightKg)
@@ -940,9 +995,36 @@ export default function QuotationCalculatorPage() {
                 </Button>
               ) : null}
             </div>
-            {result ? (
+            {previewMatchesCurrentInput && result ? (
               <div className="stack-sm" aria-live="polite">
                 <h2>{t('quotationCenter.summary')}</h2>
+                {canCalculate && canReadFreightAllocation ? (
+                  <div className="button-row">
+                    <label className="field">
+                      <span className="field-label">{t('quotationCenter.excelTemplate')}</span>
+                      <Select
+                        value={excelTemplateId}
+                        disabled={exportingExcel || excelTemplates.length === 0}
+                        options={excelTemplates.map((template) => ({
+                          value: template.id,
+                          label: `${template.name} v${template.version}`,
+                        }))}
+                        onChange={(event) => setExcelTemplateId(event.target.value)}
+                      />
+                    </label>
+                    <Button
+                      variant="secondary"
+                      loading={exportingExcel}
+                      disabled={exportingExcel || !excelTemplateId}
+                      onClick={() => void exportCurrentExcel()}
+                    >
+                      {t('quotationCenter.exportExcel')}
+                    </Button>
+                    {excelTemplates.length === 0 ? (
+                      <span className="muted">{t('quotationCenter.noExcelTemplate')}</span>
+                    ) : null}
+                  </div>
+                ) : null}
                 <p>
                   {t('quotationCenter.weightSummary', {
                     volume: formatCalculatedValue(result.totals.volumeWeightKg),
@@ -952,10 +1034,10 @@ export default function QuotationCalculatorPage() {
                 </p>
                 <p>
                   {t('quotationCenter.freightQuoteSummary', {
-                    cbm: formatCalculatedValue(result.freight.cbmFreightAmount),
-                    cbmTotal: formatCalculatedValue(result.freight.orderTotalCbm),
-                    kg: formatCalculatedValue(result.freight.kgFreightAmount),
-                    currency: result.freight.freightCurrencyCode,
+                    cbm: formatCalculatedValue(result.freight.cbmFreightAmountForeign),
+                    cbmTotal: formatCbmValue(result.freight.orderTotalCbm),
+                    kg: formatCalculatedValue(result.freight.kgFreightAmountForeign),
+                    currency: currencyCode,
                     basis: t(
                       result.freight.kgChargeableBasis === 'VOLUME_WEIGHT'
                         ? 'quotationCenter.volumeWeightBasis'
@@ -970,8 +1052,8 @@ export default function QuotationCalculatorPage() {
                         ? 'quotationCenter.billingByCbm'
                         : 'quotationCenter.billingByKg',
                     ),
-                    amount: formatCalculatedValue(result.freight.selectedFreightAmount),
-                    currency: result.freight.freightCurrencyCode,
+                    amount: formatCalculatedValue(result.freight.selectedFreightAmountForeign),
+                    currency: currencyCode,
                   })}
                 </p>
                 <div className="table-scroll">
@@ -980,10 +1062,12 @@ export default function QuotationCalculatorPage() {
                       <tr>
                         <th>{t('quotationCenter.product')}</th>
                         <th>{t('quotationCenter.quantity')}</th>
-                        <th>{t('quotationCenter.unitPriceCny')}</th>
-                        <th>{t('quotationCenter.amountCny')}</th>
+                        <th>{t('quotationCenter.unitPrice', { currency: currencyCode })}</th>
+                        <th>{t('quotationCenter.amount', { currency: currencyCode })}</th>
                         {canReadFreightAllocation ? (
-                          <th>{t('quotationCenter.freightAllocated')}</th>
+                          <th>
+                            {t('quotationCenter.freightAllocated', { currency: currencyCode })}
+                          </th>
                         ) : null}
                       </tr>
                     </thead>
@@ -994,12 +1078,12 @@ export default function QuotationCalculatorPage() {
                             {item.sku} · {item.productName}
                           </td>
                           <td>{formatCalculatedValue(item.quantity)}</td>
-                          <td>{formatCalculatedValue(item.unitSalePriceCny)}</td>
-                          <td>{formatCalculatedValue(item.lineAmountCny)}</td>
+                          <td>{formatSaleUnitPrice(item.unitSalePriceForeign)}</td>
+                          <td>{formatCalculatedValue(item.lineAmountForeign)}</td>
                           {canReadFreightAllocation ? (
                             <td>
-                              {item.allocatedFreightCny
-                                ? formatCalculatedValue(item.allocatedFreightCny)
+                              {item.allocatedFreightForeign
+                                ? formatCalculatedValue(item.allocatedFreightForeign)
                                 : '—'}
                             </td>
                           ) : null}
@@ -1010,9 +1094,8 @@ export default function QuotationCalculatorPage() {
                 </div>
                 <p>
                   {t('quotationCenter.totalSummary', {
-                    cny: formatCalculatedValue(result.totals.totalAmountCny),
                     currency: currencyCode,
-                    foreign: formatCalculatedValue(result.totals.totalAmountForeign),
+                    amount: formatCalculatedValue(result.totals.totalAmountForeign),
                   })}
                 </p>
               </div>
@@ -1023,6 +1106,8 @@ export default function QuotationCalculatorPage() {
       {productPickerOpen ? (
         <QuotationProductPickerDialog
           alreadyAddedIds={new Set(items.map((item) => item.productId))}
+          publishStatusOptions={config?.publishStatuses ?? []}
+          lifecycleStatusOptions={config?.productLifecycles ?? []}
           onClose={() => setProductPickerOpen(false)}
           onAdd={addProducts}
         />

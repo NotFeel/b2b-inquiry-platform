@@ -83,15 +83,16 @@ describe('quotation Decimal calculation engine', () => {
     ).toBe('70');
   });
 
-  it('converts the grand total once and assigns foreign currency tail to the last component', () => {
+  it('calculates foreign line totals from the rounded sale unit price and quantity', () => {
     const result = calculateQuotation({
       ...base,
       exchangeRate: '0.1380001',
       items: [base.items[0]!],
     });
-    expect(result.totals.totalAmountForeign).toBe('104.89');
+    expect(result.items[0]?.unitSalePriceForeign).toBe('0.83');
+    expect(result.totals.totalAmountForeign).toBe('105.08');
     expect(result.fees[0]?.amountForeign).toBe('22.08');
-    expect(result.items[0]?.lineAmountForeign).toBe('82.81');
+    expect(result.items[0]?.lineAmountForeign).toBe('83.00');
   });
 
   it('rejects partial packaging, invalid rates and missing formal packaging', () => {

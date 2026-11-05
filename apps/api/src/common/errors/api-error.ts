@@ -113,6 +113,7 @@ const DEFAULT_STATUS: Record<string, number> = {
   [ERROR_CODES.quotationExportValidationFailed]: HttpStatus.UNPROCESSABLE_ENTITY,
   [ERROR_CODES.quotationExportPricingInvalid]: HttpStatus.UNPROCESSABLE_ENTITY,
   [ERROR_CODES.quotationExportImageUnavailable]: HttpStatus.UNPROCESSABLE_ENTITY,
+  [ERROR_CODES.quotationExportSnapshotMissing]: HttpStatus.UNPROCESSABLE_ENTITY,
   [ERROR_CODES.storageUnavailable]: HttpStatus.SERVICE_UNAVAILABLE,
   [ERROR_CODES.tagCodeConflict]: HttpStatus.CONFLICT,
   [ERROR_CODES.tagInUse]: HttpStatus.CONFLICT,

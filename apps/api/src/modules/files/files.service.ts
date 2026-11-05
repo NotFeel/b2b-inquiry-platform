@@ -615,6 +615,12 @@ export class FilesService {
    */
   async remove(id: string, actorId: string, requestId: string) {
     const asset = await this.getAssetOrThrow(id);
+    if (asset.purpose === 'quote-template' || asset.purpose === 'quotation-snapshot-image') {
+      throw new ApiError(
+        ERROR_CODES.assetInUse,
+        'Quote templates and quotation history images must be removed through their owning workflows.',
+      );
+    }
     const [productImageCount, categoryCount, adCount] = await this.prisma.$transaction([
       this.prisma.productImage.count({ where: { fileAssetId: id } }),
       this.prisma.category.count({ where: { coverFileAssetId: id } }),

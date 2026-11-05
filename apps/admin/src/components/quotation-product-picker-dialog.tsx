@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
 import type { CategoryNode } from '@b2b/contracts';
-import { Button, Input } from '@b2b/ui';
+import { Button, Input, Select } from '@b2b/ui';
 import { CategoryPicker } from './category-picker';
 import { useSession } from './session-provider';
 import { categoriesApi } from '../lib/categories-api';
@@ -11,10 +11,14 @@ import { quotationOrderApi, type CalculatorProduct } from '../lib/quotation-orde
 
 export function QuotationProductPickerDialog({
   alreadyAddedIds,
+  publishStatusOptions,
+  lifecycleStatusOptions,
   onClose,
   onAdd,
 }: {
   alreadyAddedIds: ReadonlySet<string>;
+  publishStatusOptions: { code: string; label: string }[];
+  lifecycleStatusOptions: { code: string; label: string }[];
   onClose: () => void;
   onAdd: (products: CalculatorProduct[]) => void;
 }) {
@@ -22,6 +26,7 @@ export function QuotationProductPickerDialog({
   const [categories, setCategories] = useState<CategoryNode[]>([]);
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [publishStatus, setPublishStatus] = useState<'published' | 'unpublished' | ''>('');
   const [products, setProducts] = useState<CalculatorProduct[]>([]);
   const [selected, setSelected] = useState<Map<string, CalculatorProduct>>(new Map());
   const [loading, setLoading] = useState(true);
@@ -58,7 +63,7 @@ export function QuotationProductPickerDialog({
     setError('');
     const timer = window.setTimeout(() => {
       void quotationOrderApi
-        .products(locale, query.trim(), categoryId)
+        .products(locale, query.trim(), categoryId, publishStatus || undefined)
         .then((rows) => {
           if (active) setProducts(rows);
         })
@@ -74,7 +79,7 @@ export function QuotationProductPickerDialog({
       active = false;
       window.clearTimeout(timer);
     };
-  }, [categoryId, locale, query, retryCount, t]);
+  }, [categoryId, locale, publishStatus, query, retryCount, t]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -85,10 +90,17 @@ export function QuotationProductPickerDialog({
   }, [onClose]);
 
   const selectedCount = selected.size;
-  const statusLabel = useMemo(
-    () => (status: CalculatorProduct['publishStatus']) =>
-      t(`quotationCenter.publishStatus.${status}`),
-    [t],
+  const publishStatusLabels = useMemo(
+    () => new Map(publishStatusOptions.map((option) => [option.code, option.label])),
+    [publishStatusOptions],
+  );
+  const lifecycleStatusLabels = useMemo(
+    () => new Map(lifecycleStatusOptions.map((option) => [option.code, option.label])),
+    [lifecycleStatusOptions],
+  );
+  const selectablePublishStatuses = useMemo(
+    () => publishStatusOptions.filter((option) => option.code !== 'draft'),
+    [publishStatusOptions],
   );
 
   const toggleProduct = (product: CalculatorProduct, checked: boolean) => {
@@ -177,6 +189,22 @@ export function QuotationProductPickerDialog({
               maxLength={120}
             />
           </label>
+          <label className="field">
+            <span className="field-label">{t('quotationCenter.publishStatusFilter')}</span>
+            <Select
+              value={publishStatus}
+              options={[
+                { value: '', label: t('quotationCenter.allNonDraftProducts') },
+                ...selectablePublishStatuses.map((option) => ({
+                  value: option.code,
+                  label: option.label,
+                })),
+              ]}
+              onChange={(event) =>
+                setPublishStatus(event.target.value as 'published' | 'unpublished' | '')
+              }
+            />
+          </label>
         </div>
         {error ? (
           <div role="alert" className="alert alert-error">
@@ -198,18 +226,19 @@ export function QuotationProductPickerDialog({
                 <th scope="col">{t('quotationCenter.productName')}</th>
                 <th scope="col">{t('quotationCenter.internalPrice')}</th>
                 <th scope="col">{t('quotationCenter.publishStatusLabel')}</th>
+                <th scope="col">{t('quotationCenter.lifecycleStatusLabel')}</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} aria-live="polite">
+                  <td colSpan={7} aria-live="polite">
                     {t('quotationCenter.loadingProducts')}
                   </td>
                 </tr>
               ) : products.length === 0 ? (
                 <tr>
-                  <td colSpan={6}>{t('quotationCenter.noProducts')}</td>
+                  <td colSpan={7}>{t('quotationCenter.noProducts')}</td>
                 </tr>
               ) : (
                 products.map((product) => {
@@ -243,7 +272,13 @@ export function QuotationProductPickerDialog({
                       <td>{product.sku}</td>
                       <td>{product.name}</td>
                       <td>{product.costCny === null ? '—' : `¥${product.costCny}`}</td>
-                      <td>{statusLabel(product.publishStatus)}</td>
+                      <td>
+                        {publishStatusLabels.get(product.publishStatus) ?? product.publishStatus}
+                      </td>
+                      <td>
+                        {lifecycleStatusLabels.get(product.lifecycleStatus) ??
+                          product.lifecycleStatus}
+                      </td>
                     </tr>
                   );
                 })

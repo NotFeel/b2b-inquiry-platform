@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Decimal from 'decimal.js';
 import type { AuditService } from '../../common/services/audit.service';
+import type { JsonLogger } from '../../common/logger.service';
 import type { CategoriesService } from '../categories/categories.service';
 import type { StorageService } from '../../common/services/storage.service';
 import type { PrismaService } from '../../prisma/prisma.service';
@@ -42,7 +43,8 @@ describe('quotation product search', () => {
     const storage = {
       adminProductImageUrl: (id: string) => `/api/v1/admin/media/assets/${id}/preview`,
     } as StorageService;
-    service = new QuotationOrderService(prisma, {} as AuditService, storage, categories);
+    const logger = { error: vi.fn(), warn: vi.fn() } as unknown as JsonLogger;
+    service = new QuotationOrderService(prisma, {} as AuditService, storage, categories, logger);
   });
 
   it('searches SKU/name within the selected category subtree and returns picker fields', async () => {

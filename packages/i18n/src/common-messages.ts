@@ -92,7 +92,7 @@ export const commonMessages: Record<'en-US' | 'zh-CN', Messages> = {
       IMPORT_ATOMIC_COMMIT_FAILED:
         'The import transaction failed. No products from this batch were created.',
       ASSET_IN_USE:
-        'This file is also used by another product, category cover or ad, so it cannot be deleted here.',
+        'This file is still referenced by a product, category, ad, quote template or quotation history, so it cannot be deleted here.',
       FILE_OPERATION_NOT_FOUND: 'The delete task was not found.',
       FILE_OPERATION_NOT_RETRYABLE: 'Only a failed delete task can be retried.',
       STORAGE_UNAVAILABLE:
@@ -144,6 +144,8 @@ export const commonMessages: Record<'en-US' | 'zh-CN', Messages> = {
         'The markup, currency or exchange rate is invalid. No file was generated.',
       QUOTATION_EXPORT_IMAGE_UNAVAILABLE:
         'A product image could not be read safely. No file was generated.',
+      QUOTATION_EXPORT_SNAPSHOT_MISSING:
+        'This saved quotation or order is missing the historical product, terminal category or freight snapshot required for export.',
       QUOTE_TEMPLATE_IN_USE: 'This template version is referenced by previous exports.',
       PI_NOT_EDITABLE: 'An issued PI cannot be edited. Create a revision instead.',
       PI_REVISION_REQUIRED: 'Create a revision before changing an issued PI.',
@@ -376,7 +378,7 @@ export const commonMessages: Record<'en-US' | 'zh-CN', Messages> = {
       IMPORT_VALIDATION_CONFIG_MISMATCH: '品类、状态或标签配置已变化，请重新验证工作簿。',
       IMPORT_ALREADY_CONSUMED: '该导入预检已经提交过，不能重复执行。',
       IMPORT_ATOMIC_COMMIT_FAILED: '导入事务失败，本批次没有创建任何商品。',
-      ASSET_IN_USE: '该文件同时被其他商品、品类封面或广告引用，无法在此删除。',
+      ASSET_IN_USE: '该文件仍被商品、品类、广告、报价模板或报价历史引用，无法在此删除。',
       FILE_OPERATION_NOT_FOUND: '未找到该删除任务。',
       FILE_OPERATION_NOT_RETRYABLE: '只有失败的删除任务可以重试。',
       STORAGE_UNAVAILABLE: '对象存储暂不可用；系统未报告删除成功，请重试该任务。',
@@ -419,6 +421,8 @@ export const commonMessages: Record<'en-US' | 'zh-CN', Messages> = {
       QUOTATION_EXPORT_VALIDATION_FAILED: '一个或多个所选商品不满足报价条件，未生成任何文件。',
       QUOTATION_EXPORT_PRICING_INVALID: '加价率、币种或汇率无效，未生成任何文件。',
       QUOTATION_EXPORT_IMAGE_UNAVAILABLE: '无法安全读取商品主图，未生成任何文件。',
+      QUOTATION_EXPORT_SNAPSHOT_MISSING:
+        '该历史报价或订单缺少导出所需的商品图片、末端品类或运费快照。',
       QUOTE_TEMPLATE_IN_USE: '该模板版本已被历史导出引用。',
       PI_NOT_EDITABLE: '已正式发出的 PI 不能直接编辑，请创建修订版本。',
       PI_REVISION_REQUIRED: '修改已发出的 PI 前请先创建修订版本。',

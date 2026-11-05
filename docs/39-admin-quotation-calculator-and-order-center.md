@@ -49,7 +49,7 @@
 - 已复用 `currency`、`volumetric_weight_divisor`、`quotation_fee_type` 字典；报价费用默认项由版本化数据迁移和参考数据 seed 幂等补齐，已存在的管理员启停状态和翻译会保留。报价/订单权限与双语菜单继续由参考数据 seed 维护；菜单新增在 `quotes-files` 组下，API 仍由逐端点 RBAC 授权。
 - 已实现服务端商品成本读取、字典校验、Decimal 预览计算、箱规覆盖快照、订单级费用、海运分摊、汇率总额舍入、报价草稿保存/查询、报价转订单和计算器直接创建订单。创建写入为数据库事务；相同幂等 key + 相同 payload 重放返回同一记录，payload 不同返回冲突；报价转单以唯一 `sourceQuotationId` 处理并发重放。
 - 已实现 `/[locale]/quotation-calculator`、`/[locale]/quotations`、`/[locale]/orders` Admin 页面。报价草稿支持保存、查询和转单；直接订单要求客户名称、E.164 电话、国家、完整收货地址及订单日期。创建新客户时按唯一电话原子复用/创建 Customer，但不覆盖已有主档信息。
-- CNY 商品单价/金额、箱规重量及运费分摊按数据库 NUMERIC 精度归一后计算和保存，所有总额通过 Decimal；外币总额一次 ROUND_UP 到两位，订单级外币组成与商品级海运分摊按最小单位尾差分配。
+- CNY 商品单价/金额、箱规重量及运费分摊按数据库 NUMERIC 精度归一后计算和保存，所有总额通过 Decimal；历史计算曾将外币总额一次 ROUND_UP 到两位，当前舍入规则见下方 1.1 记录。
 - 成本、涨幅和商品级运费分摊需要成本读取权限；客户端不能提交成本或计算结果作为权威值。操作审计记录不含客户电话、邮箱、地址或成本明细。
 - 验证：本地 PostgreSQL 两个 migration 均成功部署，`check:menu-translations` 通过（33 菜单 × 2 locale），`check:production-reference-data` 通过；计算引擎、输入 DTO、RBAC wiring 单测及 Admin 单测已通过。全量 API 测试的 4 项商品导入测试因仓库未提供 `docs/凡士林.xlsx` 夹具失败，其余 367 项通过。
 - 回滚：先回退 API/Admin 发布，保留 additive schema 和已写业务数据；禁止自动 DROP 新表或订单/报价数据。若尚无业务记录且确需回滚 schema，须单独审核反向迁移；幂等列/索引可在确认没有并发写入后单独移除。
@@ -85,6 +85,23 @@
 - 预览调用前校验 CBM、KG 两种费率为正数且最多 8 位小数；缺失或格式错误时显示双语字段提示，不再发送必然触发 400 的费率请求。其他业务校验仍由服务端 DTO 执行，接口错误保留错误码。
 - 商品表格把商品与包装回显字段（含单箱毛重）排在计算输出之前；销售单价和 CBM/体积重/总毛重计算值放到后半部分。无 schema 变更。
 
+### 0.9 预览金额随目标币种展示（2026-11-04）
+
+- 计算摘要和商品表格中的销售单价、商品金额、海运报价、选中海运费、商品运费分摊和订单总额统一展示为页面所选币种；金额标签同步显示该币种。目标币种金额由服务端 Decimal 计算。
+- CBM/KG 海运费率、商品内部成本、配送费和其他费用仍以 CNY 输入；它们是核算基准或输入值，不跟随目标币种切换。无需数据库迁移。
+
+### 1.0 商品行与选择弹窗优化（2026-11-04）
+
+- 销售单价按目标币种单件向上进位到两位小数；目标币种商品金额按已进位单价 × 数量计算，页面显示与保存的明细金额一致。
+- 商品明细表隐藏“每箱数量”列，但保留已有包装字段和历史快照兼容。
+- 添加商品弹窗从 `publish_status` 字典加载筛选值，服务端搜索始终排除草稿；弹窗分别从发布状态和商品生命周期字典显示对应 locale 标签。无数据库迁移。
+
+### 1.1 目标币种商品金额及 CBM 运费精度（2026-11-04）
+
+- 后端先用 CNY 成本和涨幅计算 CNY 单价，再按汇率换算目标币种，并将每件销售单价向上进位到两位；商品金额按该单价乘数量、再按币种金额精度四舍五入到两位，外币订单总额由商品行、运费和其他费用行汇总，避免将换汇尾差分配进商品单价。
+- CBM 运费按订单总 CBM × CNY/CBM 单价计算，CNY 结果和换算后的目标币种金额均向上进位到两位；KG 运费舍入规则保持原样。
+- 单箱 CBM、商品总 CBM 和订单总 CBM 在页面最多展示 8 位小数，超出部分四舍五入，尾部 0 不补齐。数据库和计算快照仍保存完整 Decimal 精度。无需数据库迁移。
+
 ---
 
 ## 1. 产品目标与业务术语
@@ -108,8 +125,8 @@
 | 汇率方向 | 1 CNY = X 目标货币 |
 | 汇率来源 | 人工录入；保存汇率值、日期、录入人 |
 | 外币展示 | 固定两位小数，包括 JPY；按业务明确规则，不自动套 ISO minor unit |
-| 外币舍入 | 订单最终外币金额向上进位到两位小数，Decimal ROUND_UP/CEIL 对非负金额等价 |
-| 明细与总额 | 先精确计算 CNY；外币最终总额只舍入一次；外币分项通过尾差分配保证加总等于订单总额 |
+| 外币舍入 | 目标币种单件销售价向上进位到两位；行金额为单价 × 数量后四舍五入到两位；CBM 运费向上进位到两位 |
+| 明细与总额 | 目标币种订单总额由商品行、运费、配送费和其他费用汇总；费用行内分配尾差，商品行不承接订单汇率尾差 |
 | 报价保存 | 可选择保存草稿，也可不保存直接计算；未保存计算不创建任何业务记录 |
 | 订单创建 | 同时支持“已保存报价转订单”和“计算器直接创建订单” |
 | 商品定价 | 商品级独立核算，采购成本按百分比加价 |
@@ -140,11 +157,11 @@
 报价计算器采用单页分区/步骤式工作台，桌面端可左右布局，手机端单列：
 
 1. **客户与报价信息**：模式切换（临时计算/保存报价草稿/直接创建订单）、客户选择或新增、客户名称、联系人、电话、邮箱、国家、账单地址、收货地址、报价日期、有效期、订单日期（创建订单时）。
-2. **商品明细**：商品搜索/选择、SKU、商品名称、数量、采购成本 CNY、涨幅百分比、销售单价 CNY、商品金额 CNY。
-3. **包装参数**：每个商品的箱数、每箱数量、单箱长宽高、单箱毛重；展示每行单箱 CBM、商品总 CBM、商品总体积重和总毛重。商品行不单独选择体积重系数。
-4. **海运双报价与订单级费用**：同时配置 CNY/CBM 和 CNY/kg 单价；海运费率固定使用 CNY，不随报价目标币种切换。KG 报价区域统一选择一个体积重系数（来自字典），应用于整个订单。页面以 CNY 并列展示两种报价、重量依据及金额，由用户选择一种作为本次订单实际海运费；计入目标币种总额时再按汇率转换。另录入配送费和其他费用行。
+2. **商品明细**：商品搜索/选择、SKU、商品名称、数量、采购成本 CNY、涨幅百分比、销售单价和商品金额。销售价按 CNY 核算，预览展示跟随目标币种。
+3. **包装参数**：每个商品的箱数、单箱长宽高、单箱毛重；展示每行单箱 CBM、商品总 CBM、商品总体积重和总毛重。每箱数量可保留在商品/历史快照中，但报价计算器明细表不显示此字段。商品行不单独选择体积重系数。
+4. **海运双报价与订单级费用**：同时配置 CNY/CBM 和 CNY/kg 单价；海运费率输入固定使用 CNY，不随报价目标币种切换。KG 报价区域统一选择一个体积重系数（来自字典），应用于整个订单。预览中的 CBM/KG 两种报价、选中海运费及分摊金额均展示为页面选择的目标币种；CNY 报价按汇率转换后展示。另录入仍以 CNY 为单位的配送费和其他费用行。
 5. **货币与汇率**：报价币种（字典）、人工汇率；明确显示 `1 CNY = X USD`。
-6. **实时计算摘要**：商品金额合计、订单总 CBM、总体积重、总毛重、KG 计费重量、CBM 海运报价、KG 海运报价、当前选中的海运费、配送费、其他费用、人民币订单总额、目标币种总额。
+6. **实时计算摘要**：商品金额合计、订单总 CBM、总体积重、总毛重、KG 计费重量、CBM 海运报价、KG 海运报价、当前选中的海运费、配送费、其他费用和按目标币种展示的订单总额。
 7. **操作区**：重新计算、保存报价草稿、从报价生成订单、直接创建订单；未选择保存/创建时只保留本地临时状态。
 
 ### 2.3 商品明细 UI
@@ -158,17 +175,17 @@
 | 数量 | 人工输入 | Decimal 正数，单位默认 pcs |
 | 采购成本 CNY | Product 默认值，可按报价覆盖 | 成本权限控制；仅内部可见 |
 | 涨幅 % | 人工输入 | 0–500，最多 4 位小数；每商品独立 |
-| 销售单价 CNY | 自动计算 | 成本 × (1 + 涨幅/100)，中间精度保留 |
-| 商品金额 CNY | 自动计算 | 单价 × 数量 |
+| 销售单价 | 自动计算 | CNY 成本 × (1 + 涨幅/100) 后按汇率换算；目标币种单价向上进位到两位 |
+| 商品金额 | 自动计算 | 目标币种已进位销售单价 × 数量，按两位小数四舍五入；预览表格标签和金额跟随页面选择币种 |
 | 箱数 | 人工输入/默认值 | 正整数 |
-| 每箱数量 | Product 默认/本次覆盖 | 正整数；允许与订单数量不一致，提示但不擅自改数量 |
+| 每箱数量 | Product 默认/本次覆盖 | 正整数；保留在数据快照中，但不在报价计算器商品明细表显示 |
 | 单箱尺寸 | Product 默认/本次覆盖 | 长宽高完整填写或全部为空 |
 | 单箱毛重 kg | Product 默认/本次覆盖 | 非负，正式物流报价要求有效正数 |
 | 单箱 CBM | 自动计算 | 长 × 宽 × 高 ÷ 1,000,000，单位 CBM |
 | 单箱体积重 | 自动计算 | 长 × 宽 × 高 ÷ 订单统一体积重系数，单位 KG；系数由 KG 报价配置提供 |
 | 商品总 CBM/体积重/毛重 | 自动计算 | 分别按箱数汇总；同一订单所有商品使用同一个 KG 体积重系数 |
 
-报价计算器商品表格和计算摘要中的数值（含数量、销售单价、金额、CBM、体积重和运费分摊）保留计算结果精度，仅去掉小数末尾无意义的 0；不补零、不额外舍入，计算、保存和 API 数据继续保留原始 Decimal 精度。
+报价计算器商品表格和计算摘要中的数值（含数量、CBM、体积重和运费分摊）保留计算结果精度，仅去掉小数末尾无意义的 0；CBM 最多显示 8 位小数。销售单价按目标币种向上进位到两位，金额按其销售单价乘数量计算。数据库和 API 继续保存 Decimal 计算快照。
 
 商品成本和利润率只允许有相应权限的后台用户查看/修改。任何公共 Storefront DTO、公开页面、SEO、缓存、产品接口都不得出现内部成本、涨幅、销售报价或订单数据。
 
@@ -221,7 +238,7 @@
 
 示例：采购成本 ¥5，涨幅 20%，销售单价 ¥6；数量 100 时商品金额 ¥600。
 
-内部成本、销售单价、金额使用 Decimal；不在每一步强制保留两位。人民币精度建议 4–6 位，最终订单外币按两位小数舍入。
+内部成本和 CNY 核算单价、金额使用 Decimal，保留原始精度；目标币种每件销售单价先向上进位到两位，再乘商品数量计算目标币种行金额，行金额按两位小数四舍五入。人民币核算金额仍保留完整精度。
 
 ### 3.2 包装数据与重量
 
@@ -273,7 +290,7 @@
 
 `cbmFreightAmount = orderTotalCbm × cbmRatePerCbm`
 
-CBM 计费只使用实际体积，不使用体积重系数、总体积重或总毛重。CBM 不自动进位，按实际 CBM 计算。
+CBM 计费只使用实际体积，不使用体积重系数、总体积重或总毛重。先用完整精度 CBM × CNY/CBM 费率计算，CNY 运费金额向上进位到两位；换算为目标币种后也向上进位到两位。
 
 **B. KG 重量计费**
 
@@ -332,15 +349,21 @@ KG 计费重量不进位，使用完整计算精度的实际重量计算费用�
 
 例如 `1 CNY = 0.1380 USD`。
 
-`foreignExact = totalAmountCny × exchangeRate`
+商品目标币种单价与行金额：
 
-`foreignTotal = CEIL_TO_2_DECIMALS(foreignExact)`
+`unitSalePriceTarget = CEIL_TO_2_DECIMALS(unitSalePriceCny × exchangeRate)`
+
+`lineAmountTarget = ROUND_HALF_UP(unitSalePriceTarget × quantity, 2)`
+
+目标币种订单金额由商品目标币种行金额、已选海运费、配送费和其他费用行相加；费用之间的最小币种单位尾差仍按费用金额比例分配。CNY 核算总额继续单独保存，不再用它乘汇率反向推导商品目标币种金额。
 
 使用 Decimal.js 或现有 Decimal 工具；禁止 JavaScript Number、parseFloat 参与金融运算。汇率必须为正数；CNY 汇率固定为 1 并锁定。拒绝科学计数法、NaN、Infinity、超出精度、零或负数。
 
-本项目本功能明确所有币种展示两位小数（包括 JPY），不按币种默认小数位自动改变规则。对非负报价金额，使用 Decimal ROUND_UP 到两位；如金额可能出现负值，先拒绝/走单独退款业务规则。
+本项目本功能明确所有币种展示两位小数（包括 JPY），不按币种默认小数位自动改变规则。商品销售单价对非负金额使用 Decimal CEIL 到两位，商品行金额按销售单价乘数量后四舍五入到两位；CBM 运费金额按本节规则向上进位。其他非负订单费用按汇率换算后向上进位到两位，再在费用行之间分配尾差。如金额可能出现负值，先拒绝/走单独退款业务规则。
 
-**不要逐个商品先 CEIL 再求和。** 推荐先得到精确人民币商品金额和订单费用，算出订单总外币金额后向上进位两位。商品外币明细、费用外币明细应使用“总额舍入 + 分币尾差分配”方式，确保：
+商品目标币种行金额直接以已进位单价 × 数量计算，不能把订单级换汇尾差分配进商品行，否则商品行金额将不再等于其销售单价乘数量。
+
+费用行金额应使用尾差分配确保：
 
 `Σ foreign item lines + foreign order fees = foreignTotal`
 
@@ -392,7 +415,7 @@ QuotationModule
 - currencyCode、exchangeRate Decimal、exchangeRateBase（CNY）、exchangeRateDate、exchangeRateSource（MANUAL）、exchangeRateEnteredById。
 - roundingMode（CEIL_2）、calculationVersion。
 - 海运双报价快照：`freightBillingMethod`（CBM/KG）、`freightCurrencyCode`（固定为 CNY，与 `currencyCode` 无关）、`cbmRatePerCbm`、`orderTotalCbm`、`cbmFreightAmount`、`kgRatePerKg`、`volumetricDivisorItemId`、`volumetricDivisorCode/value` 快照、`orderTotalVolumeWeightKg`、`orderTotalGrossWeightKg`、`chargeableWeightKg`、`kgChargeableBasis`、`kgFreightAmount`、`selectedFreightAmount`（CNY）、`freightAllocationSnapshot`（CNY 分摊和单独记录的目标币种分摊）。未选择的报价结果也必须保存，便于还原比较过程。
-- subtotalCny、freightCny、deliveryFeeCny、otherFeesCny、totalAmountCny、totalAmountForeignExact、totalAmountForeign。
+- subtotalCny、freightCny、deliveryFeeCny、otherFeesCny、totalAmountCny、totalAmountForeignExact（目标币种商品行金额 + 未舍入订单费用换算额）、totalAmountForeign。
 - customerSnapshot Json（保存客户名称、联系人、电话、邮箱、国家、账单/收货地址）。
 - calculationSnapshot Json（输入与完整计算结果快照）。
 - convertedOrderId nullable；convertedAt nullable。
@@ -409,7 +432,7 @@ QuotationModule
 - costCny、markupPercent、unitSalePriceCny、lineAmountCny。
 - cartonCount、unitsPerCarton、cartonLengthCm、cartonWidthCm、cartonHeightCm、cartonGrossWeightKg。
 - cartonVolumeCbm、totalCbm、totalVolumeWeightKg、totalGrossWeightKg、freightAllocationBasis、allocatedFreightCny、allocatedFreightForeign。体积重系数不存商品行，由报价/订单级 KG 报价快照统一保存。
-- currencyCode、unitSalePriceForeign、lineAmountForeign（外币尾差分配结果）。
+- currencyCode、unitSalePriceForeign、lineAmountForeign（目标币种已舍入单价 × 数量后的行金额，不承接订单尾差）。
 - productDataSnapshot Json、packagingSnapshot Json。
 - createdAt/updatedAt。
 
@@ -426,7 +449,7 @@ QuotationModule
 - currencyCode、exchangeRate、exchangeRateBase、exchangeRateDate、exchangeRateSource、roundingMode、calculationVersion。
 - 与 Quotation 相同的 CBM/KG 双报价字段及完整快照；订单必须保存两种报价结果、订单级系数、所选方式和分摊快照。
 - customerSnapshot Json、billingAddressSnapshot Json、shippingAddressSnapshot Json。
-- subtotalCny、freightCny、deliveryFeeCny、otherFeesCny、totalAmountCny、totalAmountForeignExact、totalAmountForeign。
+- subtotalCny、freightCny、deliveryFeeCny、otherFeesCny、totalAmountCny、totalAmountForeignExact、totalAmountForeign；目标币种订单金额由目标币种商品行及费用行汇总。
 - calculationSnapshot Json。
 - createdAt/updatedAt。
 - 关系：items、fees、quotations (source/converted)、piDocuments（未来）、shipments（未来）。
@@ -474,7 +497,7 @@ QuotationModule
 
 - 币种 code 使用 ISO 4217 大写 code；label 通过 DictionaryItemTranslation 多语言维护。
 - 币种符号只用于展示；计算始终使用 code。
-- 本功能金额仍按既有业务规则舍入（最终外币金额两位小数）；报价计算器预览摘要仅在展示时去掉末尾无意义的 0，不补零、不改变金额值。不能从字典 value 推断精度。
+- 报价计算器商品金额按目标币种的已进位单价 × 数量计算；CBM 海运费向上进位到两位。摘要中 CBM 最多显示 8 位小数并省略尾 0，不能从字典 value 推断精度。
 - 体积重 divisor 读取 item.value 或稳定 code；服务端校验为正整数，且 item 必须属于 `volumetric_weight_divisor`、enabled=true。
 - 禁止把系数 6000 写死在前端/后端；如业务希望 6000/5000/8000 可由字典维护。
 - 历史报价/订单保存 divisor 数值快照；禁用字典项不得改变历史结果。

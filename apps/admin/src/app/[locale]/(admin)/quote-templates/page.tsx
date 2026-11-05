@@ -446,6 +446,10 @@ export default function QuoteTemplatesPage() {
                     label: t('quoteTemplateManagement.types.product_quote'),
                   },
                   { value: 'pi', label: t('quoteTemplateManagement.types.pi') },
+                  {
+                    value: 'calculator_quote',
+                    label: t('quoteTemplateManagement.types.calculator_quote'),
+                  },
                 ]}
                 onChange={(event) => setTemplateType(event.target.value as QuoteTemplateType)}
               />
@@ -454,9 +458,15 @@ export default function QuoteTemplatesPage() {
 
           <Field
             label={t('quoteTemplateManagement.fileLabel')}
-            help={t('quoteTemplateManagement.fileHelp', {
-              size: Math.round(QUOTE_TEMPLATE_MAX_BYTES / (1024 * 1024)),
-            })}
+            help={
+              templateType === 'calculator_quote'
+                ? t('quoteTemplateManagement.calculatorFileHelp', {
+                    size: Math.round(QUOTE_TEMPLATE_MAX_BYTES / (1024 * 1024)),
+                  })
+                : t('quoteTemplateManagement.fileHelp', {
+                    size: Math.round(QUOTE_TEMPLATE_MAX_BYTES / (1024 * 1024)),
+                  })
+            }
             error={fileError ?? undefined}
             required
           >

@@ -14,6 +14,9 @@ export const QUOTE_TEMPLATE_FIELD_KEYS = [
   'product.category',
   'product.lifecycle_status',
   'product.price_cny',
+  'quotation.quantity',
+  'quotation.unit_price',
+  'quotation.total_price',
 ] as const;
 
 export type QuoteTemplateFieldKey = (typeof QUOTE_TEMPLATE_FIELD_KEYS)[number];
@@ -82,6 +85,15 @@ const REQUIRED_FIELDS_BY_TYPE: Record<QuoteTemplateType, readonly QuoteTemplateF
     'product.carton_weight_kg',
   ],
   pi: ['product.sku', 'product.name', 'product.price_cny'],
+  calculator_quote: [
+    'product.sku',
+    'product.image',
+    'product.name',
+    'product.category',
+    'quotation.quantity',
+    'quotation.unit_price',
+    'quotation.total_price',
+  ],
 };
 
 /** Stable text anchors used by the server-side workbook filler. */

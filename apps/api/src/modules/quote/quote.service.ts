@@ -17,6 +17,7 @@ import {
   QuoteTemplateParseError,
   inspectQuoteTemplateWorkbook,
 } from './quote-template-parser';
+import { inspectCalculatorQuoteTemplateWorkbook } from './calculator-quote-template-parser';
 import { buildQuoteTemplatePreview } from './quote-template-preview';
 
 const QUOTE_TEMPLATE_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -281,12 +282,15 @@ export class QuoteService {
     let inspection;
     try {
       const buffer = await this.storage.get(asset.storageKey);
-      inspection = await inspectQuoteTemplateWorkbook(buffer, {
-        templateType: input.templateType,
-        sheetName: input.sheetName,
-        headerRow: input.headerRow,
-        itemStartRow: input.itemStartRow,
-      });
+      inspection =
+        input.templateType === 'calculator_quote'
+          ? await inspectCalculatorQuoteTemplateWorkbook(buffer)
+          : await inspectQuoteTemplateWorkbook(buffer, {
+              templateType: input.templateType,
+              sheetName: input.sheetName,
+              headerRow: input.headerRow,
+              itemStartRow: input.itemStartRow,
+            });
     } catch (error) {
       if (!(error instanceof QuoteTemplateParseError)) throw error;
       throw new ApiError(ERROR_CODES.quoteTemplateInvalid, error.message, {
@@ -418,7 +422,11 @@ export class QuoteService {
   }
 
   private async reinspectTemplate(template: QuoteTemplate) {
-    if (template.templateType !== 'product_quote' && template.templateType !== 'pi') {
+    if (
+      template.templateType !== 'product_quote' &&
+      template.templateType !== 'pi' &&
+      template.templateType !== 'calculator_quote'
+    ) {
       throw new ApiError(ERROR_CODES.quoteTemplateInvalid, 'The template type is not supported.');
     }
     if (!isManagedTemplateKey(template.storageKey)) {
@@ -452,12 +460,14 @@ export class QuoteService {
       );
     }
     try {
-      return await inspectQuoteTemplateWorkbook(buffer, {
-        templateType: template.templateType as QuoteTemplateType,
-        sheetName: template.sheetName,
-        headerRow: template.headerRow,
-        itemStartRow: template.itemStartRow,
-      });
+      return template.templateType === 'calculator_quote'
+        ? await inspectCalculatorQuoteTemplateWorkbook(buffer)
+        : await inspectQuoteTemplateWorkbook(buffer, {
+            templateType: template.templateType as QuoteTemplateType,
+            sheetName: template.sheetName,
+            headerRow: template.headerRow,
+            itemStartRow: template.itemStartRow,
+          });
     } catch (error) {
       if (!(error instanceof QuoteTemplateParseError)) throw error;
       throw new ApiError(ERROR_CODES.quoteTemplateInvalid, error.message, {

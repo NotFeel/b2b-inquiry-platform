@@ -2,11 +2,14 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import { Button, PageHeader, useToast } from '@b2b/ui';
+import { Button, PageHeader, Select, useToast } from '@b2b/ui';
 import { useBreadcrumb } from '../../../../components/use-breadcrumb';
 import { useSession } from '../../../../components/session-provider';
 import { localeHref } from '../../../../lib/i18n';
 import { quotationOrderApi } from '../../../../lib/quotation-order-api';
+import type { CalculatorExcelTemplateOption } from '../../../../lib/quotation-order-api';
+import { AdminApiError } from '../../../../lib/admin-api';
+import { translateError } from '../../../../lib/i18n';
 
 type Row = {
   id: string;
@@ -27,6 +30,10 @@ export default function QuotationsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState('');
+  const [exportBusyId, setExportBusyId] = useState('');
+  const [templates, setTemplates] = useState<CalculatorExcelTemplateOption[]>([]);
+  const [templateId, setTemplateId] = useState('');
+  const [templateLoading, setTemplateLoading] = useState(false);
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
@@ -41,6 +48,32 @@ export default function QuotationsPage() {
   useEffect(() => {
     void load();
   }, [load]);
+  useEffect(() => {
+    if (!can('quotation.read')) return;
+    let active = true;
+    setTemplateLoading(true);
+    void quotationOrderApi
+      .quotationExcelTemplates()
+      .then((nextTemplates) => {
+        if (!active) return;
+        setTemplates(nextTemplates);
+        setTemplateId((current) =>
+          nextTemplates.some((template) => template.id === current)
+            ? current
+            : (nextTemplates[0]?.id ?? ''),
+        );
+      })
+      .catch((cause: unknown) => {
+        if (active)
+          setError(cause instanceof Error ? cause.message : t('quotationCenter.loadError'));
+      })
+      .finally(() => {
+        if (active) setTemplateLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [can, t]);
   const convert = async (row: Row) => {
     setBusyId(row.id);
     try {
@@ -51,6 +84,26 @@ export default function QuotationsPage() {
       setError(cause instanceof Error ? cause.message : t('quotationCenter.saveError'));
     } finally {
       setBusyId('');
+    }
+  };
+  const exportExcel = async (row: Row) => {
+    if (!templateId) return;
+    setExportBusyId(row.id);
+    setError('');
+    try {
+      const file = await quotationOrderApi.exportQuotationExcel(row.id, templateId);
+      quotationOrderApi.saveQuotationExcelDownload(file);
+      toast.success(t('quotationCenter.excelExported'));
+    } catch (cause) {
+      setError(
+        cause instanceof AdminApiError
+          ? translateError(locale, cause.code)
+          : cause instanceof Error
+            ? cause.message
+            : t('quotationCenter.excelExportFailed'),
+      );
+    } finally {
+      setExportBusyId('');
     }
   };
   return (
@@ -77,6 +130,27 @@ export default function QuotationsPage() {
         <div className="alert alert-error" role="alert">
           {error}
         </div>
+      ) : null}
+      {can('quotation.read') ? (
+        <section className="panel stack-sm">
+          <label className="field">
+            <span className="field-label">{t('quotationCenter.excelTemplate')}</span>
+            <Select
+              value={templateId}
+              disabled={
+                templateLoading || templates.length === 0 || Boolean(busyId || exportBusyId)
+              }
+              options={templates.map((template) => ({
+                value: template.id,
+                label: `${template.name} v${template.version}`,
+              }))}
+              onChange={(event) => setTemplateId(event.target.value)}
+            />
+          </label>
+          {templates.length === 0 && !templateLoading ? (
+            <p className="muted">{t('quotationCenter.noExcelTemplate')}</p>
+          ) : null}
+        </section>
       ) : null}
       <section className="panel table-scroll" aria-live="polite">
         {loading ? (
@@ -116,6 +190,17 @@ export default function QuotationsPage() {
                         onClick={() => void convert(row)}
                       >
                         {t('quotationCenter.convertToOrder')}
+                      </Button>
+                    ) : null}
+                    {can('quotation.read') ? (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        loading={exportBusyId === row.id}
+                        disabled={Boolean(busyId || exportBusyId) || !templateId}
+                        onClick={() => void exportExcel(row)}
+                      >
+                        {t('quotationCenter.exportExcel')}
                       </Button>
                     ) : null}
                   </td>

@@ -124,6 +124,12 @@ export function calculateQuotation(input: QuotationEngineInput) {
     const lineAmount = unitSalePrice
       .times(quantity)
       .toDecimalPlaces(MONEY_SCALE, Decimal.ROUND_HALF_UP);
+    const unitSalePriceForeign = unitSalePrice
+      .times(exchangeRate)
+      .toDecimalPlaces(CURRENCY_SCALE, Decimal.ROUND_CEIL);
+    const lineAmountForeign = unitSalePriceForeign
+      .times(quantity)
+      .toDecimalPlaces(CURRENCY_SCALE, Decimal.ROUND_HALF_UP);
 
     const dimensions = [source.cartonLengthCm, source.cartonWidthCm, source.cartonHeightCm];
     const hasAnyDimension = dimensions.some((value) => value !== null);
@@ -204,8 +210,8 @@ export function calculateQuotation(input: QuotationEngineInput) {
       freightAllocationBasis: '0',
       allocatedFreightCny: '0.00000000',
       allocatedFreightForeign: '0.00',
-      unitSalePriceForeign: fixed(unitSalePrice.times(exchangeRate), MONEY_SCALE),
-      lineAmountForeign: '0.00',
+      unitSalePriceForeign: fixed(unitSalePriceForeign, CURRENCY_SCALE),
+      lineAmountForeign: fixed(lineAmountForeign, CURRENCY_SCALE),
       packaging: {
         cartonCount: source.cartonCount,
         unitsPerCarton: source.unitsPerCarton,
@@ -219,6 +225,7 @@ export function calculateQuotation(input: QuotationEngineInput) {
         volumetricDivisor: input.volumetricDivisor,
       },
       _lineAmount: lineAmount,
+      _lineAmountForeign: lineAmountForeign,
       _totalCbm: totalCbm,
       _totalVolumeWeight: totalVolumeWeight,
       _totalGrossWeight: totalGrossWeight,
@@ -240,15 +247,24 @@ export function calculateQuotation(input: QuotationEngineInput) {
   const chargeableWeight = Decimal.max(totalVolumeWeight, totalGrossWeight);
   const cbmFreightAmount = totalCbm
     .times(cbmRate)
-    .toDecimalPlaces(CURRENCY_SCALE, Decimal.ROUND_HALF_UP);
+    .toDecimalPlaces(CURRENCY_SCALE, Decimal.ROUND_CEIL);
   const kgFreightAmount = chargeableWeight
     .times(kgRate)
     .toDecimalPlaces(CURRENCY_SCALE, Decimal.ROUND_HALF_UP);
-  const selectedFreightAmount =
-    input.freightBillingMethod === 'CBM' ? cbmFreightAmount : kgFreightAmount;
-  const selectedFreightForeign = selectedFreightAmount
+  const cbmFreightAmountForeign = cbmFreightAmount
+    .times(exchangeRate)
+    .toDecimalPlaces(CURRENCY_SCALE, Decimal.ROUND_CEIL);
+  const kgFreightAmountForeign = kgFreightAmount
     .times(exchangeRate)
     .toDecimalPlaces(CURRENCY_SCALE, Decimal.ROUND_HALF_UP);
+  const selectedFreightAmount =
+    input.freightBillingMethod === 'CBM' ? cbmFreightAmount : kgFreightAmount;
+  const selectedFreightForeign =
+    input.freightBillingMethod === 'CBM'
+      ? cbmFreightAmountForeign
+      : selectedFreightAmount
+          .times(exchangeRate)
+          .toDecimalPlaces(CURRENCY_SCALE, Decimal.ROUND_HALF_UP);
   const freightCny = selectedFreightAmount.toDecimalPlaces(MONEY_SCALE, Decimal.ROUND_HALF_UP);
 
   const allocationWeights = items.map((item) => {
@@ -275,59 +291,20 @@ export function calculateQuotation(input: QuotationEngineInput) {
   }));
   const otherFeesCny = feeInputs.reduce((sum, fee) => sum.plus(fee.amount), new Decimal(0));
   const totalAmountCny = subtotalCny.plus(freightCny).plus(deliveryFeeCny).plus(otherFeesCny);
-  const totalAmountForeignExact = totalAmountCny.times(exchangeRate);
-  const totalAmountForeign = totalAmountForeignExact.toDecimalPlaces(
+  const nonFreightCny = deliveryFeeCny.plus(otherFeesCny);
+  const nonFreightForeignExact = nonFreightCny.times(exchangeRate);
+  const nonFreightForeign = nonFreightForeignExact.toDecimalPlaces(
     CURRENCY_SCALE,
-    Decimal.ROUND_UP,
+    Decimal.ROUND_CEIL,
   );
-
-  const components = [
-    ...items.map((item) => ({ kind: 'item' as const, amountCny: item._lineAmount })),
-    { kind: 'freight' as const, amountCny: freightCny },
-    { kind: 'delivery' as const, amountCny: deliveryFeeCny },
-    ...feeInputs.map((fee) => ({ kind: 'fee' as const, amountCny: fee.amount })),
-  ];
-  const freightIndex = components.findIndex((component) => component.kind === 'freight');
-  const foreignAmounts = components.map(() => new Decimal(0));
-  foreignAmounts[freightIndex] = selectedFreightForeign;
-  const remainderCny = components.map((component, index) =>
-    index === freightIndex ? new Decimal(0) : component.amountCny,
+  const nonFreightForeignAllocations = allocate(
+    nonFreightForeign,
+    [deliveryFeeCny, ...feeInputs.map((fee) => fee.amount)],
+    CURRENCY_SCALE,
   );
-  const remainderTotalCny = remainderCny.reduce((sum, amount) => sum.plus(amount), new Decimal(0));
-  const remainingForeign = totalAmountForeign.minus(selectedFreightForeign);
-  if (remainderTotalCny.isZero()) {
-    foreignAmounts[freightIndex] = totalAmountForeign;
-  } else {
-    const nonFreightIndexes = components
-      .map((_, index) => index)
-      .filter((index) => index !== freightIndex);
-    const allocated = allocate(
-      remainingForeign,
-      nonFreightIndexes.map((index) => remainderCny[index]!),
-      CURRENCY_SCALE,
-    );
-    nonFreightIndexes.forEach((index, allocationIndex) => {
-      foreignAmounts[index] = allocated[allocationIndex]!;
-    });
-  }
-
-  let componentIndex = 0;
-  items.forEach((item, index) => {
-    item.lineAmountForeign = fixed(foreignAmounts[componentIndex]!, CURRENCY_SCALE);
-    item.unitSalePriceForeign = fixed(
-      foreignAmounts[componentIndex]!.div(decimal(item.quantity, 'quantity', item.lineNo)),
-      MONEY_SCALE,
-    );
-    componentIndex += 1;
-    item.allocatedFreightForeign = fixed(foreignFreightAllocations[index]!, CURRENCY_SCALE);
-  });
-  const freightForeign = fixed(foreignAmounts[componentIndex]!, CURRENCY_SCALE);
-  componentIndex += 1;
-  const deliveryForeign = fixed(foreignAmounts[componentIndex]!, CURRENCY_SCALE);
-  componentIndex += 1;
-  const fees = feeInputs.map((fee) => {
-    const amountForeign = foreignAmounts[componentIndex]!;
-    componentIndex += 1;
+  const deliveryForeign = fixed(nonFreightForeignAllocations[0] ?? new Decimal(0), CURRENCY_SCALE);
+  const fees = feeInputs.map((fee, index) => {
+    const amountForeign = nonFreightForeignAllocations[index + 1] ?? new Decimal(0);
     return {
       typeCode: fee.typeCode,
       name: fee.name,
@@ -337,11 +314,24 @@ export function calculateQuotation(input: QuotationEngineInput) {
       notes: fee.notes,
     };
   });
+  const subtotalForeign = items.reduce(
+    (sum, item) => sum.plus(item._lineAmountForeign),
+    new Decimal(0),
+  );
+  const totalAmountForeignExact = subtotalForeign
+    .plus(selectedFreightAmount.times(exchangeRate))
+    .plus(nonFreightForeignExact);
+  const totalAmountForeign = subtotalForeign.plus(selectedFreightForeign).plus(nonFreightForeign);
+  items.forEach((item, index) => {
+    item.allocatedFreightForeign = fixed(foreignFreightAllocations[index]!, CURRENCY_SCALE);
+  });
+  const freightForeign = fixed(selectedFreightForeign, CURRENCY_SCALE);
 
   return {
     items: items.map(
       ({
         _lineAmount: _line,
+        _lineAmountForeign: _lineForeign,
         _totalCbm: _cbm,
         _totalVolumeWeight: _volume,
         _totalGrossWeight: _gross,
@@ -373,6 +363,7 @@ export function calculateQuotation(input: QuotationEngineInput) {
       cbmRatePerCbm: fixed(cbmRate, MONEY_SCALE),
       orderTotalCbm: fixed(totalCbm, CBM_SCALE),
       cbmFreightAmount: fixed(cbmFreightAmount, CURRENCY_SCALE),
+      cbmFreightAmountForeign: fixed(cbmFreightAmountForeign, CURRENCY_SCALE),
       kgRatePerKg: fixed(kgRate, MONEY_SCALE),
       volumetricDivisor: input.volumetricDivisor,
       orderTotalVolumeWeightKg: fixed(totalVolumeWeight, WEIGHT_SCALE),
@@ -380,7 +371,9 @@ export function calculateQuotation(input: QuotationEngineInput) {
       chargeableWeightKg: fixed(chargeableWeight, WEIGHT_SCALE),
       kgChargeableBasis,
       kgFreightAmount: fixed(kgFreightAmount, CURRENCY_SCALE),
+      kgFreightAmountForeign: fixed(kgFreightAmountForeign, CURRENCY_SCALE),
       selectedFreightAmount: fixed(selectedFreightAmount, CURRENCY_SCALE),
+      selectedFreightAmountForeign: freightForeign,
       allocationSnapshot: items.map((item) => ({
         lineNo: item.lineNo,
         basis: item.freightAllocationBasis,

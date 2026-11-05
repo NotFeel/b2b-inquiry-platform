@@ -368,6 +368,7 @@ export const ERROR_CODES = {
   quotationExportValidationFailed: 'QUOTATION_EXPORT_VALIDATION_FAILED',
   quotationExportPricingInvalid: 'QUOTATION_EXPORT_PRICING_INVALID',
   quotationExportImageUnavailable: 'QUOTATION_EXPORT_IMAGE_UNAVAILABLE',
+  quotationExportSnapshotMissing: 'QUOTATION_EXPORT_SNAPSHOT_MISSING',
   quoteTemplateInUse: 'QUOTE_TEMPLATE_IN_USE',
   excelPdfDisabled: 'EXCEL_PDF_DISABLED',
   excelPdfUploadNotFound: 'EXCEL_PDF_UPLOAD_NOT_FOUND',
@@ -599,7 +600,7 @@ export type AdPlacement = (typeof AD_PLACEMENTS)[number];
 export const CONTENT_PAGE_TYPES = ['about', 'contact', 'custom'] as const;
 export type ContentPageType = (typeof CONTENT_PAGE_TYPES)[number];
 
-export const QUOTE_TEMPLATE_TYPES = ['product_quote', 'pi'] as const;
+export const QUOTE_TEMPLATE_TYPES = ['product_quote', 'pi', 'calculator_quote'] as const;
 export type QuoteTemplateType = (typeof QUOTE_TEMPLATE_TYPES)[number];
 
 /** Server-owned currency allow-list for the dynamic quotation export (docs/36 §3.4). */

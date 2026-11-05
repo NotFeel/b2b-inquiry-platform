@@ -4,11 +4,12 @@ import { QuotationExportController } from './quotation-export.controller';
 import { QuotationExportService } from './quotation-export.service';
 import { QuotationOrderController } from './quotation-order.controller';
 import { QuotationOrderService } from './quotation-order.service';
+import { QuotationCalculatorExcelExportService } from './quotation-calculator-excel-export.service';
 
 @Module({
   imports: [CategoriesModule],
   controllers: [QuotationExportController, QuotationOrderController],
-  providers: [QuotationExportService, QuotationOrderService],
+  providers: [QuotationExportService, QuotationOrderService, QuotationCalculatorExcelExportService],
   exports: [QuotationExportService],
 })
 export class QuotationExportModule {}

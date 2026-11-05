@@ -1,5 +1,7 @@
-import { Body, Controller, Get, Headers, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, Post, Query, Res } from '@nestjs/common';
 import {
+  quotationCalculatorExcelExportSchema,
+  quotationHistoryExcelExportSchema,
   idParamSchema,
   orderListQuerySchema,
   quotationCalculationSchema,
@@ -7,10 +9,14 @@ import {
   quotationListQuerySchema,
   quotationProductSearchQuerySchema,
   type OrderListQuery,
+  type QuotationCalculatorExcelExportInput,
   type QuotationCalculationInput,
+  type QuotationHistoryExcelExportInput,
   type QuotationListQuery,
   type QuotationProductSearchQuery,
 } from '@b2b/validation';
+import { ERROR_CODES } from '@b2b/contracts';
+import type { Response } from 'express';
 import {
   Permission,
   CurrentActor,
@@ -21,11 +27,94 @@ import {
 import { ApiError } from '../../common/errors/api-error';
 import { zodPipe } from '../../common/pipes/zod.pipe';
 import type { AuthenticatedActor } from '../../common/request-context';
+import { RateLimitService } from '../../common/services/rate-limit.service';
 import { QuotationOrderService } from './quotation-order.service';
+import { QuotationCalculatorExcelExportService } from './quotation-calculator-excel-export.service';
+
+const QUOTATION_XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+const EXPORT_RATE_LIMIT_PER_MINUTE = 10;
 
 @Controller('admin')
 export class QuotationOrderController {
-  constructor(private readonly service: QuotationOrderService) {}
+  constructor(
+    private readonly service: QuotationOrderService,
+    private readonly excelExport: QuotationCalculatorExcelExportService,
+    private readonly rateLimit: RateLimitService,
+  ) {}
+
+  @RequirePermissions(Permission.quotationCalculate)
+  @Get('quotation-calculator/excel-templates')
+  async calculatorExcelTemplates() {
+    return { data: await this.excelExport.listTemplates() };
+  }
+
+  @RequirePermissions(Permission.quotationRead)
+  @Get('quotations/excel-templates')
+  async quotationExcelTemplates() {
+    return { data: await this.excelExport.listTemplates() };
+  }
+
+  @RequirePermissions(Permission.orderRead)
+  @Get('orders/excel-templates')
+  async orderExcelTemplates() {
+    return { data: await this.excelExport.listTemplates() };
+  }
+
+  @RequirePermissions(Permission.quotationCalculate)
+  @Post('quotation-calculator/export-excel')
+  async exportCalculatorExcel(
+    @Body(zodPipe(quotationCalculatorExcelExportSchema)) body: QuotationCalculatorExcelExportInput,
+    @CurrentActor() actor: AuthenticatedActor,
+    @RequestId() requestId: string,
+    @Res() response: Response,
+  ): Promise<void> {
+    if (!this.canReadCost(actor)) {
+      throw new ApiError(ERROR_CODES.forbidden, 'Cost access is required for calculator export.', {
+        status: 403,
+      });
+    }
+    await this.assertExcelRateLimit(actor, 'current');
+    const file = await this.excelExport.exportCurrent(body, actor.id, requestId);
+    this.sendExcel(file, response, requestId);
+  }
+
+  @RequirePermissions(Permission.quotationRead)
+  @Post('quotations/:id/export-excel')
+  async exportQuotationExcel(
+    @Param('id') id: string,
+    @Body(zodPipe(quotationHistoryExcelExportSchema)) body: QuotationHistoryExcelExportInput,
+    @CurrentActor() actor: AuthenticatedActor,
+    @RequestId() requestId: string,
+    @Res() response: Response,
+  ): Promise<void> {
+    await this.assertExcelRateLimit(actor, 'quotation');
+    const file = await this.excelExport.exportQuotation(
+      idParamSchema.parse({ id }).id,
+      body,
+      actor.id,
+      requestId,
+    );
+    this.sendExcel(file, response, requestId);
+  }
+
+  @RequirePermissions(Permission.orderRead)
+  @Post('orders/:id/export-excel')
+  async exportOrderExcel(
+    @Param('id') id: string,
+    @Body(zodPipe(quotationHistoryExcelExportSchema)) body: QuotationHistoryExcelExportInput,
+    @CurrentActor() actor: AuthenticatedActor,
+    @RequestId() requestId: string,
+    @Res() response: Response,
+  ): Promise<void> {
+    await this.assertExcelRateLimit(actor, 'order');
+    const file = await this.excelExport.exportOrder(
+      idParamSchema.parse({ id }).id,
+      body,
+      actor.id,
+      requestId,
+    );
+    this.sendExcel(file, response, requestId);
+  }
 
   @RequirePermissions(Permission.quotationRead)
   @Get('quotation-calculator/config')
@@ -45,6 +134,7 @@ export class QuotationOrderController {
         query.categoryId,
         this.canReadCost(actor),
         query.locale,
+        query.publishStatus,
       ),
     };
   }
@@ -144,6 +234,38 @@ export class QuotationOrderController {
     return (
       actor.roles.includes(SUPER_ADMIN_ROLE) || actor.permissions.has(Permission.orderCostRead)
     );
+  }
+
+  private async assertExcelRateLimit(
+    actor: AuthenticatedActor,
+    source: 'current' | 'quotation' | 'order',
+  ) {
+    const result = await this.rateLimit.consume(
+      `quotation-calculator-excel:${source}:${actor.id}`,
+      EXPORT_RATE_LIMIT_PER_MINUTE,
+      60,
+    );
+    if (!result.allowed) {
+      throw new ApiError(ERROR_CODES.rateLimited, 'Too many quotation Excel export requests.', {
+        details: { retryAfterSeconds: result.retryAfterSeconds },
+      });
+    }
+  }
+
+  private sendExcel(
+    file: { buffer: Buffer; filename: string },
+    response: Response,
+    requestId: string,
+  ): void {
+    response.setHeader('Content-Type', QUOTATION_XLSX_MIME);
+    response.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${file.filename}"; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
+    );
+    response.setHeader('Cache-Control', 'private, no-store');
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('X-Request-Id', requestId);
+    response.send(file.buffer);
   }
 
   private withoutCost<

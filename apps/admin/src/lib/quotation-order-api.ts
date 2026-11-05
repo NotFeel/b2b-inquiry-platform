@@ -1,6 +1,6 @@
 'use client';
 
-import { adminApi } from './admin-api';
+import { adminApi, downloadAdminFilePost, type AdminFileDownload } from './admin-api';
 
 const pendingIdempotency = new Map<string, { signature: string; key: string }>();
 
@@ -26,6 +26,8 @@ export type QuotationConfig = {
   currencies: { code: string; symbol: string | null; label: string }[];
   volumetricDivisors: { id: string; code: string; value: string | null; label: string }[];
   feeTypes: { code: string; label: string }[];
+  publishStatuses: { code: string; label: string }[];
+  productLifecycles: { code: string; label: string }[];
   roundingMode: string;
 };
 
@@ -36,6 +38,7 @@ export type CalculatorProduct = {
   imageUrl: string | null;
   imageAlt: string;
   publishStatus: 'draft' | 'published' | 'unpublished';
+  lifecycleStatus: string;
   costCny: string | null;
   packaging: {
     cartonLengthCm: string | null;
@@ -98,6 +101,7 @@ export type CalculationResult = {
     costCny?: string;
     quantity: string;
     unitSalePriceCny: string;
+    unitSalePriceForeign: string;
     lineAmountCny: string;
     totalVolumeWeightKg: string;
     totalGrossWeightKg: string;
@@ -105,6 +109,7 @@ export type CalculationResult = {
     cartonVolumeWeightKg: string;
     totalCbm: string;
     allocatedFreightCny?: string;
+    allocatedFreightForeign?: string;
     lineAmountForeign: string;
   }[];
   fees: {
@@ -133,6 +138,7 @@ export type CalculationResult = {
     cbmRatePerCbm: string;
     orderTotalCbm: string;
     cbmFreightAmount: string;
+    cbmFreightAmountForeign: string;
     kgRatePerKg: string;
     volumetricDivisor: number;
     orderTotalVolumeWeightKg: string;
@@ -140,29 +146,80 @@ export type CalculationResult = {
     chargeableWeightKg: string;
     kgChargeableBasis: 'VOLUME_WEIGHT' | 'GROSS_WEIGHT';
     kgFreightAmount: string;
+    kgFreightAmountForeign: string;
     selectedFreightAmount: string;
+    selectedFreightAmountForeign: string;
     allocationSnapshot?: {
       lineNo: number;
       basis: string;
       allocatedFreightAmount: string;
       allocatedFreightCny: string;
+      allocatedFreightForeign: string;
     }[];
   };
 };
 
+export type CalculatorExcelTemplateOption = {
+  id: string;
+  name: string;
+  version: number;
+};
+
+export function saveQuotationExcelDownload(download: AdminFileDownload): void {
+  const url = URL.createObjectURL(download.blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = download.filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 export const quotationOrderApi = {
+  saveQuotationExcelDownload: (download: AdminFileDownload) => saveQuotationExcelDownload(download),
+  calculatorExcelTemplates: async () =>
+    (
+      await adminApi.get<{ data: CalculatorExcelTemplateOption[] }>(
+        '/admin/quotation-calculator/excel-templates',
+      )
+    ).data,
+  quotationExcelTemplates: async () =>
+    (
+      await adminApi.get<{ data: CalculatorExcelTemplateOption[] }>(
+        '/admin/quotations/excel-templates',
+      )
+    ).data,
+  orderExcelTemplates: async () =>
+    (await adminApi.get<{ data: CalculatorExcelTemplateOption[] }>('/admin/orders/excel-templates'))
+      .data,
+  exportCalculatorExcel: (templateId: string, calculation: CalculatorInput) =>
+    downloadAdminFilePost('/admin/quotation-calculator/export-excel', {
+      templateId,
+      calculation,
+    }),
+  exportQuotationExcel: (id: string, templateId: string) =>
+    downloadAdminFilePost(`/admin/quotations/${id}/export-excel`, { templateId }),
+  exportOrderExcel: (id: string, templateId: string) =>
+    downloadAdminFilePost(`/admin/orders/${id}/export-excel`, { templateId }),
   config: async (locale: string) =>
     (
       await adminApi.get<{ data: QuotationConfig }>('/admin/quotation-calculator/config', {
         locale,
       })
     ).data,
-  products: async (locale: string, q?: string, categoryId?: string | null) =>
+  products: async (
+    locale: string,
+    q?: string,
+    categoryId?: string | null,
+    publishStatus?: 'published' | 'unpublished',
+  ) =>
     (
       await adminApi.get<{ data: CalculatorProduct[] }>('/admin/quotation-calculator/products', {
         locale,
         ...(q ? { q } : {}),
         ...(categoryId ? { categoryId } : {}),
+        ...(publishStatus ? { publishStatus } : {}),
       })
     ).data,
   preview: async (input: CalculatorInput) =>

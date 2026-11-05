@@ -2,7 +2,7 @@
 
 > 文档编号：DOC-40 / B2B-QUOTATION-EXCEL-TEMPLATE-EXPORT  
 > 目标分支：`main`  
-> 状态：需求方案已确认，作为后续开发基线；本文不代表功能已经实现  
+> 状态：需求方案已确认；代码实现进展见 §14，Excel 客户端兼容性验收仍需执行
 > 关联文档：`docs/36-admin-quotation-excel-export-implementation.md`、`docs/39-admin-quotation-calculator-and-order-center.md`
 
 ---
@@ -395,8 +395,8 @@ DOC-39 的实施记录说明已保存商品、包装、价格、费用及计算�
 ### 11.4 回归测试
 
 - DOC-36 旧商品报价 Excel 导出功能不受影响。
-- DOC-39 报价计算、报价保存、报价转订单、订单创建和历史快照不受影响。
-- 不改变现有订单金额、运费分摊和汇率尾差规则。
+- DOC-39 报价计算、报价保存、报价转订单、订单创建和历史快照继续复用同一份服务端计算快照。
+- 新计算沿用 DOC-39 当前的目标币种单价向上进位和 CBM 运费舍入规则；既有报价/订单快照及已保存金额不回算或改写。
 - 不改变公共 Storefront API 或商品公开 DTO。
 
 ---
@@ -462,3 +462,17 @@ DOC-39 的实施记录说明已保存商品、包装、价格、费用及计算�
 - 文档、测试和部署记录更新完成。
 
 > 本文是需求与实施基线。API 路径、类名、权限码、模板类型、数据字段和图片容量限制均须以开发前代码审计为准，不得将建议名称视为仓库中已经存在的实现。
+
+---
+
+## 14. 代码实现记录（2026-11-04）
+
+- DOC-36 的 `product_quote` 导出路径保持不变。计算器模板使用独立的 `calculator_quote` 类型，复用 `QuoteTemplate`、私有 `FileAsset` 和现有 Storage Adapter；数据库中的模板用途为字符串，未新增 Prisma 列或 migration。
+- 当前计算、报价草稿和订单导出均通过同一个 Workbook Builder。模板上传校验独立识别 `Quotation` 工作表、A:G 表头和连续三条汇总行；导出时再次读取并校验启用模板。
+- 当前计算导出由服务端重跑现有 Decimal 计算，保留请求商品顺序；模板单价使用 CNY 销售单价乘当前汇率后逐商品向上舍入两位，行总价按已舍入单价乘件数并舍入两位。Shipping Cost 使用本次计算产生的目标币种费用行总和。
+- 报价与订单快照新增 JSON 键：`categoryId`、`categoryLeafNameEn`、`categoryLocale`、`imageSnapshotStatus`、`imageSnapshotAssetId`。新记录要求有英文商品名与可唯一解析的末端英文品类；商品主图存在时复制到 `private/quotation-snapshots/` 并登记为私有 `FileAsset`。报价转订单会复用该快照引用。
+- 商品原图的 `FileAsset` 必须是 `ready`、`product-image` 且 `isPublic=true`（代表获准用于公开商品展示）；`product-image/` 原图仍由 Storage Adapter 路由到私有存储。导出只在服务端读取该受管原图，再把历史副本写入 `isPublic=false` 的私有快照资产。
+- 历史导出只使用报价/订单保存时的商品名、SKU、品类、图片引用、单价、汇率与费用金额。历史记录缺少商品/品类/图片状态或运费快照时返回 `QUOTATION_EXPORT_SNAPSHOT_MISSING`，不会读取当前商品或当前汇率补值。Shipping Cost 累加保存时 `amountForeign`，不重新推导运费。
+- 图片归档对象在报价或订单明细 JSON 仍引用时保留；`cleanup-orphan-assets.ts` 已排除仍被这两类快照引用的对象。若历史业务记录删除，孤立资产由现有物理删除任务流程清理。
+- 已按产品确认更新 A9:A11 的汇总币种后缀，使其与目标币种及 F6/G6 一致。
+- API 与管理端 TypeScript 检查、相关 ESLint 检查通过。自动化测试和 Excel、WPS、LibreOffice 打开兼容性验收尚未执行。

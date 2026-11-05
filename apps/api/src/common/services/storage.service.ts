@@ -71,12 +71,10 @@ export class StorageService {
     try {
       return await this.getDriver(storageVisibilityForKey(key)).put(key, body, contentType);
     } catch (error) {
-      this.logger.error(
-        'storage.put_failed',
-        error instanceof Error ? error.stack : String(error),
-        'StorageService',
-        { key },
-      );
+      this.logger.error('storage.put_failed', undefined, 'StorageService', {
+        visibility: storageVisibilityForKey(key),
+        errorType: error instanceof Error ? error.name : 'unknown',
+      });
       throw error;
     }
   }
@@ -135,7 +133,9 @@ export class StorageService {
     // Published derivatives live at the exact R2 object key and should bypass
     // the API proxy. The fallback is a same-origin path so the browser never
     // receives an internal Docker hostname such as http://api:3002.
-    const configuredPublicBase = this.env.S3_PUBLIC_BASE_URL || (this.env.NODE_ENV === 'production' ? 'https://images.wuxuanglobal.com' : '');
+    const configuredPublicBase =
+      this.env.S3_PUBLIC_BASE_URL ||
+      (this.env.NODE_ENV === 'production' ? 'https://images.wuxuanglobal.com' : '');
     const publicBase = configuredPublicBase.replace(/\/+$/, '');
     const isVariantName = /^\d+\.webp$/.test(name);
     if (this.env.STORAGE_DRIVER === 's3' && publicBase.length > 0 && isVariantName) {

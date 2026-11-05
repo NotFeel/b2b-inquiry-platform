@@ -1490,6 +1490,7 @@ export const quotationProductSearchQuerySchema = z.object({
   q: z.string().trim().max(120).optional(),
   categoryId: uuidSchema.optional(),
   locale: z.enum(['zh-CN', 'en-US']).default('en-US'),
+  publishStatus: z.enum(['published', 'unpublished']).optional(),
 });
 export type QuotationProductSearchQuery = z.infer<typeof quotationProductSearchQuerySchema>;
 
@@ -1553,6 +1554,17 @@ export const quotationPreviewSchema = quotationFormObjectSchema.extend({
     .optional()
     .transform((value) => value || 'Temporary calculation'),
 });
+export const quotationCalculatorExcelExportSchema = z.object({
+  templateId: uuidSchema,
+  calculation: quotationPreviewSchema,
+});
+export type QuotationCalculatorExcelExportInput = z.infer<
+  typeof quotationCalculatorExcelExportSchema
+>;
+
+export const quotationHistoryExcelExportSchema = z.object({ templateId: uuidSchema });
+export type QuotationHistoryExcelExportInput = z.infer<typeof quotationHistoryExcelExportSchema>;
+
 export const quotationCalculationSchema = quotationFormSchema;
 export type QuotationCalculationInput = z.infer<typeof quotationCalculationSchema>;
 
