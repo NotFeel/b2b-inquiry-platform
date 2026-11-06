@@ -609,6 +609,10 @@ export type QuotationExportCurrency = string;
 export const QUOTATION_EXPORT_LIMITS = {
   maxProducts: 200,
   maxImageBytes: 10 * 1024 * 1024,
+  // The product-quote template export has produced legitimate source image
+  // sets above 40 MiB in production. Keep its higher cap isolated from the
+  // calculator/order snapshot export cap below.
+  maxProductQuoteTotalImageBytes: 64 * 1024 * 1024,
   maxTotalImageBytes: 40 * 1024 * 1024,
   imageReadConcurrency: 4,
   maxImagePixels: 20_000_000,

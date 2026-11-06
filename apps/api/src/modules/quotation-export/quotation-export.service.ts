@@ -860,7 +860,7 @@ export class QuotationExportService {
           });
         }
         totalSourceBytes += buffer.byteLength;
-        if (totalSourceBytes > QUOTATION_EXPORT_LIMITS.maxTotalImageBytes) {
+        if (totalSourceBytes > QUOTATION_EXPORT_LIMITS.maxProductQuoteTotalImageBytes) {
           this.rejectImage(requestId, product, 'TOTAL_SOURCE_IMAGE_BYTES_EXCEEDED', {
             totalSourceBytes,
           });
@@ -872,7 +872,7 @@ export class QuotationExportService {
           });
         }
         totalOutputBytes += prepared.image.buffer.byteLength;
-        if (totalOutputBytes > QUOTATION_EXPORT_LIMITS.maxTotalImageBytes) {
+        if (totalOutputBytes > QUOTATION_EXPORT_LIMITS.maxProductQuoteTotalImageBytes) {
           this.rejectImage(requestId, product, 'TOTAL_OUTPUT_IMAGE_BYTES_EXCEEDED', {
             totalOutputBytes,
           });
