@@ -1,8 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import {
+  DICTIONARY_TYPES,
   ERROR_CODES,
   PUBLIC_LOCALE,
-  QUOTATION_EXPORT_CURRENCIES,
+  PRODUCT_IMAGE_LIMITS,
   QUOTATION_EXPORT_LIMITS,
   type QuotationExportConfig,
   type QuotationExportPricingPreview,
@@ -18,6 +19,7 @@ import type {
 } from '@b2b/validation';
 import type { Prisma, QuoteTemplate } from '@b2b/database';
 import Decimal from 'decimal.js';
+import sharp from 'sharp';
 import { ApiError } from '../../common/errors/api-error';
 import { JsonLogger } from '../../common/logger.service';
 import { StorageService } from '../../common/services/storage.service';
@@ -63,6 +65,8 @@ interface ValidatedProduct {
   category: string | null;
   lifecycleStatus: string;
   imageStorageKey: string;
+  imageAssetId: string | null;
+  imageMimeType: string | null;
   imageWidth: number | null;
   imageHeight: number | null;
 }
@@ -96,9 +100,35 @@ export class QuotationExportService {
     private readonly logger: JsonLogger,
   ) {}
 
-  config(): QuotationExportConfig {
+  async config(locale: string): Promise<QuotationExportConfig> {
+    const currencyType = await this.prisma.dictionaryType.findUnique({
+      where: { code: DICTIONARY_TYPES.currency },
+      select: {
+        enabled: true,
+        items: {
+          where: { enabled: true },
+          orderBy: [{ sortOrder: 'asc' }, { code: 'asc' }],
+          select: {
+            code: true,
+            value: true,
+            translations: { select: { locale: true, label: true } },
+          },
+        },
+      },
+    });
+    const currencies = currencyType?.enabled
+      ? currencyType.items.map((item) => ({
+          code: item.code,
+          symbol: item.value,
+          label:
+            item.translations.find((translation) => translation.locale === locale)?.label ??
+            item.translations.find((translation) => translation.locale === 'en-US')?.label ??
+            item.translations.find((translation) => translation.locale === 'zh-CN')?.label ??
+            item.code,
+        }))
+      : [];
     return {
-      currencies: [...QUOTATION_EXPORT_CURRENCIES],
+      currencies,
       defaultMarkupPercent: '15',
       maxProducts: QUOTATION_EXPORT_LIMITS.maxProducts,
       exchangeRateBase: 'CNY',
@@ -243,14 +273,12 @@ export class QuotationExportService {
     }
 
     const templateFile = await this.readAndInspectTemplate(template);
-    const imageProducts = await this.readOriginalImages(prepared.products);
+    const material = await this.selectedCategoryMaterial(input.categoryId);
+    const imageProducts = await this.readOriginalImages(prepared.products, requestId);
     const workbookProducts: QuotationWorkbookProduct[] = prepared.products.map((product) => {
       const image = imageProducts.get(product.productId);
       if (!image) {
-        throw new ApiError(
-          ERROR_CODES.quotationExportImageUnavailable,
-          'A product image could not be read. No quotation file was generated.',
-        );
+        this.rejectImage(requestId, product, 'IMAGE_RESULT_MISSING');
       }
       return {
         productId: product.productId,
@@ -287,7 +315,7 @@ export class QuotationExportService {
         headerRow: templateFile.inspection.headerRow,
         itemStartRow: templateFile.inspection.itemStartRow,
         fieldMapping: templateFile.inspection.fieldMapping,
-        header: input.header,
+        material,
         currencyCode: prepared.currencyCode,
         markupPercent: prepared.markupPercent,
         markupDisplay: hasMixedMarkups
@@ -437,7 +465,18 @@ export class QuotationExportService {
       ]);
     }
     try {
-      assertQuotationExchangeRate(input.currencyCode, input.exchangeRate);
+      const enabledCurrency = await this.prisma.dictionaryItem.findFirst({
+        where: {
+          code: input.currencyCode,
+          enabled: true,
+          type: { code: DICTIONARY_TYPES.currency, enabled: true },
+        },
+        select: { code: true },
+      });
+      if (!enabledCurrency) {
+        throw new QuotationCalculationError('INVALID_CURRENCY', 'currencyCode');
+      }
+      assertQuotationExchangeRate(input.currencyCode, input.exchangeRate, [enabledCurrency.code]);
     } catch (error) {
       if (!(error instanceof QuotationCalculationError)) throw error;
       throw new ApiError(
@@ -533,6 +572,8 @@ export class QuotationExportService {
             ?.name ?? null,
         lifecycleStatus: product.lifecycleStatus,
         imageStorageKey: cover.asset?.storageKey ?? cover.storageKey,
+        imageAssetId: cover.fileAssetId,
+        imageMimeType: cover.asset?.mimeType ?? null,
         imageWidth: cover.asset?.width ?? cover.width,
         imageHeight: cover.asset?.height ?? cover.height,
       });
@@ -579,9 +620,27 @@ export class QuotationExportService {
         !cover ||
         !key ||
         !isManagedProductImageKey(key) ||
-        (cover.asset !== null && cover.asset.status !== 'ready')
+        (cover.asset !== null &&
+          (cover.asset.status !== 'ready' ||
+            !cover.asset.isPublic ||
+            cover.asset.purpose !== 'product-image'))
       ) {
         issues.push(this.issue(product, 'image', 'IMAGE_NOT_READY'));
+      } else {
+        const imageMimeType = cover.asset?.mimeType;
+        const imageSizeBytes = cover.asset?.sizeBytes ?? cover.sizeBytes;
+        if (
+          imageMimeType &&
+          !PRODUCT_IMAGE_LIMITS.allowedMimeTypes.includes(imageMimeType as never)
+        ) {
+          issues.push(this.issue(product, 'image', 'UNSUPPORTED_IMAGE_FORMAT'));
+        }
+        if (
+          imageSizeBytes !== null &&
+          imageSizeBytes > BigInt(QUOTATION_EXPORT_LIMITS.maxImageBytes)
+        ) {
+          issues.push(this.issue(product, 'image', 'IMAGE_TOO_LARGE'));
+        }
       }
     }
 
@@ -590,13 +649,10 @@ export class QuotationExportService {
     }
     const dimensions = [product.cartonLengthCm, product.cartonWidthCm, product.cartonHeightCm];
     const populated = dimensions.filter((value) => value !== null).length;
-    if (
-      populated !== 0 &&
-      (populated !== 3 || dimensions.some((value) => value !== null && !value.gt(0)))
-    ) {
+    if (populated === 3 && dimensions.some((value) => value !== null && !value.gt(0))) {
       issues.push(this.issue(product, 'cartonDimensions', 'INVALID_CARTON_DIMENSIONS'));
     }
-    if (product.cartonWeightKg === null || product.cartonWeightKg.lte(0)) {
+    if (product.cartonWeightKg !== null && product.cartonWeightKg.lte(0)) {
       issues.push(this.issue(product, 'cartonWeightKg', 'INVALID_CARTON_WEIGHT'));
     }
     return issues;
@@ -610,6 +666,8 @@ export class QuotationExportService {
       MISSING_ENGLISH_NAME: 'quotation.errors.missingEnglishName',
       MISSING_PRIMARY_IMAGE: 'quotation.errors.missingPrimaryImage',
       IMAGE_NOT_READY: 'quotation.errors.imageNotReady',
+      UNSUPPORTED_IMAGE_FORMAT: 'quotation.errors.unsupportedImageFormat',
+      IMAGE_TOO_LARGE: 'quotation.errors.imageTooLarge',
       INVALID_CARTON_QUANTITY: 'quotation.errors.invalidCartonQuantity',
       INVALID_CARTON_DIMENSIONS: 'quotation.errors.invalidCartonDimensions',
       INVALID_CARTON_WEIGHT: 'quotation.errors.invalidCartonWeight',
@@ -748,11 +806,38 @@ export class QuotationExportService {
     return paths;
   }
 
+  private async selectedCategoryMaterial(categoryId: string): Promise<string> {
+    const category = await this.prisma.category.findUnique({
+      where: { id: categoryId },
+      select: {
+        translations: { select: { locale: true, name: true } },
+      },
+    });
+    if (!category) {
+      throw ApiError.validation('The selected category does not exist.', {
+        categoryId: 'quotation.validation.categoryMissing',
+      });
+    }
+    // The selected node is the final segment of the category path. Always use
+    // its English translation regardless of the Admin interface locale.
+    const name = category.translations.find(
+      (translation) => translation.locale === PUBLIC_LOCALE,
+    )?.name;
+    if (!name?.trim()) {
+      throw ApiError.validation('The selected category has no translated name.', {
+        categoryId: 'quotation.validation.categoryNameMissing',
+      });
+    }
+    return name.trim();
+  }
+
   private async readOriginalImages(
     products: ValidatedProduct[],
+    requestId: string,
   ): Promise<Map<string, QuotationWorkbookProduct['image']>> {
     const results = new Map<string, QuotationWorkbookProduct['image']>();
-    let totalBytes = 0;
+    let totalSourceBytes = 0;
+    let totalOutputBytes = 0;
     let cursor = 0;
 
     const worker = async (): Promise<void> => {
@@ -762,41 +847,37 @@ export class QuotationExportService {
         let buffer: Buffer;
         try {
           buffer = await this.storage.get(product.imageStorageKey);
-        } catch {
-          throw new ApiError(
-            ERROR_CODES.quotationExportImageUnavailable,
-            'A product image could not be read. No quotation file was generated.',
-          );
+        } catch (error) {
+          const storageStatus = storageReadStatus(error);
+          this.rejectImage(requestId, product, 'STORAGE_READ_FAILED', {
+            storageErrorType: error instanceof Error ? error.name : 'unknown',
+            ...(storageStatus === null ? {} : { storageStatus }),
+          });
         }
         if (buffer.byteLength > QUOTATION_EXPORT_LIMITS.maxImageBytes) {
-          throw new ApiError(
-            ERROR_CODES.quotationExportImageUnavailable,
-            'A product image exceeds the quotation export size limit.',
-          );
+          this.rejectImage(requestId, product, 'SOURCE_IMAGE_TOO_LARGE', {
+            sourceBytes: buffer.byteLength,
+          });
         }
-        totalBytes += buffer.byteLength;
-        if (totalBytes > QUOTATION_EXPORT_LIMITS.maxTotalImageBytes) {
-          throw new ApiError(
-            ERROR_CODES.quotationExportImageUnavailable,
-            'The selected product images exceed the quotation export size limit.',
-          );
+        totalSourceBytes += buffer.byteLength;
+        if (totalSourceBytes > QUOTATION_EXPORT_LIMITS.maxTotalImageBytes) {
+          this.rejectImage(requestId, product, 'TOTAL_SOURCE_IMAGE_BYTES_EXCEEDED', {
+            totalSourceBytes,
+          });
         }
-        const detected = detectQuotationImage(buffer);
-        if (
-          !detected ||
-          detected.width * detected.height > QUOTATION_EXPORT_LIMITS.maxImagePixels
-        ) {
-          throw new ApiError(
-            ERROR_CODES.quotationExportImageUnavailable,
-            'A product image is not a supported, valid PNG/JPEG file.',
-          );
+        const prepared = await prepareQuotationImage(buffer);
+        if (!prepared.image) {
+          this.rejectImage(requestId, product, prepared.reason, {
+            sourceBytes: buffer.byteLength,
+          });
         }
-        results.set(product.productId, {
-          buffer,
-          extension: detected.extension,
-          width: detected.width,
-          height: detected.height,
-        });
+        totalOutputBytes += prepared.image.buffer.byteLength;
+        if (totalOutputBytes > QUOTATION_EXPORT_LIMITS.maxTotalImageBytes) {
+          this.rejectImage(requestId, product, 'TOTAL_OUTPUT_IMAGE_BYTES_EXCEEDED', {
+            totalOutputBytes,
+          });
+        }
+        results.set(product.productId, prepared.image);
       }
     };
 
@@ -808,4 +889,102 @@ export class QuotationExportService {
     );
     return results;
   }
+
+  private rejectImage(
+    requestId: string,
+    product: ValidatedProduct,
+    reason: string,
+    metadata: Record<string, unknown> = {},
+  ): never {
+    this.logger.warn(
+      'quotation_export.image_unavailable',
+      {
+        requestId,
+        productId: product.productId,
+        fileAssetId: product.imageAssetId,
+        sourceMimeType: product.imageMimeType,
+        reason,
+        ...metadata,
+      },
+      'QuotationExportService',
+    );
+    throw new ApiError(
+      ERROR_CODES.quotationExportImageUnavailable,
+      'A product image could not be read safely. No quotation file was generated.',
+      { details: { reason } },
+    );
+  }
+}
+
+type PreparedQuotationImage =
+  | { image: QuotationWorkbookProduct['image']; reason?: never }
+  | {
+      image: null;
+      reason:
+        'PIXEL_LIMIT_EXCEEDED' | 'UNSUPPORTED_OR_CORRUPT_FORMAT' | 'TRANSCODED_IMAGE_TOO_LARGE';
+    };
+
+async function prepareQuotationImage(buffer: Buffer): Promise<PreparedQuotationImage> {
+  const detected = detectQuotationImage(buffer);
+  if (detected) {
+    if (detected.width * detected.height > QUOTATION_EXPORT_LIMITS.maxImagePixels) {
+      return { image: null, reason: 'PIXEL_LIMIT_EXCEEDED' };
+    }
+    return {
+      image: {
+        buffer,
+        extension: detected.extension,
+        width: detected.width,
+        height: detected.height,
+      },
+    };
+  }
+
+  try {
+    const inputOptions = {
+      failOn: 'error' as const,
+      limitInputPixels: QUOTATION_EXPORT_LIMITS.maxImagePixels,
+      sequentialRead: true,
+    };
+    const metadata = await sharp(buffer, inputOptions).metadata();
+    const width = metadata.autoOrient?.width ?? metadata.width;
+    const height = metadata.autoOrient?.height ?? metadata.height;
+    if (metadata.format !== 'webp' || !width || !height) {
+      return { image: null, reason: 'UNSUPPORTED_OR_CORRUPT_FORMAT' };
+    }
+    if (width * height > QUOTATION_EXPORT_LIMITS.maxImagePixels) {
+      return { image: null, reason: 'PIXEL_LIMIT_EXCEEDED' };
+    }
+
+    const pipeline = sharp(buffer, inputOptions).rotate();
+    const converted = metadata.hasAlpha
+      ? await pipeline.png({ compressionLevel: 9 }).toBuffer({ resolveWithObject: true })
+      : await pipeline.jpeg({ quality: 95, chromaSubsampling: '4:4:4' }).toBuffer({
+          resolveWithObject: true,
+        });
+    if (converted.data.byteLength > QUOTATION_EXPORT_LIMITS.maxImageBytes) {
+      return { image: null, reason: 'TRANSCODED_IMAGE_TOO_LARGE' };
+    }
+    const convertedImage = detectQuotationImage(converted.data);
+    if (!convertedImage) return { image: null, reason: 'UNSUPPORTED_OR_CORRUPT_FORMAT' };
+    if (convertedImage.width * convertedImage.height > QUOTATION_EXPORT_LIMITS.maxImagePixels) {
+      return { image: null, reason: 'PIXEL_LIMIT_EXCEEDED' };
+    }
+    return {
+      image: {
+        buffer: converted.data,
+        extension: convertedImage.extension,
+        width: convertedImage.width,
+        height: convertedImage.height,
+      },
+    };
+  } catch {
+    return { image: null, reason: 'UNSUPPORTED_OR_CORRUPT_FORMAT' };
+  }
+}
+
+function storageReadStatus(error: unknown): number | null {
+  if (!(error instanceof Error)) return null;
+  const match = /^storage\.s3_get_failed:(\d{3})$/.exec(error.message);
+  return match?.[1] ? Number(match[1]) : null;
 }

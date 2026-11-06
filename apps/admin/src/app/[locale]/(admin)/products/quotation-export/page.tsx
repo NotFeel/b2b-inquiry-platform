@@ -5,7 +5,6 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type {
   CategoryNode,
   QuotationExportConfig,
-  QuotationExportHeader,
   QuotationExportPricing,
   QuotationExportPricingPreview,
   QuotationExportProduct,
@@ -44,14 +43,6 @@ import {
 import { CategoryPicker } from '../../../../../components/category-picker';
 import { useBreadcrumb } from '../../../../../components/use-breadcrumb';
 import { useSession } from '../../../../../components/session-provider';
-
-const DEFAULT_HEADER: QuotationExportHeader = {
-  companyName: '',
-  contactPerson: '',
-  email: '',
-  phone: '',
-  quotationTitle: '',
-};
 
 const EMPTY_PRODUCT_LIST: QuotationExportProductList = {
   items: [],
@@ -115,10 +106,9 @@ export default function QuotationExportPage() {
   const [dragOverProductId, setDragOverProductId] = useState<string | null>(null);
   const [orderAnnouncement, setOrderAnnouncement] = useState('');
 
-  const [header, setHeader] = useState<QuotationExportHeader>(DEFAULT_HEADER);
   const [pricing, setPricing] = useState<QuotationExportPricing>({
     markupPercent: '15',
-    currencyCode: 'USD',
+    currencyCode: '',
     exchangeRate: '',
   });
   const [productMarkups, setProductMarkups] = useState<Record<string, string>>({});
@@ -140,14 +130,27 @@ export default function QuotationExportPage() {
     if (!canRead) return;
     setConfigLoading(true);
     try {
-      const loaded = await quotationExportApi.config();
+      const loaded = await quotationExportApi.config(locale);
       setConfig(loaded);
-      setPricing((current) => ({
-        ...current,
-        markupPercent: loaded.defaultMarkupPercent,
-        currencyCode: loaded.currencies.includes('USD') ? 'USD' : (loaded.currencies[0] ?? 'CNY'),
-        exchangeRate: '',
-      }));
+      setPricing((current) => {
+        const currentCurrencyEnabled = loaded.currencies.some(
+          (currency) => currency.code === current.currencyCode,
+        );
+        const currencyCode = currentCurrencyEnabled
+          ? current.currencyCode
+          : (loaded.currencies[0]?.code ?? '');
+        return {
+          ...current,
+          markupPercent: loaded.defaultMarkupPercent,
+          currencyCode,
+          exchangeRate:
+            currencyCode === 'CNY'
+              ? '1'
+              : currentCurrencyEnabled
+                ? current.exchangeRate
+                : '',
+        };
+      });
       setConfigError(null);
       setConfigRequestId(null);
     } catch (error) {
@@ -304,8 +307,10 @@ export default function QuotationExportPage() {
         Math.max(product.eligibilityCodes.length, previewErrors.get(product.id)?.length ?? 0),
       0,
     ) + (selectedMarkupsValid ? 0 : 1);
-  const headerComplete = Object.values(header).every((value) => value.trim().length > 0);
+  const currencyEnabled =
+    config?.currencies.some((currency) => currency.code === pricing.currencyCode) ?? false;
   const pricingReady =
+    currencyEnabled &&
     preview !== null &&
     preview.errors.length === 0 &&
     !previewLoading &&
@@ -318,7 +323,6 @@ export default function QuotationExportPage() {
     !productList.limitExceeded &&
     selectedIssueCount === 0 &&
     selectedMarkupsValid &&
-    headerComplete &&
     pricingReady;
 
   useEffect(() => {
@@ -345,6 +349,7 @@ export default function QuotationExportPage() {
       orderedProductIds.length === 0 ||
       productList.limitExceeded ||
       !selectedMarkupsValid ||
+      !currencyEnabled ||
       !pricing.exchangeRate.trim()
     ) {
       setPreviewLoading(false);
@@ -388,6 +393,7 @@ export default function QuotationExportPage() {
   }, [
     canCreate,
     categoryId,
+    currencyEnabled,
     includeDescendants,
     locale,
     pricing.currencyCode,
@@ -460,14 +466,13 @@ export default function QuotationExportPage() {
   };
 
   const setCurrency = (currencyCode: string) => {
-    if (!config?.currencies.includes(currencyCode as QuotationExportPricing['currencyCode'])) {
+    if (!config?.currencies.some((currency) => currency.code === currencyCode)) {
       return;
     }
     setPricing((current) => ({
       ...current,
-      currencyCode: currencyCode as QuotationExportPricing['currencyCode'],
-      exchangeRate:
-        currencyCode === 'CNY' ? '1' : current.currencyCode === 'CNY' ? '' : current.exchangeRate,
+      currencyCode,
+      exchangeRate: currencyCode === 'CNY' ? '1' : '',
     }));
   };
 
@@ -478,7 +483,6 @@ export default function QuotationExportPage() {
       categoryId,
       includeDescendants,
       productIds: orderedProductIds,
-      header,
       pricing: {
         markupPercent: pricing.markupPercent,
         productMarkups: orderedProductMarkups,
@@ -762,83 +766,6 @@ export default function QuotationExportPage() {
             ) : null}
           </section>
 
-          <section className="panel stack-sm" aria-labelledby="quotation-header-title">
-            <h2 id="quotation-header-title">{t('quotationExport.headerTitle')}</h2>
-            <div className="grid-form">
-              <Field label={t('quotationExport.fields.companyName')} required>
-                {({ inputId, describedBy }) => (
-                  <Input
-                    inputId={inputId}
-                    describedBy={describedBy}
-                    value={header.companyName}
-                    maxLength={120}
-                    autoComplete="organization"
-                    onChange={(event) =>
-                      setHeader((current) => ({ ...current, companyName: event.target.value }))
-                    }
-                  />
-                )}
-              </Field>
-              <Field label={t('quotationExport.fields.contactPerson')} required>
-                {({ inputId, describedBy }) => (
-                  <Input
-                    inputId={inputId}
-                    describedBy={describedBy}
-                    value={header.contactPerson}
-                    maxLength={80}
-                    autoComplete="name"
-                    onChange={(event) =>
-                      setHeader((current) => ({ ...current, contactPerson: event.target.value }))
-                    }
-                  />
-                )}
-              </Field>
-              <Field label={t('quotationExport.fields.email')} required>
-                {({ inputId, describedBy }) => (
-                  <Input
-                    inputId={inputId}
-                    describedBy={describedBy}
-                    type="email"
-                    value={header.email}
-                    maxLength={254}
-                    autoComplete="email"
-                    onChange={(event) =>
-                      setHeader((current) => ({ ...current, email: event.target.value }))
-                    }
-                  />
-                )}
-              </Field>
-              <Field label={t('quotationExport.fields.phone')} required>
-                {({ inputId, describedBy }) => (
-                  <Input
-                    inputId={inputId}
-                    describedBy={describedBy}
-                    type="tel"
-                    value={header.phone}
-                    maxLength={40}
-                    autoComplete="tel"
-                    onChange={(event) =>
-                      setHeader((current) => ({ ...current, phone: event.target.value }))
-                    }
-                  />
-                )}
-              </Field>
-              <Field label={t('quotationExport.fields.quotationTitle')} required>
-                {({ inputId, describedBy }) => (
-                  <Input
-                    inputId={inputId}
-                    describedBy={describedBy}
-                    value={header.quotationTitle}
-                    maxLength={160}
-                    onChange={(event) =>
-                      setHeader((current) => ({ ...current, quotationTitle: event.target.value }))
-                    }
-                  />
-                )}
-              </Field>
-            </div>
-          </section>
-
           <section className="panel stack-sm" aria-labelledby="quotation-pricing-title">
             <h2 id="quotation-pricing-title">{t('quotationExport.pricingTitle')}</h2>
             <div className="grid-form">
@@ -867,10 +794,10 @@ export default function QuotationExportPage() {
                     inputId={inputId}
                     describedBy={describedBy}
                     value={pricing.currencyCode}
-                    disabled={configLoading || !config}
-                    options={(config?.currencies ?? []).map((code) => ({
-                      value: code,
-                      label: code,
+                    disabled={configLoading || !config || config.currencies.length === 0}
+                    options={(config?.currencies ?? []).map((currency) => ({
+                      value: currency.code,
+                      label: currency.label,
                     }))}
                     onChange={(event) => setCurrency(event.target.value)}
                   />
@@ -895,6 +822,11 @@ export default function QuotationExportPage() {
                 )}
               </Field>
             </div>
+            {!configLoading && config?.currencies.length === 0 ? (
+              <div className="notice notice-danger" role="alert">
+                {t('quotationExport.currenciesEmpty')}
+              </div>
+            ) : null}
             {pricing.currencyCode === 'CNY' ? (
               <p className="small muted">{t('quotationExport.cnyRateLocked')}</p>
             ) : null}

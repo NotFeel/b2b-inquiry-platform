@@ -17,11 +17,11 @@ async function workbookBuffer(rows: string[][]): Promise<Buffer> {
 
 function productQuoteRows(): string[][] {
   return [
-    ['[COMPANY NAME]'],
-    ['Contact person: [CONTACT PERSON]'],
-    ['Email: [EMAIL]'],
-    ['Phone: [PHONE]'],
-    ['[QUOTATION TITLE]'],
+    ['Chongqing Wuxuan E-Commerce Co., Ltd.'],
+    ['Contact person: Jerry'],
+    ['Email: sales@example.com'],
+    ['Phone: +86 190 7428 9250'],
+    ['Squishy Stress-Relief Toys ([MATERIAL] Series) Price List'],
     ['Currency: [CURRENCY]  Exchange rate: [RATE]  Markup: [MARKUP]'],
     [
       'Product SKU',
@@ -38,11 +38,11 @@ function productQuoteRows(): string[][] {
 
 function flexibleProductQuoteRows(): string[][] {
   return [
-    ['[COMPANY NAME]'],
-    ['Contact person: [CONTACT PERSON]'],
-    ['Email: [EMAIL]'],
-    ['Phone: [PHONE]'],
-    ['[QUOTATION TITLE]'],
+    ['Chongqing Wuxuan E-Commerce Co., Ltd.'],
+    ['Contact person: Jerry'],
+    ['Email: sales@example.com'],
+    ['Phone: +86 190 7428 9250'],
+    ['Squishy Stress-Relief Toys ([MATERIAL] Series) Price List'],
     [
       'Product SKU',
       'Product Image',
@@ -66,8 +66,8 @@ describe('inspectQuoteTemplateWorkbook', () => {
     expect(inspection).toMatchObject({
       sheetName: 'Quotation',
       availableSheets: ['Quotation'],
-      headerRow: 7,
-      itemStartRow: 8,
+      headerRow: 6,
+      itemStartRow: 7,
       requiredFieldsPresent: true,
       missingRequiredFields: [],
       duplicateFields: [],
@@ -162,15 +162,15 @@ describe('inspectQuoteTemplateWorkbook', () => {
     expect(inspection.requiredFieldsPresent).toBe(false);
   });
 
-  it('rejects a product quote template when a fixed placeholder is missing', async () => {
+  it('rejects a product quote template when the material placeholder is missing', async () => {
     const rows = productQuoteRows();
-    rows[2] = ['Contact details supplied by the sales team'];
+    rows[4] = ['Stress-Relief Toys Price List'];
 
     const inspection = await inspectQuoteTemplateWorkbook(await workbookBuffer(rows), {
       templateType: 'product_quote',
     });
 
-    expect(inspection.missingPlaceholders).toEqual(['[EMAIL]']);
+    expect(inspection.missingPlaceholders).toEqual(['[MATERIAL]']);
     expect(inspection.layoutValid).toBe(false);
     expect(inspection.requiredFieldsPresent).toBe(false);
   });
@@ -189,16 +189,15 @@ describe('inspectQuoteTemplateWorkbook', () => {
     expect(inspection.requiredFieldsPresent).toBe(false);
   });
 
-  it('rejects moved placeholders even when the text is still present', async () => {
+  it('rejects obsolete dynamic quotation header placeholders', async () => {
     const rows = productQuoteRows();
-    rows[2] = ['Phone: [PHONE]'];
-    rows[3] = ['Email: [EMAIL]'];
+    rows[0] = ['[COMPANY NAME]'];
 
     const inspection = await inspectQuoteTemplateWorkbook(await workbookBuffer(rows), {
       templateType: 'product_quote',
     });
 
-    expect(inspection.placeholderRowsMismatch).toEqual(['[EMAIL]', '[PHONE]']);
+    expect(inspection.placeholderRowsMismatch).toEqual(['[COMPANY NAME]']);
     expect(inspection.layoutValid).toBe(false);
     expect(inspection.requiredFieldsPresent).toBe(false);
   });

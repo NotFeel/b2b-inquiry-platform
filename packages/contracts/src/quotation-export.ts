@@ -1,7 +1,7 @@
 import type { QuotationExportCurrency } from './constants';
 
 export interface QuotationExportConfig {
-  currencies: QuotationExportCurrency[];
+  currencies: { code: QuotationExportCurrency; symbol: string | null; label: string }[];
   defaultMarkupPercent: string;
   maxProducts: number;
   exchangeRateBase: 'CNY';
@@ -104,7 +104,6 @@ export interface QuotationExportPreviewRequest
 export interface QuotationExportRequest extends QuotationExportSelection {
   /** Selected active product-quote template. The server reloads its structure. */
   templateId: string;
-  header: QuotationExportHeader;
   pricing: QuotationExportPricing;
 }
 

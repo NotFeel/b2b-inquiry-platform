@@ -114,6 +114,8 @@ export function quotationIssueTranslationKey(code: string): string {
     'MISSING_ENGLISH_NAME',
     'MISSING_PRIMARY_IMAGE',
     'IMAGE_NOT_READY',
+    'UNSUPPORTED_IMAGE_FORMAT',
+    'IMAGE_TOO_LARGE',
     'INVALID_CARTON_QUANTITY',
     'INVALID_CARTON_DIMENSIONS',
     'INVALID_CARTON_WEIGHT',

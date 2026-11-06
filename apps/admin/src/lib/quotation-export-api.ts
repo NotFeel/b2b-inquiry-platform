@@ -17,9 +17,10 @@ export type QuotationProductListQuery = {
 };
 
 export const quotationExportApi = {
-  async config(): Promise<QuotationExportConfig> {
+  async config(locale: string): Promise<QuotationExportConfig> {
     const response = await adminApi.get<{ data: QuotationExportConfig }>(
       '/admin/quotation-export/config',
+      { locale },
     );
     return response.data;
   },

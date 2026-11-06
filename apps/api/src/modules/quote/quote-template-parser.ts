@@ -103,29 +103,23 @@ export const QUOTATION_TEMPLATE_PLACEHOLDERS = {
   email: '[EMAIL]',
   phone: '[PHONE]',
   quotationTitle: '[QUOTATION TITLE]',
+  material: '[MATERIAL]',
   currency: '[CURRENCY]',
   exchangeRate: '[RATE]',
   markup: '[MARKUP]',
 } as const;
 
 const PRODUCT_QUOTE_REQUIRED_PLACEHOLDERS = [
-  'companyName',
-  'contactPerson',
-  'email',
-  'phone',
-  'quotationTitle',
+  'material',
   'currency',
 ] as const satisfies readonly (keyof typeof QUOTATION_TEMPLATE_PLACEHOLDERS)[];
-
-const PRODUCT_QUOTE_FIXED_PLACEHOLDER_ROWS: Readonly<
-  Partial<Record<keyof typeof QUOTATION_TEMPLATE_PLACEHOLDERS, number>>
-> = {
-  companyName: 1,
-  contactPerson: 2,
-  email: 3,
-  phone: 4,
-  quotationTitle: 5,
-};
+const DEPRECATED_QUOTATION_HEADER_PLACEHOLDERS = [
+  QUOTATION_TEMPLATE_PLACEHOLDERS.companyName,
+  QUOTATION_TEMPLATE_PLACEHOLDERS.contactPerson,
+  QUOTATION_TEMPLATE_PLACEHOLDERS.email,
+  QUOTATION_TEMPLATE_PLACEHOLDERS.phone,
+  QUOTATION_TEMPLATE_PLACEHOLDERS.quotationTitle,
+] as const;
 
 export interface QuoteTemplateInspection {
   sheetName: string;
@@ -328,16 +322,17 @@ export async function inspectQuoteTemplateWorkbook(
     const placeholderRows = findPlaceholderRows(worksheet);
     for (const field of PRODUCT_QUOTE_REQUIRED_PLACEHOLDERS) {
       const placeholder = QUOTATION_TEMPLATE_PLACEHOLDERS[field];
-      const expectedRow = PRODUCT_QUOTE_FIXED_PLACEHOLDER_ROWS[field];
       const rows = placeholderRows.get(placeholder) ?? [];
       if (rows.length === 0) {
         missingPlaceholders.push(placeholder);
-      } else if (expectedRow !== undefined && !rows.includes(expectedRow)) {
+      }
+    }
+    for (const placeholder of DEPRECATED_QUOTATION_HEADER_PLACEHOLDERS) {
+      if ((placeholderRows.get(placeholder) ?? []).length > 0) {
         placeholderRowsMismatch.push(placeholder);
       }
     }
     // Product rows always start immediately below the detected Product SKU row.
-    // Customer placeholders remain fixed so the header remains safely fillable.
     layoutValid =
       itemStartRow === headerRow + 1 &&
       missingPlaceholders.length === 0 &&

@@ -84,8 +84,8 @@ function quoteTemplate(overrides: Record<string, unknown> = {}) {
     version: 2,
     storageKey: TEMPLATE_KEY,
     sheetName: 'Quotation',
-    headerRow: 7,
-    itemStartRow: 8,
+    headerRow: 6,
+    itemStartRow: 7,
     fieldMapping: {
       A: 'product.sku',
       B: 'product.image',
@@ -130,6 +130,12 @@ function setup(rows: ReturnType<typeof product> | ReturnType<typeof product>[] =
     },
     category: {
       findMany: vi.fn().mockResolvedValue(firstRow.category ? [firstRow.category] : []),
+      findUnique: vi.fn().mockResolvedValue(
+        firstRow.category ? { ...firstRow.category, code: 'test-category' } : null,
+      ),
+    },
+    dictionaryItem: {
+      findFirst: vi.fn().mockResolvedValue({ code: 'USD' }),
     },
     quoteTemplate: {
       findMany: vi.fn().mockResolvedValue([template]),
@@ -178,13 +184,6 @@ const exportInput = {
   categoryId: CATEGORY_ID,
   includeDescendants: true,
   productIds: [PRODUCT_ID],
-  header: {
-    companyName: 'Example Ltd.',
-    contactPerson: 'Jerry',
-    email: 'sales@example.com',
-    phone: '+86 190 7428 9250',
-    quotationTitle: 'Price List',
-  },
   pricing: {
     markupPercent: '15',
     currencyCode: 'USD' as const,
@@ -299,8 +298,6 @@ describe('QuotationExportService', () => {
         'MISSING_ENGLISH_NAME',
         'MISSING_PRIMARY_IMAGE',
         'INVALID_CARTON_QUANTITY',
-        'INVALID_CARTON_DIMENSIONS',
-        'INVALID_CARTON_WEIGHT',
       ]),
     );
     const serialized = JSON.stringify(result);
@@ -346,16 +343,15 @@ describe('QuotationExportService', () => {
     const worksheet = workbook.getWorksheet('Quotation');
     if (!worksheet) throw new Error('Quotation worksheet missing');
 
-    expect(worksheet.getCell('D8').value).toBe(0.59);
-    expect(worksheet.getCell('D9').value).toBe(0.67);
-    expect(String(worksheet.getCell('A6').value)).toContain('Markup: Per product');
+    expect(worksheet.getCell('D7').value).toBe(0.59);
+    expect(worksheet.getCell('D8').value).toBe(0.67);
     expect(prisma.auditLog.create.mock.calls.at(-1)?.[0]?.data?.metadata).toMatchObject({
       markupPercent: '15',
       itemMarkupOverrideCount: 1,
     });
   });
 
-  it('shows a uniform per-product override in the template markup summary', async () => {
+  it('calculates uniform per-product overrides when the template omits a markup token', async () => {
     const first = product();
     const second = product({
       id: PRODUCT_ID_2,
@@ -388,7 +384,8 @@ describe('QuotationExportService', () => {
     const worksheet = workbook.getWorksheet('Quotation');
     if (!worksheet) throw new Error('Quotation worksheet missing');
 
-    expect(String(worksheet.getCell('A6').value)).toContain('Markup: 20%');
+    expect(worksheet.getCell('D7').value).toBe(0.62);
+    expect(worksheet.getCell('D8').value).toBe(0.62);
     expect(prisma.auditLog.create.mock.calls.at(-1)?.[0]?.data?.metadata).toMatchObject({
       markupPercent: '15',
       itemMarkupOverrideCount: 2,
@@ -424,10 +421,10 @@ describe('QuotationExportService', () => {
     const worksheet = workbook.getWorksheet('Quotation');
     if (!worksheet) throw new Error('Quotation worksheet missing');
 
-    expect(worksheet.getCell('A8').value).toBe('SKU-002');
-    expect(worksheet.getCell('C8').value).toBe('Second product');
-    expect(worksheet.getCell('A9').value).toBe('SKU-001');
-    expect(worksheet.getCell('C9').value).toBe('Steel gate');
+    expect(worksheet.getCell('A7').value).toBe('SKU-002');
+    expect(worksheet.getCell('C7').value).toBe('Second product');
+    expect(worksheet.getCell('A8').value).toBe('SKU-001');
+    expect(worksheet.getCell('C8').value).toBe('Steel gate');
   });
 
   it('refuses the whole export before storage or audit when any product is invalid', async () => {

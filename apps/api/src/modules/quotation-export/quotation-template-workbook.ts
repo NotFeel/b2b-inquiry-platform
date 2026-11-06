@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs';
-import type { QuotationExportCurrency, QuotationExportHeader } from '@b2b/contracts';
+import type { QuotationExportCurrency } from '@b2b/contracts';
 import {
   QUOTATION_TEMPLATE_PLACEHOLDERS,
   type QuoteTemplateFieldKey,
@@ -20,7 +20,7 @@ export interface QuotationTemplateWorkbookInput {
   headerRow: number;
   itemStartRow: number;
   fieldMapping: Record<string, QuoteTemplateFieldKey>;
-  header: QuotationExportHeader;
+  material: string;
   currencyCode: QuotationExportCurrency;
   markupPercent: string;
   /** Explicit summary when selected products use different markup values. */
@@ -318,7 +318,8 @@ function writeProductField(
       cell.value = safeExcelText(product.cartonDimensions);
       break;
     case 'product.carton_weight_kg': {
-      const weight = Number(product.cartonGrossWeightKg);
+      const value = product.cartonGrossWeightKg.trim();
+      const weight = value.length > 0 ? Number(value) : Number.NaN;
       cell.value = Number.isFinite(weight) ? weight : null;
       cell.numFmt = '0.000';
       break;
@@ -443,11 +444,7 @@ export async function buildQuotationWorkbookFromTemplate(
       worksheet.spliceRows(input.itemStartRow + input.products.length, Math.abs(rowDelta));
     }
     const replacements = {
-      [QUOTATION_TEMPLATE_PLACEHOLDERS.companyName]: input.header.companyName,
-      [QUOTATION_TEMPLATE_PLACEHOLDERS.contactPerson]: input.header.contactPerson,
-      [QUOTATION_TEMPLATE_PLACEHOLDERS.email]: input.header.email,
-      [QUOTATION_TEMPLATE_PLACEHOLDERS.phone]: input.header.phone,
-      [QUOTATION_TEMPLATE_PLACEHOLDERS.quotationTitle]: input.header.quotationTitle,
+      [QUOTATION_TEMPLATE_PLACEHOLDERS.material]: input.material,
       [QUOTATION_TEMPLATE_PLACEHOLDERS.currency]: input.currencyCode,
       [QUOTATION_TEMPLATE_PLACEHOLDERS.exchangeRate]: `${input.exchangeRate} ${input.currencyCode}`,
       [QUOTATION_TEMPLATE_PLACEHOLDERS.markup]: input.markupDisplay ?? `${input.markupPercent}%`,

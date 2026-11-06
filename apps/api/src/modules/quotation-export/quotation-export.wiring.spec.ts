@@ -134,13 +134,6 @@ describe('quotation export controller wiring', () => {
       categoryId: CATEGORY_ID,
       includeDescendants: true,
       productIds: [PRODUCT_ID],
-      header: {
-        companyName: 'Example Ltd.',
-        contactPerson: 'Jerry',
-        email: 'sales@example.com',
-        phone: '+86 190 7428 9250',
-        quotationTitle: 'Price List',
-      },
       pricing: { markupPercent: '15', currencyCode: 'USD' as const, exchangeRate: '0.1385' },
     };
 

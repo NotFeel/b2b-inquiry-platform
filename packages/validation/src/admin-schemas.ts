@@ -15,7 +15,6 @@ import {
   PRODUCT_SLUG_STRATEGIES,
   PUBLISH_STATUSES,
   PUBLIC_LOCALE,
-  QUOTATION_EXPORT_CURRENCIES,
   QUOTATION_EXPORT_LIMITS,
   QUOTE_TEMPLATE_TYPES,
   SETTING_GROUPS,
@@ -767,7 +766,7 @@ export const quotationExportPreviewSchema = z
     ...quotationExportSelectionShape,
     markupPercent: quotationMarkupSchema,
     productMarkups: quotationProductMarkupsSchema,
-    currencyCode: z.enum(QUOTATION_EXPORT_CURRENCIES),
+    currencyCode: z.string().regex(/^[A-Z]{3}$/),
     exchangeRate: quotationExchangeRateSchema,
   })
   .strict()
@@ -778,43 +777,15 @@ export const quotationExportPreviewSchema = z
   );
 export type QuotationExportPreviewInput = z.infer<typeof quotationExportPreviewSchema>;
 
-const quotationHeaderText = (max: number) =>
-  z
-    .string()
-    .trim()
-    .min(1)
-    .max(max)
-    .refine(
-      // Excel and HTTP headers must never receive control characters from a
-      // customer-entered field.
-      // eslint-disable-next-line no-control-regex
-      (value) => !/[\u0000-\u001f\u007f]/.test(value),
-      'validation.text.controlCharacters',
-    );
-
 export const quotationExportSchema = z
   .object({
     templateId: uuidSchema,
     ...quotationExportSelectionShape,
-    header: z
-      .object({
-        companyName: quotationHeaderText(120),
-        contactPerson: quotationHeaderText(80),
-        email: emailSchema,
-        phone: z
-          .string()
-          .trim()
-          .min(3)
-          .max(40)
-          .regex(/^[+()\d\s-]+$/, 'validation.phone.characters'),
-        quotationTitle: quotationHeaderText(160),
-      })
-      .strict(),
     pricing: z
       .object({
         markupPercent: quotationMarkupSchema,
         productMarkups: quotationProductMarkupsSchema,
-        currencyCode: z.enum(QUOTATION_EXPORT_CURRENCIES),
+        currencyCode: z.string().regex(/^[A-Z]{3}$/),
         exchangeRate: quotationExchangeRateSchema,
       })
       .strict(),

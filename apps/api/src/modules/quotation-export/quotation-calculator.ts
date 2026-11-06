@@ -1,4 +1,4 @@
-import { QUOTATION_EXPORT_CURRENCIES, type QuotationExportCurrency } from '@b2b/contracts';
+import type { QuotationExportCurrency } from '@b2b/contracts';
 import Decimal from 'decimal.js';
 
 Decimal.set({ precision: 40, rounding: Decimal.ROUND_CEIL });
@@ -57,8 +57,12 @@ function parsePlainDecimal(value: string, field: string): Decimal {
 
 export function assertQuotationCurrency(
   currencyCode: string,
+  allowedCurrencies?: readonly string[],
 ): asserts currencyCode is QuotationExportCurrency {
-  if (!(QUOTATION_EXPORT_CURRENCIES as readonly string[]).includes(currencyCode)) {
+  if (
+    !/^[A-Z]{3}$/.test(currencyCode) ||
+    (allowedCurrencies !== undefined && !allowedCurrencies.includes(currencyCode))
+  ) {
     throw new QuotationCalculationError('INVALID_CURRENCY', 'currencyCode');
   }
 }
@@ -90,8 +94,12 @@ export function calculateQuotationUnitPrice(input: QuotationUnitPriceInput): str
     .toFixed(2);
 }
 
-export function assertQuotationExchangeRate(currencyCode: string, exchangeRate: string): void {
-  assertQuotationCurrency(currencyCode);
+export function assertQuotationExchangeRate(
+  currencyCode: string,
+  exchangeRate: string,
+  allowedCurrencies?: readonly string[],
+): void {
+  assertQuotationCurrency(currencyCode, allowedCurrencies);
   const rate = parsePlainDecimal(exchangeRate, 'exchangeRate');
   if (rate.lte(0) || rate.decimalPlaces() > 10) {
     throw new QuotationCalculationError('INVALID_EXCHANGE_RATE', 'exchangeRate');

@@ -59,8 +59,7 @@ describe('quotation export request schemas', () => {
     },
   );
 
-  it.each(['BTC', 'usd', ''])(
-    'rejects a currency outside the server allow-list: %s',
+  it.each(['usd', ''])('rejects a malformed currency code: %s',
     (currencyCode) => {
       expect(quotationExportPreviewSchema.safeParse({ ...preview, currencyCode }).success).toBe(
         false,
@@ -95,19 +94,12 @@ describe('quotation export request schemas', () => {
     ).toBe(false);
   });
 
-  it('validates the export header and rejects control characters', () => {
+  it('rejects obsolete customer header fields', () => {
     const request = {
       templateId: TEMPLATE_ID,
       categoryId: CATEGORY_ID,
       includeDescendants: true,
       productIds: [PRODUCT_ID],
-      header: {
-        companyName: 'Example Ltd.',
-        contactPerson: 'Jerry',
-        email: 'sales@example.com',
-        phone: '+86 190 7428 9250',
-        quotationTitle: 'Price List',
-      },
       pricing: {
         markupPercent: '15',
         productMarkups: [{ productId: PRODUCT_ID, markupPercent: '18' }],
@@ -131,17 +123,6 @@ describe('quotation export request schemas', () => {
     expect(quotationExportSchema.safeParse({ ...request, templateId: 'not-a-uuid' }).success).toBe(
       false,
     );
-    expect(
-      quotationExportSchema.safeParse({
-        ...request,
-        header: { ...request.header, quotationTitle: 'Bad\r\nHeader' },
-      }).success,
-    ).toBe(false);
-    expect(
-      quotationExportSchema.safeParse({
-        ...request,
-        header: { ...request.header, email: 'not-an-email' },
-      }).success,
-    ).toBe(false);
+    expect(quotationExportSchema.safeParse({ ...request, header: {} }).success).toBe(false);
   });
 });

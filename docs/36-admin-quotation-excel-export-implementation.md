@@ -12,31 +12,28 @@
 
 当前 apps/api/package.json 已有 exceljs 4.4.0、decimal.js 10.6.0、jszip 3.10.2，优先复用。项目为 NestJS API、Next.js Admin。实际路径、权限码、路由、DTO 若不同，适配现有约定并记录差异。
 
-完成标准：页面和 API 权限齐全；按品类查询商品并默认全选整个结果；支持取消/恢复；抬头、markup、币种和汇率可编辑且校验；后端 Decimal 计算；原图字节嵌入 XLSX；Excel 可在 Excel/LibreOffice/WPS 打开；前台不泄漏成本价；测试覆盖权限、汇率、图片、全选、异常；lint/typecheck/tests/build 真实运行，未运行项如实说明。
+完成标准：页面和 API 权限齐全；按品类查询商品并默认全选整个结果；支持取消/恢复；模板、markup、字典币种和汇率可选且校验；后端 Decimal 计算；原图字节嵌入 XLSX；缺失的商品尺寸/重量留空或显示占位符且不阻止导出；Excel 可在 Excel/LibreOffice/WPS 打开；前台不泄漏成本价。
 
 ## 1. 功能范围和流程
 
-Admin 新增商品管理子菜单“报价单导出 / Quotation Export”：从“报价模板”中选择一个已启用且结构校验通过的商品报价模板 → 填写公司名称、联系人、邮箱、电话、报价表名称 → 设置批量加价率、币种和汇率 → 选择一个品类（可包含子品类）→ 获取商品并默认全选所有查询结果 → 手动取消/恢复、排序并逐行微调加价率 → 服务端预览 → 读取所选模板并填充数据，生成 XLSX 下载。
+Admin 新增商品管理子菜单“报价单导出 / Quotation Export”：从“报价模板”中选择一个已启用且结构校验通过的商品报价模板 → 设置批量加价率、从 `dictionary.currency` 获取的目标币种和汇率 → 选择一个品类（可包含子品类）→ 获取商品并默认全选所有查询结果 → 手动取消/恢复、排序并逐行微调加价率 → 服务端预览 → 读取所选模板并填充商品、价格及 `[MATERIAL]`，生成 XLSX 下载。公司及联系人等静态抬头由模板维护，不在页面填写或覆盖。
 
 MVP 建议单次最多 200 件（必须压测后确认）。默认只允许 published 且 lifecycle != discontinued 商品；未发布商品需要独立权限。商品必须有有效 CNY 成本价、英文名称和有效主图。任一商品验证失败则整份导出失败，不下载部分文件。本期不保存客户联系方式或报价文件、不自动获取汇率、不发邮件。
 
 ## 2. 读取报价模板的结构契约
 
-正式模板示例为 `assets/templates/B2B_Quotation_Template.xlsx`。用户可在“报价模板”页面上传新版本，并可自由调整字体、颜色、边框、行高、列宽和合并单元格。客户信息占位符位置和商品表头下的数据起点属于程序契约，不能任意删除或移动；商品表头行由工作表中的 `Product SKU` 自动识别，识别到的下一行即商品数据起点。
+正式模板示例为 `assets/templates/B2B_Quotation_Template.xlsx`。用户可在“报价模板”页面上传新版本，并可自由调整字体、颜色、边框、行高、列宽和合并单元格。公司及联系人等抬头为模板静态内容；`[MATERIAL]`、`[CURRENCY]` 为程序占位符。商品表头行由工作表中的 `Product SKU` 自动识别，识别到的下一行即商品数据起点。
 
 固定结构：
 
 |区域|位置|程序占位符及用途|
 |---|---|---|
-|公司名称|第 1 行|`[COMPANY NAME]`|
-|联系人|第 2 行|`[CONTACT PERSON]`|
-|邮箱|第 3 行|`[EMAIL]`|
-|电话|第 4 行|`[PHONE]`|
-|报价表名称|第 5 行|`[QUOTATION TITLE]`|
-|报价币种|工作簿任意位置|`[CURRENCY]` 必填，可放在价格表头或 footer；汇率和加价率仍由导出页面输入|
+|公司名称、联系人、邮箱、电话、报价表名称|模板固定区域|模板维护静态内容，导出接口不接收或覆盖这些内容|
+|商品品类|模板标题或说明|`[MATERIAL]` 必填，使用所选节点的英文名称，即品类路径最末端名称|
+|报价币种|工作簿任意位置|`[CURRENCY]` 必填，可放在价格表头或 footer；值为当前启用的 `dictionary.currency` 项 code|
 |报价说明（可选）|不固定|`[RATE]`、`[MARKUP]` 如存在则替换；不存在不影响启用和导出，模板可不创建该行|
-|商品表头|`Product SKU` 所在行|自动识别；同一行必须包含完整商品字段，标准示例为第 7 行|
-|商品数据及原始图片|商品表头下一行|`itemStartRow = headerRow + 1`；标准示例为第 8 行，自定义模板可为第 7 行等|
+|商品表头|`Product SKU` 所在行|自动识别；同一行必须包含完整商品字段，当前示例为第 6 行|
+|商品数据及原始图片|商品表头下一行|`itemStartRow = headerRow + 1`；当前示例从第 7 行开始|
 
 当前正式模板的工作表为 `Quotation`，固定 7 列：
 
@@ -56,41 +53,30 @@ MVP 建议单次最多 200 件（必须压测后确认）。默认只允许 publ
 
 ## 3. Admin 页面 UI
 
-使用现有 Admin Shell 和 locale/dashboard 路由；页面标题“报价单导出 / Quotation Export”。页面按以下顺序组织：模板 → 报价抬头 → 报价设置 → 品类 → 商品选择与顺序 → 价格预览与导出。
+使用现有 Admin Shell 和 locale/dashboard 路由；页面标题“报价单导出 / Quotation Export”。页面按以下顺序组织：模板 → 报价设置 → 品类 → 商品选择与顺序 → 价格预览与导出。报价抬头由模板维护；币种选项由服务端读取启用的 `dictionary.currency` 项及当前 locale 翻译。
 
 ### 3.1 选择报价模板
 - 必填，选项来自 `GET /api/v1/admin/quotation-export/templates`，只返回 active、`product_quote`、结构校验通过且私有文件可用模板的摘要。
 - 唯一模板自动选中；刷新后当前模板仍有效则保留，否则回退首项；无模板时引导用户前往“报价模板”上传、校验并启用。
 - 选择器只接收 `templateId`，页面不接收或展示 `storageKey`、私有 URL 或文件内容。
 
-### 3.2 报价抬头
-
-|字段|校验|
-|---|---|
-|Company Name|必填，trim，1–120 字符|
-|Contact Person|必填，1–80 字符|
-|Email|必填，格式合法，≤254 字符|
-|Phone|必填，3–40 字符，允许 +、空格、括号、短横线|
-|Quotation Title|必填，1–160 字符|
-
-抬头在模板选择之后、商品筛选之前填写，使页面先完成报价基本信息，再进入商品范围与价格校验。
-
-### 3.3 报价设置
+### 3.2 报价设置
 
 |字段|规则|
 |---|---|
 |Batch Markup (%)|默认 15；0–500；最多 2 位小数；修改后批量更新当前商品列表各行的默认值|
-|Output Currency|必填，服务端币种白名单|
+|Output Currency|必填，来源于启用的 `dictionary.currency` 字典项；服务端再次校验该项及字典类型均启用|
 |Exchange Rate|必填，大于 0，最多 10 位小数，拒绝科学计数法|
 
-汇率方向固定为 **1 CNY = X 目标货币**。例如 USD 0.1385 表示 1 CNY = 0.1385 USD。UI label 动态显示 `Exchange rate (1 CNY = ? USD)`，不允许只写 Exchange Rate。CNY 自动填 1 并锁定，服务端再次校验为 1。推荐币种 USD/EUR/GBP/CAD/AUD/JPY/CNY，但选项必须来自服务端白名单。汇率由用户手动填写，本期不拉取实时汇率。
+汇率方向固定为 **1 CNY = X 目标货币**。例如 USD 0.1385 表示 1 CNY = 0.1385 USD。UI label 动态显示 `Exchange rate (1 CNY = ? USD)`，不允许只写 Exchange Rate。CNY 自动填 1 并锁定，服务端再次校验为 1。目标币种从启用的 `dictionary.currency` 选项读取，不在页面或服务端维护固定列表。汇率由用户手动填写，本期不拉取实时汇率。
 
-### 3.4 选择品类
+### 3.3 选择品类
 - 必填品类树选择器，支持搜索和路径显示。
 - “包含子品类商品”开关默认开启；如现有 API 定义不同，遵循现有业务规则并清晰提示。
 - 品类切换重置已选商品，然后对新查询结果默认全选。
+- `[MATERIAL]` 使用所选品类路径最末端节点的 `en-US` 名称；例如 `Toys / Stress Relief Toys` 填入 `Stress Relief Toys`，不随 Admin 界面语言切换。
 
-### 3.5 商品选择与顺序
+### 3.4 商品选择与顺序
 - 搜索 SKU/英文名称，显示商品总数、已选数、全选当前结果、清空。
 - 列：checkbox、后台缩略图、SKU、英文名、品类、箱规摘要、成本可用状态、逐商品加价率（可报价/缺成本时仍不显示成本金额）。
 - 逐商品加价率使用 0–500、最多两位小数；初始值来自批量默认值，用户可在单行继续微调。批量值变化只覆盖当前已加载商品的默认值，不阻止后续逐行修改。
@@ -100,12 +86,12 @@ MVP 建议单次最多 200 件（必须压测后确认）。默认只允许 publ
 - 商品表显示每项当前导出位次；preview 与 export 都按该数组顺序发送 `productIds` 和 `productMarkups`，后端必须按请求顺序逐项构建商品行，不能依赖数据库 `findMany` 的返回顺序。
 - 任一已选商品加价率非法时停止自动预览并禁用导出；不可用全局值静默覆盖单行非法值。
 
-### 3.6 价格预览与导出
+### 3.5 价格预览与导出
 - 显示商品数、批量 markup、目标币种、汇率方向；价格预览 3–5 件商品，由 preview API 返回，并显示每件商品实际使用的 markup。
 - preview 和 export 共用同一后端价格函数。
 - 缺成本、汇率错误或商品不合格时禁止导出并显示原因。
 - 导出按钮需 loading、防重复提交、失败提示和 requestId，导出前确认模板名称与版本、商品数/币种/markup/rate。
-- 页面至少覆盖 Initial、Loading、Ready、PartiallySelected、NoProducts、MissingCost、MissingImages、MissingEnglishName、InvalidCartonData、InvalidRate、Exporting、ExportFailed、PermissionDenied。
+- 缺少商品长宽高或重量时，对应 Excel 单元格留空或显示 `—`，不作为阻止导出的错误；有值但数值无效时仍拒绝。页面至少覆盖 Initial、Loading、Ready、PartiallySelected、NoProducts、MissingCost、MissingImages、MissingEnglishName、InvalidRate、Exporting、ExportFailed、PermissionDenied。
 - 360px 手机布局表格局部横向滚动，整个页面不横向溢出，表单改单列。
 
 ## 4. 价格计算（后端唯一实现）
@@ -136,9 +122,9 @@ export function calculateQuotationUnitPrice(input: { costCny: string; markupPerc
 
 ## 5. 商品数据校验与防篡改
 
-Export 请求仅接收 categoryId、includeDescendants、productIds、header、pricing。SKU、名称、成本、图片和箱规从数据库后端读取，绝不信任前端传值。
+Export 请求仅接收 templateId、categoryId、includeDescendants、productIds、locale 和 pricing。SKU、名称、成本、图片、箱规及品类名称从数据库后端读取，绝不信任前端传值。抬头内容由模板静态维护。
 
-商品必须属于所选品类范围、存在且未删除；成本有效且 >0；有 en-US 名称；有有效主图；主图 FileAsset/对象未删除或 pending-delete。默认仅允许 published 且 lifecycle != discontinued，未发布商品需要独立权限。cartonQty 建议必填正整数。箱规 L/W/H 必须三项全有效或三项全空输出“-”，不能部分缺失；cartonGrossWeightKg 建议正数，可按历史数据决定是否允许空，但不得误用单件重量。尺寸格式如 `40 × 30 × 30 cm`；旧字符串 `40*30*30` 必须严格解析，优先独立字段。
+商品必须属于所选品类范围、存在且未删除；成本有效且 >0；有 en-US 名称；有有效主图；主图 FileAsset/对象未删除或 pending-delete。默认仅允许 published 且 lifecycle != discontinued，未发布商品需要独立权限。cartonQty 必须是正整数。箱规 L/W/H 全部缺失或部分缺失时输出空白/`—`，不阻止导出；全部存在时必须为正数。箱规毛重可缺失并留空，但已填写的值必须为正数，不得误用单件重量。产品长宽高或重量数据缺失时也留空或使用 `—`。
 
 一次聚合返回所有错误：PRODUCT_NOT_IN_CATEGORY、PRODUCT_NOT_EXPORTABLE、MISSING_COST、MISSING_ENGLISH_NAME、MISSING_PRIMARY_IMAGE、IMAGE_NOT_READY、INVALID_CARTON_QUANTITY、INVALID_CARTON_DIMENSIONS、INVALID_CARTON_WEIGHT、TOO_MANY_PRODUCTS。返回 422 QUOTATION_EXPORT_VALIDATION_FAILED，errors[] 至少含 productId、sku、field、code、messageKey。没有成本读取权限时错误不能泄漏成本金额。
 
@@ -146,7 +132,7 @@ Export 请求仅接收 categoryId、includeDescendants、productIds、header、p
 
 ## 6. 原图读取与嵌入
 
-商品图片必须是 Product 主图 original asset 的原始字节，而不是 CDN URL、缩略图、裁切/水印图、DISPIMG 公式或截图。用现有 Storage adapter 根据服务端受管 key 读取；禁止 fetch 任意用户 URL（SSRF）。首期 PNG/JPEG，按魔数确认，不只看 MIME/扩展名。建议单张≤8MB、≤20MP、总图≤40MB，压测后定值；拒绝损坏图、未知格式、SVG active content 和路径穿越 key。
+商品图片必须来自 Product 主图 original asset，而不是 CDN URL、缩略图、裁切/水印图、DISPIMG 公式或截图。用现有 Storage adapter 根据服务端受管 key 读取；禁止 fetch 任意用户 URL（SSRF）。PNG/JPEG 按魔数确认并原样嵌入；WebP 在 Sharp 像素上限内解码，透明图转 PNG、非透明图转 JPEG 后嵌入，以兼容 Excel。拒绝损坏图、未知格式、SVG active content、路径穿越 key 和超限图像。单图≤10 MiB、≤20MP、图片总量≤40 MiB，读取并发≤4。
 
 ExcelJS 示意：
 
@@ -176,7 +162,7 @@ worksheet.addImage(imageId, {
 
 ## 8. API 契约（按项目约定适配）
 
-`GET /api/v1/admin/quotation-export/config`：返回服务端币种白名单、defaultMarkupPercent="15"、maxProducts=200、exchangeRateBase=CNY、rounding=CEIL_2。可复用 GlobalSetting/Dictionary，但服务端必须验证币种 code 合法且启用。
+`GET /api/v1/admin/quotation-export/config?locale=zh-CN`：返回启用的 `dictionary.currency` 项 `{code, symbol, label}`、defaultMarkupPercent="15"、maxProducts=200、exchangeRateBase=CNY、rounding=CEIL_2。preview/export 服务端必须再次验证币种及所属字典类型启用。
 
 `GET /api/v1/admin/quotation-export/templates`：返回 active、结构校验通过且私有文件可用的 `product_quote` 模板摘要（id、name、version、fileName、sheetName、status）。不返回 `storageKey`、私有 URL 或模板内容。
 
@@ -209,13 +195,6 @@ worksheet.addImage(imageId, {
   "categoryId": "uuid",
   "includeDescendants": true,
   "productIds": ["uuid-1", "uuid-2"],
-  "header": {
-    "companyName": "Chongqing Wuxuan E-Commerce Co., Ltd.",
-    "contactPerson": "Jerry",
-    "email": "sales@example.com",
-    "phone": "+86 190 7428 9250",
-    "quotationTitle": "Squishy Stress-Relief Toys Price List"
-  },
   "pricing": {
     "markupPercent": "15",
     "productMarkups": [
@@ -228,7 +207,7 @@ worksheet.addImage(imageId, {
 }
 ```
 
-响应 HTTP 200，Content-Type `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`，Content-Disposition 安全 filename* UTF-8，附 X-Request-Id。文件名如 `Quotation_USD_20261030_103000.xlsx`。清理用户标题以防 CRLF/header injection。Admin 认证 fetch Blob 下载并 revokeObjectURL。DTO 使用项目统一 validation；`templateId` 必填 UUID；productIds UUID 数组去重、非空、限量；币种服务端白名单；decimal string 禁止科学计数法；不接受成本价、最终价、图片 URL、storageKey 等字段。服务端必须重新读取并校验模板，不能信任上传时的一次性检查结果。
+响应 HTTP 200，Content-Type `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`，Content-Disposition 安全 filename* UTF-8，附 X-Request-Id。文件名如 `Quotation_USD_20261030_103000.xlsx`。Admin 认证 fetch Blob 下载并 revokeObjectURL。DTO 使用项目统一 validation；`templateId` 必填 UUID；productIds UUID 数组去重、非空、限量；币种必须对应当前启用的字典项；decimal string 禁止科学计数法；不接受客户抬头、成本价、最终价、图片 URL、storageKey 等字段。服务端必须重新读取并校验模板，不能信任上传时的一次性检查结果。
 
 ## 9. 后端模块边界
 
@@ -236,7 +215,7 @@ worksheet.addImage(imageId, {
 
 ## 10. Admin 前端
 
-组件建议：QuotationExportPage、CategoryTreeSelect、QuotationProductSelector、QuotationHeaderForm、QuotationPricingForm、QuotationPricePreview、QuotationExportActions，实际命名按项目约定。
+组件建议：QuotationExportPage、CategoryTreeSelect、QuotationProductSelector、QuotationPricingForm、QuotationPricePreview、QuotationExportActions，实际命名按项目约定。报价抬头由工作簿固定内容承担，不再渲染表单。
 
 ```ts
 type QuotationExportForm = {
@@ -244,7 +223,6 @@ type QuotationExportForm = {
   categoryId: string | null;
   includeDescendants: boolean;
   selectedProductIds: string[];
-  header: { companyName: string; contactPerson: string; email: string; phone: string; quotationTitle: string };
   pricing: { markupPercent: string; currencyCode: string; exchangeRate: string };
 };
 ```
@@ -257,15 +235,15 @@ decimal 输入始终是 string，不使用 parseFloat；商品/markup/币种/汇
 
 API 集成：未登录 401；无 read 权限列表 403；无 create 权限 preview/export 403；跨品类 ID、重复 ID、空数组、数量超限 422；缺成本/英文名/主图聚合错误且无部分文件；下架/停产按策略拒绝；禁用币种/汇率错误 422；图片读取失败整单失败；成功文件 MIME/文件名正确、可解析、图片数等于商品数；审计不含成本/邮箱/电话；public API/SSR 不出现 priceCny。
 
-Admin E2E：登录→选品类→默认全选整个结果→取消一项→预览更新→重新全选→填写抬头→选 USD、输入 0.1385 和 markup 15→显示 1 CNY = 0.1385 USD→导出→Excel/LibreOffice/WPS 打开检查→用缺数据品类验证整单失败→无权限角色验证菜单和 API 403。
+Admin E2E：登录→选品类→默认全选整个结果→取消一项→预览更新→重新全选→选择启用的字典币种、输入汇率和 markup→导出→Excel/LibreOffice/WPS 打开检查→验证 `[MATERIAL]` 和静态抬头→缺失包装数据的商品仍导出且字段留空/占位→无权限角色验证菜单和 API 403。
 
 XLSX 验收：Price List 工作表；抬头合并；七列且没有重复价格列；SKU/英文名正确；图片断网可显示且图片数等于商品数；图片比例正确；价格 2 位且 Ceiling；箱规字段单位正确；冻结、筛选、打印配置正确；不含成本价、内部 ID、storageKey 或系统 URL；在目标 Office/WPS 实测。
 
 ## 12. 部署、容量与回滚
 
-初始建议商品≤200、单图≤8MB、图片总量≤40MB、读取并发≤4，必须压测后确认。配置优先复用 GlobalSetting；新增环境变量时更新 .env.example 与部署文档。监控成功率、耗时、文件大小、图片读取失败和校验错误，不记录成本或客户联系方式；设置用户/IP 频率限制。
+初始建议商品≤200、单图≤10 MiB、图片总量≤40 MiB、读取并发≤4，必须压测后确认。配置优先复用 GlobalSetting；新增环境变量时更新 .env.example 与部署文档。监控成功率、耗时、文件大小、图片读取失败和校验错误，不记录成本或客户联系方式；设置用户/IP 频率限制。
 
-发布前执行幂等权限/菜单 seed、lint、typecheck、API/Admin tests、build；生产冒烟导出 1/20/100 件并记录 CPU/RSS/耗时/文件大小。使用 feature flag 或隐藏菜单止损。预计无需 Product schema 变化，无必要不加 migration。本期不持久化客户报价文件。
+发布前执行幂等权限/菜单 seed、lint、typecheck、API/Admin tests、build；生产冒烟导出 1/20/100 件并记录 CPU/RSS/耗时/文件大小。API 运行镜像需要包含 `sharp` 原生模块；本次不改数据库且无需 migration，回滚时部署上一版 API/Admin 镜像即可。使用 feature flag 或隐藏菜单止损。本期不持久化客户报价文件。
 
 ## 13. AI 执行阶段任务
 
@@ -289,15 +267,14 @@ Phase 5 Validation：执行全部测试、Excel/WPS 实测、压测 1/20/100/最
 ☑ 图片 | WX-001 | Fruit Squishy | 72 pcs | 40×30×30
 ☑ 图片 | WX-002 | Animal Squishy | 48 pcs | 35×25×20
 已选择 12 / 12
-3. 报价抬头：Company Name / Contact Person / Email / Phone / Quotation Title
-4. 报价设置：Markup 15% | Currency USD | Exchange Rate (1 CNY = ? USD) 0.1385
+3. 报价设置：Markup 15% | Currency（dictionary.currency）| Exchange Rate (1 CNY = ? USD) 0.1385
 价格预览：由服务端返回
                               [导出报价单 Excel]
 ```
 
 ## 附录 B：配套模板用途
 
-`B2B_Quotation_Template.xlsx` 只用于列、布局与样式参考。生产导出动态生成实际商品行并嵌入真实主图，不能输出静态占位图或占位价格。
+`B2B_Quotation_Template.xlsx` 同时承载固定的公司抬头及版式。生产导出动态生成实际商品行并嵌入真实主图，替换 `[MATERIAL]`、`[CURRENCY]`、`[RATE]` 和 `[MARKUP]`，不能输出静态占位图或占位价格。
 
 ## 14. 实施与验收记录（2026-10-30）
 
@@ -306,9 +283,9 @@ Phase 5 Validation：执行全部测试、Excel/WPS 实测、压测 1/20/100/最
 | 阶段 | 状态 | 实际结果 |
 |---|---|---|
 | Phase 1 Discovery | 已完成 | 已核对 Product、ProductTranslation、ProductImage、FileAsset、Category、Permission、RolePermission、Menu、AuditLog、Storage adapter、RBAC guard、Admin locale 路由与现有 ExcelJS 依赖；无需修改 Product schema。 |
-| Phase 2 Backend | 已完成 | 新增独立 `QuotationExportModule`；实现 config/templates/products/preview/export 五个接口、统一 Decimal 计算、商品聚合校验、原图读取与 PNG/JPEG 魔数/像素校验、模板工作簿填充、严格审计和同步下载。报价模板登记会读取私有 XLSX 校验工作表、固定占位符、第 7 行表头、第 8 行商品起点和字段映射；真实 `B2B_Quotation_Template.xlsx` 已验证为 `Quotation!A7:G8`、7 列完整映射。 |
+| Phase 2 Backend | 已完成 | 新增独立 `QuotationExportModule`；实现 config/templates/products/preview/export 五个接口、统一 Decimal 计算、商品聚合校验、PNG/JPEG 原图校验与 WebP 安全转码、模板工作簿填充、严格审计和同步下载。报价模板登记会读取私有 XLSX 校验工作表、品类/币种占位符、第 7 行表头、第 8 行商品起点和字段映射；真实 `B2B_Quotation_Template.xlsx` 已验证为 `Quotation!A7:G8`、7 列完整映射。 |
 | Phase 3 RBAC / Menu / i18n | 已完成 | 新增 `quotation.export.read`、`quotation.export.create`、`quotation.export.unpublished`；商品管理下增加“报价单导出 / Quotation Export”菜单及双语翻译；`catalog_manager` 仅授予 read/create。 |
-| Phase 4 Admin UI | 已完成 | 已实现报价模板选择、无模板引导、品类树、包含后代、默认全选、搜索保留选择、清空/恢复默认、已选商品有序列表（上移/下移与桌面拖拽）、抬头与价格配置、服务端预览、权限/加载/错误/成功状态、确认弹窗和 Blob 下载；确认弹窗显示模板名称、版本及顺序固定规则，页面按 360px 起单列/局部横向表格适配。 |
+| Phase 4 Admin UI | 已完成 | 已实现报价模板选择、无模板引导、品类树、包含后代、默认全选、搜索保留选择、清空/恢复默认、已选商品有序列表（上移/下移与桌面拖拽）、价格配置（币种读取字典）、服务端预览、权限/加载/错误/成功状态、确认弹窗和 Blob 下载；模板中的静态抬头不由页面覆盖，页面按 360px 起单列/局部横向表格适配。 |
 | Phase 5 Validation | 自动化已完成，人工验收未完成 | lint、typecheck、API/Admin/validation tests、菜单翻译检查和全仓生产 build 已通过；Office/WPS 人工打开和 1/20/100/200 件容量压测尚未执行。按本次用户要求未提交 commit/PR。 |
 
 ### 14.2 已落地接口与业务规则
@@ -329,7 +306,7 @@ Phase 5 Validation：执行全部测试、Excel/WPS 实测、压测 1/20/100/最
 - 价格只由后端按 `CEILING_2(costCny × (1 + markup/100) × exchangeRate)` 计算；所有币种（含 JPY）统一两位小数；CNY 汇率固定为 1。
 - preview 与 export 共用同一价格计算和商品校验；export 重新读取数据库并重算，任一商品不合法时整单返回 422，不生成或返回部分 XLSX。
 - preview 与 export 均按 `productIds` 请求数组顺序输出；自动化测试直接读取导出工作簿，验证 `itemStartRow` 起的 SKU/名称顺序与页面请求一致。
-- 单图上限 8 MiB、图片总量上限 40 MiB、20 MP、读取并发 4；读取失败、格式伪造或超限均整单失败。
+- 单图上限 10 MiB、图片总量上限 40 MiB、20 MP、读取并发 4；读取失败、格式伪造或超限均整单失败。PNG/JPEG 原样嵌入，WebP 转成 PNG/JPEG。
 - 审计 `QUOTATION_EXCEL_EXPORTED` 成功后才返回文件；审计不记录成本、客户邮箱/电话、storageKey、图片字节或 XLSX 内容。
 - 预览和导出均按登录用户限流：预览 120 次/分钟、导出 10 次/分钟。当前限流为单 API 进程内存窗口，多实例部署前需改为共享存储或边缘限流。
 - “选择商品”的成本列仅在操作者具备 `product.cost.read`（或为超级管理员）时返回数据库中的精确 CNY 成本；无权限响应为 `costCny: null`，页面显示“成本已隐藏（无权限）”，不会通过其他字段序列化成本。
@@ -339,7 +316,7 @@ Phase 5 Validation：执行全部测试、Excel/WPS 实测、压测 1/20/100/最
 - 删除接口需要 `quote.delete`，先停用版本并写入幂等 `FileDeletionJob`（`entityType=quote_template`），Worker 再调用对象存储物理删除文件。存储删除成功且再次确认没有历史导出或共享文件引用后，事务内删除 `QuoteTemplate`、独占 `FileAsset` 和删除任务；失败时保留文件元数据与任务，版本显示“重试删除”，且禁止重新启用。
 - 若版本仍被历史 `QuoteExportJob` 引用，或文件 URL 被其他模板版本共享，删除返回 HTTP 409 `QUOTE_TEMPLATE_IN_USE`，不执行物理删除。QUEUED/PROCESSING 版本立即从列表隐藏；FAILED 版本保留以便操作员重试。
 - 报价单导出请求必须携带 `templateId`；列表接口只返回 active、结构校验通过、私有 `FileAsset` ready 且 `purpose=quote-template` 的 `product_quote` 模板摘要。导出时再次从私有存储读取模板并解析，防止数据库报告与实际文件不一致。
-- 模板契约为：第 1–5 行客户与报价名称占位符固定；`[CURRENCY]` 必须存在于工作簿；`Product SKU` 所在行由服务端自动识别为商品表头，其下一行固定为商品数据和原始图片起点。`[RATE]`、`[MARKUP]` 为可选占位符，存在时继续填充，不存在时不影响结构校验。样式、行高、列宽和合并可调整，但必需商品列不得删除或重复。
+- 模板契约为：公司及联系人等抬头内容为模板静态值；`[MATERIAL]` 和 `[CURRENCY]` 必须存在，`[RATE]`、`[MARKUP]` 为可选占位符；不得保留旧版客户抬头占位符。`Product SKU` 所在行由服务端自动识别为商品表头，其下一行固定为商品数据和原始图片起点。样式、行高、列宽和合并可调整，但必需商品列不得删除或重复。
 - 模板填充器按商品数量动态调整示例数据区，保留示例行样式和底部说明，更新筛选区、打印区域、重复标题行和冻结窗格；1 件、2 件和 200 件边界自动化测试已通过。
 
 ### 14.3 数据、权限与发布步骤
@@ -393,27 +370,27 @@ ADMIN_API_PROXY_TARGET=http://localhost:3002 pnpm build
 ### 14.5 真实模板上传验收要点
 
 - 在报价模板页面选择“产品报价单”，上传 `assets/templates/B2B_Quotation_Template.xlsx`，模板名称保持不变时会创建下一个不可变 draft 版本。
-- 标准模板登记后的 `QuoteTemplate` 记录 `sheetName=Quotation`、`headerRow=7`、`itemStartRow=8`；自定义模板的头行和数据行按实际 `Product SKU` 位置自动登记，例如头行 6、数据行 7。
-- 第 1–5 行必须分别保留 `[COMPANY NAME]`、`[CONTACT PERSON]`、`[EMAIL]`、`[PHONE]`、`[QUOTATION TITLE]`，且不得移到其他行；`[CURRENCY]` 必须存在于工作簿中。`[RATE]`、`[MARKUP]` 可选。缺少必需占位符、客户占位符错位、缺少必需商品列、关键列重复或商品起点不是表头下一行时，`layoutValid=false`，禁止激活和导出。
+- 标准模板登记后的 `QuoteTemplate` 记录 `sheetName=Quotation`、`headerRow=6`、`itemStartRow=7`；自定义模板的头行和数据行按实际 `Product SKU` 位置自动登记。
+- 公司抬头及联系方式需直接维护为模板静态文本；不得保留 `[COMPANY NAME]`、`[CONTACT PERSON]`、`[EMAIL]`、`[PHONE]`、`[QUOTATION TITLE]`。`[MATERIAL]`、`[CURRENCY]` 必须存在，`[RATE]`、`[MARKUP]` 可选。缺少必需占位符、存在旧抬头占位符、缺少必需商品列、关键列重复或商品起点不是表头下一行时，`layoutValid=false`，禁止激活和导出。
 - `fieldMapping` 应为：A `product.sku`、B `product.image`、C `product.name`、D `product.price_cny`、E `product.carton_qty`、F `product.carton_size_cm`、G `product.carton_weight_kg`。
 - 文件以 `purpose=quote-template`、`isPublic=false` 保存在私有存储；列表只返回文件元数据，不返回公开 URL 或 `storageKey`。
 - 每个版本应先验证下载文件名和内容，再打开预览检查工作表、样式、合并单元格与内嵌图片；预览超出 200 行或 40 列时页面必须明确提示截断，不能把截断预览误认为完整文件。
 - 删除一个无历史导出、无共享文件引用的测试版本后，`QuoteTemplate` 与 `FileAsset` 元数据应删除，私有存储对象也应不存在；删除任务应最终为 `SUCCEEDED`，审计链包含请求成功/失败事件。
 - 可用历史导出引用的版本验收 409 保护：接口返回 `QUOTE_TEMPLATE_IN_USE`，模板文件仍可下载，数据库和对象存储均不得被删除。
 - 激活该模板后，同 `templateType` 的旧 active 模板会被停用；结构检查失败（缺少必需字段、关键列重复、必需占位符缺失/客户占位符错位或商品起点不在表头下一行）的模板禁止激活。
-- 当前正式模板只包含第 1–7 行，第 8 行起没有示例商品行；导出两件商品时应自动创建第 8、9 行并嵌入两张原图。模板已带的 Logo 图片必须保留，商品图片只能追加到对应商品行。导出响应和审计中均不得出现模板或图片 `storageKey`。
+- 当前正式模板包含第 1–5 行静态抬头、第 6 行商品表头、第 7–9 行样式示例、第 10 行间隔和第 11 行 footer；导出时按商品数调整数据区并嵌入对应原图，模板已带的 Logo 图片必须保留。导出响应和审计中均不得出现模板或图片 `storageKey`。
 
 ### 14.6 未执行的人工验收与风险
 
 - 尚未在 Microsoft Excel、LibreOffice 和 WPS 中人工打开实际导出文件，未验证目标桌面软件的图片渲染、打印分页与公式/样式兼容性。
-- 用户可修改模板样式、合并区域和商品表头所在行；若修改触及工作表名、客户占位符文本/行号、`Product SKU` 表头、商品必需列或“表头下一行即商品起点”的规则，模板会被拒绝。这是有意的结构保护，不应通过放宽校验绕过。
+- 用户可修改模板样式、合并区域和商品表头所在行；若修改触及工作表名、`[MATERIAL]` / `[CURRENCY]` 占位符、旧抬头占位符、`Product SKU` 表头、商品必需列或“表头下一行即商品起点”的规则，模板会被拒绝。这是有意的结构保护，不应通过放宽校验绕过。
 - 尚未使用真实 1/20/100/200 件商品记录 CPU、RSS、耗时、输出体积和失败率；40 MiB 图片总量上限目前是保守保护值，需压测后再决定是否调整。
 - 当前图片校验基于文件签名、尺寸和像素上限，没有对全部图片字节做完整解码沙箱；若后续允许不可信外部上传源，应增加成熟图像解码器/隔离进程。
 - 回滚无需回退数据库 schema：先隐藏或停用 `quote-templates` / `products.quotation-export` 菜单，再撤销 `quote.delete` 及三个 quotation 权限即可停止新入口。已经提交的模板删除任务不能被回滚撤销，必须由 Worker 完成或人工按任务记录核对；已生成报价文件不保存在服务端，不涉及额外文件清理。
 
 ### 14.7 2026-10-31 页面顺序、逐商品加价率与 PDF 表头增量验收
 
-- Admin 页面顺序调整为模板 → 报价抬头 → 报价设置 → 品类 → 商品选择与顺序 → 价格预览与导出；批量 markup 修改后初始化当前商品行，单行仍可独立微调。
+- Admin 页面顺序调整为模板 → 报价设置 → 品类 → 商品选择与顺序 → 价格预览与导出；模板抬头固定，币种选项读取字典；批量 markup 修改后初始化当前商品行，单行仍可独立微调。
 - Preview 返回每件商品实际 markup；Export 使用同一逐商品映射重新计算价格并写入模板。混合 markup 时 `[MARKUP]` 显示 `Per product`，全部数值相同时显示实际百分比。
 - `productMarkups` 仅允许已选 `productIds`、禁止重复，并由服务端用 Decimal 逐件计算；旧请求不带该字段时继续回退批量 markup。
 - Validation 13/13、Admin 184/184、Worker 68/68、Quotation API 模块 105/105 通过；根 `pnpm typecheck`、`pnpm lint`、API/Worker/Admin build 通过。

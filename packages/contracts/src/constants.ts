@@ -603,21 +603,12 @@ export type ContentPageType = (typeof CONTENT_PAGE_TYPES)[number];
 export const QUOTE_TEMPLATE_TYPES = ['product_quote', 'pi', 'calculator_quote'] as const;
 export type QuoteTemplateType = (typeof QUOTE_TEMPLATE_TYPES)[number];
 
-/** Server-owned currency allow-list for the dynamic quotation export (docs/36 §3.4). */
-export const QUOTATION_EXPORT_CURRENCIES = [
-  'USD',
-  'EUR',
-  'GBP',
-  'CAD',
-  'AUD',
-  'JPY',
-  'CNY',
-] as const;
-export type QuotationExportCurrency = (typeof QUOTATION_EXPORT_CURRENCIES)[number];
+/** Stable currency code sourced from the enabled `dictionary.currency` items. */
+export type QuotationExportCurrency = string;
 
 export const QUOTATION_EXPORT_LIMITS = {
   maxProducts: 200,
-  maxImageBytes: 8 * 1024 * 1024,
+  maxImageBytes: 10 * 1024 * 1024,
   maxTotalImageBytes: 40 * 1024 * 1024,
   imageReadConcurrency: 4,
   maxImagePixels: 20_000_000,

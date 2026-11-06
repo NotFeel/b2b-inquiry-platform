@@ -59,6 +59,8 @@ describe('assertQuotationExchangeRate', () => {
   });
 
   it('rejects a currency outside the server allow-list', () => {
-    expect(() => assertQuotationExchangeRate('BTC', '1')).toThrow(QuotationCalculationError);
+    expect(() => assertQuotationExchangeRate('BTC', '1', ['USD'])).toThrow(
+      QuotationCalculationError,
+    );
   });
 });

@@ -50,16 +50,10 @@ function input(
   return {
     templateBuffer: TEMPLATE,
     sheetName: 'Quotation',
-    headerRow: 7,
-    itemStartRow: 8,
+    headerRow: 6,
+    itemStartRow: 7,
     fieldMapping: FIELD_MAPPING,
-    header: {
-      companyName: 'Example Ltd.',
-      contactPerson: 'Jerry',
-      email: 'sales@example.com',
-      phone: '+86 190 7428 9250',
-      quotationTitle: 'October Price List',
-    },
+    material: 'Stress-Relief Toys',
     currencyCode: 'USD',
     markupPercent: '15',
     exchangeRate: '0.1385',
@@ -100,64 +94,63 @@ describe('buildQuotationWorkbookFromTemplate', () => {
     );
     const worksheet = await readWorkbook(buffer);
 
-    expect(worksheet.getCell('A1').value).toBe('Example Ltd.');
+    expect(worksheet.getCell('A1').value).toBe('Chongqing Wuxuan E-Commerce Co., Ltd.');
     expect(worksheet.getCell('A2').value).toBe('Contact person: Jerry');
-    expect(worksheet.getCell('A3').value).toBe('Email: sales@example.com');
+    expect(worksheet.getCell('A3').value).toBe('Email: ydj2265766290@qq.com');
     expect(worksheet.getCell('A4').value).toBe('Phone/WhatsApp/WeChat: +86 190 7428 9250');
-    expect(worksheet.getCell('A5').value).toBe('October Price List');
-    expect(String(worksheet.getCell('A6').value)).toContain('Currency: USD');
-    expect(String(worksheet.getCell('A6').value)).toContain('Exchange rate: 0.1385 USD');
-    expect(String(worksheet.getCell('A6').value)).toContain('Markup: 15%');
-    expect(worksheet.getCell('D7').value).toBe('Unit Price (USD)');
+    expect(worksheet.getCell('A5').value).toBe(
+      'Squishy Stress-Relief Toys (Stress-Relief Toys Series) Price List',
+    );
+    expect(worksheet.getCell('D6').value).toBe('Unit Price (USD)');
 
-    expect(worksheet.getCell('A8').value).toBe("'+SKU-001");
-    expect(worksheet.getCell('B8').value).toBeNull();
-    expect(worksheet.getCell('C8').value).toBe('\'=HYPERLINK("https://invalid")');
-    expect(worksheet.getCell('D8').value).toBe(15.93);
-    expect(worksheet.getCell('D8').numFmt).toBe('0.00');
-    expect(worksheet.getCell('E8').value).toBe(4);
-    expect(worksheet.getCell('F8').value).toBe('41 × 30 × 30 cm');
-    expect(worksheet.getCell('G8').value).toBe(12.5);
-    expect(worksheet.getCell('G8').numFmt).toBe('0.000');
+    expect(worksheet.getCell('A7').value).toBe("'+SKU-001");
+    expect(worksheet.getCell('B7').value).toBeNull();
+    expect(worksheet.getCell('C7').value).toBe('\'=HYPERLINK("https://invalid")');
+    expect(worksheet.getCell('D7').value).toBe(15.93);
+    expect(worksheet.getCell('D7').numFmt).toBe('0.00');
+    expect(worksheet.getCell('E7').value).toBe(4);
+    expect(worksheet.getCell('F7').value).toBe('41 × 30 × 30 cm');
+    expect(worksheet.getCell('G7').value).toBe(12.5);
+    expect(worksheet.getCell('G7').numFmt).toBe('0.000');
 
-    expect(worksheet.getCell('A9').value).toBe('SKU-002');
-    expect(worksheet.getCell('C9').value).toBe('Product 2');
-    expect(worksheet.getCell('D9').value).toBe(115);
-    expect(worksheet.getCell('E9').value).toBe(5);
-    expect(worksheet.getCell('G9').value).toBe(13.75);
+    expect(worksheet.getCell('A8').value).toBe('SKU-002');
+    expect(worksheet.getCell('C8').value).toBe('Product 2');
+    expect(worksheet.getCell('D8').value).toBe(115);
+    expect(worksheet.getCell('E8').value).toBe(5);
+    expect(worksheet.getCell('G8').value).toBe(13.75);
     const productImageRows = worksheet
       .getImages()
       .map((image) => image.range.tl.nativeRow + 1)
-      .filter((row) => row >= 8);
-    expect(productImageRows).toEqual([8, 9]);
+      .filter((row) => row >= 7);
+    expect(productImageRows).toEqual([7, 8]);
 
-    expect(source.rowCount).toBe(12);
-    expect(worksheet.getRow(8).height).toBe(84);
-    expect(worksheet.getCell('A8').border).toEqual(source.getCell('A8').border);
-    expect(worksheet.getCell('A8').alignment).toMatchObject({
+    expect(source.rowCount).toBe(11);
+    expect(worksheet.getRow(7).height).toBe(84);
+    expect(worksheet.getCell('A7').border).toEqual(source.getCell('A7').border);
+    expect(worksheet.getCell('A7').alignment).toMatchObject({
       horizontal: 'center',
       vertical: 'middle',
     });
     expect(worksheet.model.merges).toEqual(
-      expect.arrayContaining(['A1:G1', 'A2:G2', 'A3:G3', 'A4:G4', 'A5:G5', 'A6:G6']),
+      expect.arrayContaining(['A1:G1', 'A2:G2', 'A3:G3', 'A4:G4', 'A5:G5']),
     );
-    expect(worksheet.autoFilter).toBe('A7:G9');
-    expect(worksheet.pageSetup.printArea).toBe('A1:G11');
-    expect(worksheet.pageSetup.printTitlesRow).toBe('1:7');
-    expect(worksheet.getCell('A10').value).toBeNull();
-    expect(String(worksheet.getCell('A11').value)).toContain('Prices are quoted in USD.');
-    expect(worksheet.model.merges).toContain('A11:G11');
+    expect(worksheet.autoFilter).toBe('A6:G8');
+    expect(worksheet.pageSetup.printArea).toBe('A1:G10');
+    expect(worksheet.pageSetup.printTitlesRow).toBe('1:6');
+    expect(worksheet.getCell('A9').value).toBeNull();
+    expect(String(worksheet.getCell('A10').value)).toContain('Prices are quoted in USD.');
+    expect(worksheet.model.merges).toContain('A10:G10');
     expect(worksheet.views[0]).toMatchObject({
       state: 'frozen',
-      ySplit: 7,
-      topLeftCell: 'A8',
+      ySplit: 6,
+      topLeftCell: 'A7',
     });
   });
 
   it.each([1, 200])('resizes the data area safely for %i products', async (count) => {
     const products = Array.from({ length: count }, (_, index) => product(index + 1));
     const worksheet = await readWorkbook(await buildQuotationWorkbookFromTemplate(input(products)));
-    const lastProductRow = 7 + count;
+    const lastProductRow = 6 + count;
     const templateImageCount = (await readWorkbook(TEMPLATE)).getImages().length;
 
     expect(worksheet.getCell(`A${lastProductRow}`).value).toBe(
@@ -165,7 +158,7 @@ describe('buildQuotationWorkbookFromTemplate', () => {
     );
     expect(worksheet.getCell(`D${lastProductRow}`).value).toBe(count === 1 ? 15.93 : 115);
     expect(worksheet.getImages()).toHaveLength(templateImageCount + count);
-    expect(worksheet.autoFilter).toBe(`A7:G${lastProductRow}`);
+    expect(worksheet.autoFilter).toBe(`A6:G${lastProductRow}`);
     expect(worksheet.pageSetup.printArea).toBe(`A1:G${lastProductRow + 2}`);
     expect(worksheet.getCell(`A${lastProductRow + 1}`).value).toBeNull();
     expect(String(worksheet.getCell(`A${lastProductRow + 2}`).value)).toContain(
@@ -175,11 +168,11 @@ describe('buildQuotationWorkbookFromTemplate', () => {
 
   it('fills products below a dynamically detected Product SKU header without RATE or MARKUP', async () => {
     const templateBuffer = await workbookBuffer([
-      ['[COMPANY NAME]'],
-      ['Contact person: [CONTACT PERSON]'],
-      ['Email: [EMAIL]'],
-      ['Phone: [PHONE]'],
-      ['[QUOTATION TITLE]'],
+      ['Example Company Ltd.'],
+      ['Contact person: Sales'],
+      ['Email: sales@example.com'],
+      ['Phone: +86 190 7428 9250'],
+      ['Squishy Stress-Relief Toys ([MATERIAL] Series) Price List'],
       [
         'Product SKU',
         'Product Image',
@@ -203,7 +196,10 @@ describe('buildQuotationWorkbookFromTemplate', () => {
       ),
     );
 
-    expect(worksheet.getCell('A1').value).toBe('Example Ltd.');
+    expect(worksheet.getCell('A1').value).toBe('Example Company Ltd.');
+    expect(worksheet.getCell('A5').value).toBe(
+      'Squishy Stress-Relief Toys (Stress-Relief Toys Series) Price List',
+    );
     expect(worksheet.getCell('D6').value).toBe('Unit Price (USD)');
     expect(worksheet.getCell('A7').value).toBe('SKU-001');
     expect(worksheet.getCell('A8').value).toBe('SKU-002');

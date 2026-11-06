@@ -7,7 +7,7 @@ import {
   type QuotationExportPreviewInput,
   type QuotationExportProductListQueryInput,
 } from '@b2b/validation';
-import { ERROR_CODES } from '@b2b/contracts';
+import { ERROR_CODES, resolveAdminLocale } from '@b2b/contracts';
 import type { Response } from 'express';
 import {
   CurrentActor,
@@ -36,8 +36,8 @@ export class QuotationExportController {
 
   @RequirePermissions(Permission.quotationExportRead)
   @Get('config')
-  config() {
-    return { data: this.quotationExport.config() };
+  async config(@Query('locale') locale?: string) {
+    return { data: await this.quotationExport.config(resolveAdminLocale(locale)) };
   }
 
   @RequirePermissions(Permission.quotationExportRead)
