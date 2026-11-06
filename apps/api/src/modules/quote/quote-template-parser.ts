@@ -75,15 +75,7 @@ const HEADER_DEFINITIONS: readonly HeaderDefinition[] = [
 ] as const;
 
 const REQUIRED_FIELDS_BY_TYPE: Record<QuoteTemplateType, readonly QuoteTemplateFieldKey[]> = {
-  product_quote: [
-    'product.sku',
-    'product.image',
-    'product.name',
-    'product.price_cny',
-    'product.carton_qty',
-    'product.carton_size_cm',
-    'product.carton_weight_kg',
-  ],
+  product_quote: ['product.sku', 'product.image', 'product.name', 'product.price_cny'],
   pi: ['product.sku', 'product.name', 'product.price_cny'],
   calculator_quote: [
     'product.sku',

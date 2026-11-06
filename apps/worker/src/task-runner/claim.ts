@@ -260,6 +260,10 @@ function quotePayload(row: QuoteExportRow): QuoteExportJobPayload {
       tag: typeof snapshot.tag === 'string' ? snapshot.tag : undefined,
       search: typeof snapshot.search === 'string' ? snapshot.search : undefined,
       piDocumentId: typeof snapshot.piDocumentId === 'string' ? snapshot.piDocumentId : undefined,
+      productQuotation:
+        snapshot.exportKind === 'product-quotation'
+          ? { input: snapshot.input }
+          : undefined,
     },
   };
 }

@@ -1,4 +1,14 @@
-import { Body, Controller, Get, Post, Query, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+  Res,
+} from '@nestjs/common';
 import {
   quotationExportPreviewSchema,
   quotationExportProductListQuerySchema,
@@ -9,6 +19,7 @@ import {
 } from '@b2b/validation';
 import { ERROR_CODES, resolveAdminLocale } from '@b2b/contracts';
 import type { Response } from 'express';
+import { pipeline } from 'node:stream/promises';
 import {
   CurrentActor,
   Permission,
@@ -76,28 +87,51 @@ export class QuotationExportController {
 
   @RequirePermissions(Permission.quotationExportCreate)
   @Post('export')
+  @HttpCode(202)
   async export(
     @Body(zodPipe(quotationExportSchema)) body: QuotationExportInput,
     @CurrentActor() actor: AuthenticatedActor,
     @RequestId() requestId: string,
+  ) {
+    await this.assertCreateRateLimit(actor, 'export', EXPORT_REQUESTS_PER_WINDOW);
+    return {
+      data: await this.quotationExport.requestExport(
+        body,
+        this.canExportUnpublished(actor),
+        actor.id,
+        requestId,
+      ),
+    };
+  }
+
+  @RequirePermissions(Permission.quotationExportRead)
+  @Get('jobs/:id')
+  async exportJob(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentActor() actor: AuthenticatedActor,
+  ) {
+    return { data: await this.quotationExport.getExportJob(id, actor.id) };
+  }
+
+  @RequirePermissions(Permission.quotationExportRead)
+  @Get('jobs/:id/download')
+  async downloadExportJob(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentActor() actor: AuthenticatedActor,
+    @RequestId() requestId: string,
     @Res() response: Response,
   ): Promise<void> {
-    await this.assertCreateRateLimit(actor, 'export', EXPORT_REQUESTS_PER_WINDOW);
-    const file = await this.quotationExport.export(
-      body,
-      this.canExportUnpublished(actor),
-      actor.id,
-      requestId,
-    );
+    const file = await this.quotationExport.getExportJobDownload(id, actor.id, requestId);
     response.setHeader('Content-Type', QUOTATION_XLSX_MIME);
     response.setHeader(
       'Content-Disposition',
       `attachment; filename="${file.filename}"; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
     );
+    response.setHeader('Content-Length', String(file.sizeBytes));
     response.setHeader('Cache-Control', 'private, no-store');
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('X-Request-Id', requestId);
-    response.send(file.buffer);
+    await pipeline(file.stream, response);
   }
 
   private async assertCreateRateLimit(

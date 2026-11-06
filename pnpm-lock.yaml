@@ -102,6 +102,9 @@ importers:
       '@b2b/product-import':
         specifier: workspace:*
         version: link:../../packages/product-import
+      '@b2b/quotation-workbook':
+        specifier: workspace:*
+        version: link:../../packages/quotation-workbook
       '@b2b/validation':
         specifier: workspace:*
         version: link:../../packages/validation
@@ -242,6 +245,12 @@ importers:
       '@b2b/product-import':
         specifier: workspace:*
         version: link:../../packages/product-import
+      '@b2b/quotation-workbook':
+        specifier: workspace:*
+        version: link:../../packages/quotation-workbook
+      '@b2b/validation':
+        specifier: workspace:*
+        version: link:../../packages/validation
       decimal.js:
         specifier: 10.6.0
         version: 10.6.0
@@ -376,6 +385,28 @@ importers:
       vitest:
         specifier: 3.2.7
         version: 3.2.7(@types/node@24.19.2)(jiti@2.7.0)(supports-color@10.2.2)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1)
+
+  packages/quotation-workbook:
+    dependencies:
+      '@b2b/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      exceljs:
+        specifier: 4.4.0
+        version: 4.4.0
+      jszip:
+        specifier: 3.10.2
+        version: 3.10.2
+    devDependencies:
+      '@b2b/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
 
   packages/tsconfig: {}
 

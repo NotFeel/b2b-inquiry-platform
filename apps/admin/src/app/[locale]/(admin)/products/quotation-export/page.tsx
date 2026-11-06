@@ -50,17 +50,22 @@ const EMPTY_PRODUCT_LIST: QuotationExportProductList = {
   limitExceeded: false,
   maxProducts: 200,
 };
+const ACTIVE_EXPORT_JOB_KEY = 'quotation-export-active-job';
 
-function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  link.rel = 'noopener';
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+function rememberActiveExportJob(jobId: string): void {
+  try {
+    window.localStorage.setItem(ACTIVE_EXPORT_JOB_KEY, jobId);
+  } catch {
+    // The current page can still poll and download if browser storage is disabled.
+  }
+}
+
+function clearActiveExportJob(): void {
+  try {
+    window.localStorage.removeItem(ACTIVE_EXPORT_JOB_KEY);
+  } catch {
+    // Storage cleanup must not block a completed file download.
+  }
 }
 
 /**
@@ -125,6 +130,46 @@ export default function QuotationExportPage() {
 
   const productLoadSequence = useRef(0);
   const previewSequence = useRef(0);
+  const resumedExportRef = useRef(false);
+
+  const waitForExportJob = useCallback(
+    async (jobId: string): Promise<void> => {
+      while (true) {
+        await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+        let job: Awaited<ReturnType<typeof quotationExportApi.job>>;
+        try {
+          job = await quotationExportApi.job(jobId);
+        } catch (error) {
+          if (error instanceof AdminApiError && error.status < 500) {
+            if ([401, 403, 404].includes(error.status)) clearActiveExportJob();
+            throw error;
+          }
+          await new Promise((resolve) => window.setTimeout(resolve, 3_000));
+          continue;
+        }
+        if (
+          job.status === 'FAILED' ||
+          job.status === 'CANCEL_REQUESTED' ||
+          job.status === 'CANCELLED'
+        ) {
+          clearActiveExportJob();
+          throw new AdminApiError(
+            422,
+            job.errorCode ?? 'INTERNAL_ERROR',
+            t('quotationExport.exportFailed'),
+          );
+        }
+        if (job.status === 'SUCCEEDED') {
+          if (!job.downloadReady) {
+            clearActiveExportJob();
+            throw new AdminApiError(410, 'JOB_NOT_FOUND', t('quotationExport.exportFailed'));
+          }
+          return;
+        }
+      }
+    },
+    [t],
+  );
 
   const loadConfig = useCallback(async () => {
     if (!canRead) return;
@@ -144,11 +189,7 @@ export default function QuotationExportPage() {
           markupPercent: loaded.defaultMarkupPercent,
           currencyCode,
           exchangeRate:
-            currencyCode === 'CNY'
-              ? '1'
-              : currentCurrencyEnabled
-                ? current.exchangeRate
-                : '',
+            currencyCode === 'CNY' ? '1' : currentCurrencyEnabled ? current.exchangeRate : '',
         };
       });
       setConfigError(null);
@@ -216,6 +257,34 @@ export default function QuotationExportPage() {
   useEffect(() => {
     void loadTemplates();
   }, [loadTemplates]);
+
+  useEffect(() => {
+    if (!canRead || resumedExportRef.current) return;
+    resumedExportRef.current = true;
+    let jobId: string | null = null;
+    try {
+      jobId = window.localStorage.getItem(ACTIVE_EXPORT_JOB_KEY);
+    } catch {
+      return;
+    }
+    if (!jobId || !/^[0-9a-f-]{36}$/i.test(jobId)) return;
+
+    setExporting(true);
+    void waitForExportJob(jobId)
+      .then(() => {
+        clearActiveExportJob();
+        window.location.assign(quotationExportApi.downloadUrl(jobId));
+      })
+      .catch((error: unknown) => {
+        setExportError(
+          error instanceof AdminApiError
+            ? translateError(locale, error.code)
+            : t('quotationExport.exportFailed'),
+        );
+        setExportRequestId(error instanceof AdminApiError ? (error.requestId ?? null) : null);
+      })
+      .finally(() => setExporting(false));
+  }, [canRead, locale, t, waitForExportJob]);
 
   useEffect(() => {
     const sequence = ++productLoadSequence.current;
@@ -495,8 +564,11 @@ export default function QuotationExportPage() {
     setExportError(null);
     setExportRequestId(null);
     try {
-      const file = await quotationExportApi.export(request);
-      downloadBlob(file.blob, file.filename);
+      const queued = await quotationExportApi.export(request);
+      rememberActiveExportJob(queued.jobId);
+      await waitForExportJob(queued.jobId);
+      clearActiveExportJob();
+      window.location.assign(quotationExportApi.downloadUrl(queued.jobId));
       setConfirmOpen(false);
       toast.success(t('quotationExport.exportSuccess'));
     } catch (error) {

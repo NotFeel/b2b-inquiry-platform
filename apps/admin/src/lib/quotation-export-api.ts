@@ -8,12 +8,21 @@ import type {
   QuotationExportPreviewRequest,
   QuotationExportTemplateOption,
 } from '@b2b/contracts';
-import { adminApi, downloadAdminFilePost, type AdminFileDownload } from './admin-api';
+import { adminApi, buildApiUrl } from './admin-api';
 
 export type QuotationProductListQuery = {
   categoryId: string;
   includeDescendants: boolean;
   locale: string;
+};
+
+export type QuotationExportJob = {
+  jobId: string;
+  status: 'QUEUED' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED' | 'CANCEL_REQUESTED' | 'CANCELLED';
+  errorCode: string | null;
+  productCount: number;
+  downloadReady: boolean;
+  updatedAt: string;
 };
 
 export const quotationExportApi = {
@@ -52,7 +61,29 @@ export const quotationExportApi = {
     return response.data;
   },
 
-  export(input: QuotationExportRequest): Promise<AdminFileDownload> {
-    return downloadAdminFilePost('/admin/quotation-export/export', input);
+  async export(
+    input: QuotationExportRequest,
+  ): Promise<Pick<QuotationExportJob, 'jobId' | 'status' | 'productCount'>> {
+    const response = await adminApi.post<{
+      data: Pick<QuotationExportJob, 'jobId' | 'status' | 'productCount'>;
+    }>('/admin/quotation-export/export', input);
+    return response.data;
+  },
+
+  async job(jobId: string): Promise<QuotationExportJob> {
+    const response = await adminApi.get<{ data: QuotationExportJob }>(
+      `/admin/quotation-export/jobs/${encodeURIComponent(jobId)}`,
+    );
+    return response.data;
+  },
+
+  downloadUrl(jobId: string): string {
+    // Let the browser stream the attachment directly. Fetching it as a Blob
+    // would keep the entire generated workbook in Admin memory.
+    return buildApiUrl(
+      `/admin/quotation-export/jobs/${encodeURIComponent(jobId)}/download`,
+      undefined,
+      '',
+    );
   },
 };

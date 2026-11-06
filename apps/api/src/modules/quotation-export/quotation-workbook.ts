@@ -6,7 +6,7 @@ export interface QuotationWorkbookProduct {
   sku: string;
   englishName: string;
   unitPrice: string;
-  cartonQuantity: number;
+  cartonQuantity: number | null;
   cartonDimensions: string;
   cartonGrossWeightKg: string;
   size?: string;

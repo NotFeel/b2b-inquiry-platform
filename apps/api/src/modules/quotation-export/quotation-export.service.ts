@@ -39,8 +39,10 @@ import { detectQuotationImage } from './quotation-image';
 import {
   QuotationTemplateWorkbookError,
   buildQuotationWorkbookFromTemplate,
-} from './quotation-template-workbook';
-import { quotationFilename, type QuotationWorkbookProduct } from './quotation-workbook';
+  quotationFilename,
+  type QuotationWorkbookProduct,
+} from '@b2b/quotation-workbook';
+import type { Readable } from 'node:stream';
 
 type ProductRow = Prisma.ProductGetPayload<{
   include: {
@@ -56,7 +58,7 @@ interface ValidatedProduct {
   englishName: string;
   costCny: string;
   markupPercent: string;
-  cartonQuantity: number;
+  cartonQuantity: number | null;
   cartonDimensions: string;
   cartonGrossWeightKg: string;
   size: string;
@@ -377,6 +379,134 @@ export class QuotationExportService {
     return { buffer, filename: quotationFilename(prepared.currencyCode, generatedAt) };
   }
 
+  async requestExport(
+    input: QuotationExportInput,
+    canExportUnpublished: boolean,
+    actorId: string,
+    requestId: string,
+  ): Promise<{ jobId: string; status: 'QUEUED'; productCount: number }> {
+    const template = await this.loadProductQuoteTemplate(input.templateId);
+    const prepared = await this.prepare({ ...input, ...input.pricing }, canExportUnpublished);
+    if (prepared.errors.length > 0) throw this.validationError(prepared.errors);
+    if (prepared.products.length === 0) {
+      throw ApiError.validation('Select at least one product.', {
+        productIds: 'quotation.validation.noProducts',
+      });
+    }
+    await this.readAndInspectTemplate(template);
+    await this.selectedCategoryMaterial(input.categoryId);
+
+    const now = new Date();
+    const job = await this.prisma.$transaction(async (transaction) => {
+      const created = await transaction.quoteExportJob.create({
+        data: {
+          templateId: template.id,
+          templateVersion: template.version,
+          requestedById: actorId,
+          filterSnapshot: {
+            exportKind: 'product-quotation',
+            input,
+          } as Prisma.InputJsonValue,
+          productCount: prepared.products.length,
+          status: 'QUEUED',
+          expiresAt: new Date(now.getTime() + 30 * 86_400_000),
+        },
+        select: { id: true, status: true, productCount: true },
+      });
+      await transaction.auditLog.create({
+        data: {
+          actorId,
+          action: 'QUOTATION_EXCEL_EXPORT_QUEUED',
+          entityType: 'quote_export_job',
+          entityId: created.id,
+          requestId,
+          metadata: {
+            templateId: template.id,
+            templateVersion: template.version,
+            categoryId: input.categoryId,
+            selectedProductCount: prepared.products.length,
+            currencyCode: input.pricing.currencyCode,
+          },
+        },
+      });
+      return created;
+    });
+    return { jobId: job.id, status: 'QUEUED', productCount: job.productCount };
+  }
+
+  async getExportJob(id: string, actorId: string) {
+    const job = await this.prisma.quoteExportJob.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        requestedById: true,
+        status: true,
+        errorCode: true,
+        productCount: true,
+        fileKey: true,
+        purgeState: true,
+        expiresAt: true,
+        updatedAt: true,
+      },
+    });
+    if (!job || job.requestedById !== actorId) {
+      throw new ApiError(ERROR_CODES.jobNotFound, 'Export job not found.');
+    }
+    return {
+      jobId: job.id,
+      status: job.status,
+      errorCode: job.errorCode,
+      productCount: job.productCount,
+      downloadReady:
+        job.status === 'SUCCEEDED' &&
+        job.purgeState === 'NONE' &&
+        job.fileKey !== null &&
+        (job.expiresAt === null || job.expiresAt.getTime() > Date.now()),
+      updatedAt: job.updatedAt.toISOString(),
+    };
+  }
+
+  async getExportJobDownload(
+    id: string,
+    actorId: string,
+    requestId: string,
+  ): Promise<{ stream: Readable; filename: string; sizeBytes: number }> {
+    const job = await this.prisma.quoteExportJob.findUnique({ where: { id } });
+    if (
+      !job ||
+      job.requestedById !== actorId ||
+      job.status !== 'SUCCEEDED' ||
+      job.purgeState !== 'NONE' ||
+      !job.fileKey ||
+      !job.fileKey.startsWith('quote-exports/product-quotation/') ||
+      (job.expiresAt !== null && job.expiresAt.getTime() <= Date.now())
+    ) {
+      throw new ApiError(ERROR_CODES.jobNotFound, 'Export file not found.');
+    }
+    const metadata = await this.storage.stat(job.fileKey);
+    if (!metadata)
+      throw new ApiError(ERROR_CODES.storageUnavailable, 'Export file is unavailable.');
+    await this.prisma.auditLog.create({
+      data: {
+        actorId,
+        action: 'QUOTATION_EXCEL_EXPORT_DOWNLOADED',
+        entityType: 'quote_export_job',
+        entityId: job.id,
+        requestId,
+        metadata: { fileSizeBytes: metadata.sizeBytes },
+      },
+    });
+    const snapshot = (job.filterSnapshot as Record<string, unknown> | null) ?? null;
+    const nestedInput = snapshot?.input as Record<string, unknown> | undefined;
+    const pricing = nestedInput?.pricing as Record<string, unknown> | undefined;
+    const currency = typeof pricing?.currencyCode === 'string' ? pricing.currencyCode : 'CNY';
+    return {
+      stream: this.storage.createReadStream(job.fileKey),
+      filename: quotationFilename(currency, job.createdAt),
+      sizeBytes: metadata.sizeBytes,
+    };
+  }
+
   private async loadProductQuoteTemplate(templateId: string): Promise<ProductQuoteTemplate> {
     const template = await this.prisma.quoteTemplate.findUnique({ where: { id: templateId } });
     const report = (template?.validationReport as Record<string, unknown> | null) ?? null;
@@ -561,7 +691,7 @@ export class QuotationExportService {
         englishName: this.englishName(product) ?? '',
         costCny,
         markupPercent,
-        cartonQuantity: product.cartonQuantity ?? 0,
+        cartonQuantity: product.cartonQuantity,
         cartonDimensions: this.cartonDimensions(product),
         cartonGrossWeightKg: product.cartonWeightKg?.toString() ?? '',
         size: this.productSize(product),
@@ -644,7 +774,7 @@ export class QuotationExportService {
       }
     }
 
-    if (product.cartonQuantity === null || product.cartonQuantity <= 0) {
+    if (product.cartonQuantity !== null && product.cartonQuantity <= 0) {
       issues.push(this.issue(product, 'cartonQuantity', 'INVALID_CARTON_QUANTITY'));
     }
     const dimensions = [product.cartonLengthCm, product.cartonWidthCm, product.cartonHeightCm];

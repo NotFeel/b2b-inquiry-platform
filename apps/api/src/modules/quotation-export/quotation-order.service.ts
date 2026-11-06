@@ -684,9 +684,6 @@ export class QuotationOrderService {
         override: string | null | undefined,
         fallback: string | number | Prisma.Decimal | null | undefined,
       ) => (override === undefined ? (fallback?.toString() ?? null) : override);
-      const defaultCartons = product.cartonQuantity
-        ? new Decimal(request.quantity).div(product.cartonQuantity).ceil().toNumber()
-        : null;
       return {
         product,
         categorySnapshot: terminalCategorySnapshot(product.categoryId, categorySnapshots),
@@ -696,10 +693,9 @@ export class QuotationOrderService {
           productName: translation?.name ?? product.sku,
           description: translation?.description ?? null,
           costCny: product.priceCny!.toString(),
-          quantity: request.quantity,
           markupPercent: request.markupPercent,
-          cartonCount: request.cartonCount ?? defaultCartons,
-          unitsPerCarton: request.unitsPerCarton ?? product.cartonQuantity,
+          cartonCount: request.cartonCount,
+          unitsPerCarton: product.cartonQuantity,
           cartonLengthCm: value(request.cartonLengthCm, product.cartonLengthCm),
           cartonWidthCm: value(request.cartonWidthCm, product.cartonWidthCm),
           cartonHeightCm: value(request.cartonHeightCm, product.cartonHeightCm),

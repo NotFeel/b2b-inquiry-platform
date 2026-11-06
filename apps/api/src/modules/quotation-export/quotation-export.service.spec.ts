@@ -130,9 +130,11 @@ function setup(rows: ReturnType<typeof product> | ReturnType<typeof product>[] =
     },
     category: {
       findMany: vi.fn().mockResolvedValue(firstRow.category ? [firstRow.category] : []),
-      findUnique: vi.fn().mockResolvedValue(
-        firstRow.category ? { ...firstRow.category, code: 'test-category' } : null,
-      ),
+      findUnique: vi
+        .fn()
+        .mockResolvedValue(
+          firstRow.category ? { ...firstRow.category, code: 'test-category' } : null,
+        ),
     },
     dictionaryItem: {
       findFirst: vi.fn().mockResolvedValue({ code: 'USD' }),
@@ -293,12 +295,7 @@ describe('QuotationExportService', () => {
 
     expect(result.items).toEqual([]);
     expect(new Set(result.errors.map((issue) => issue.code))).toEqual(
-      new Set([
-        'MISSING_COST',
-        'MISSING_ENGLISH_NAME',
-        'MISSING_PRIMARY_IMAGE',
-        'INVALID_CARTON_QUANTITY',
-      ]),
+      new Set(['MISSING_COST', 'MISSING_ENGLISH_NAME', 'MISSING_PRIMARY_IMAGE']),
     );
     const serialized = JSON.stringify(result);
     expect(serialized).not.toContain('priceCny');

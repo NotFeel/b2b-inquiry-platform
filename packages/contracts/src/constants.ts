@@ -368,6 +368,7 @@ export const ERROR_CODES = {
   quotationExportValidationFailed: 'QUOTATION_EXPORT_VALIDATION_FAILED',
   quotationExportPricingInvalid: 'QUOTATION_EXPORT_PRICING_INVALID',
   quotationExportImageUnavailable: 'QUOTATION_EXPORT_IMAGE_UNAVAILABLE',
+  quotationExportImageSetTooLarge: 'QUOTATION_EXPORT_IMAGE_SET_TOO_LARGE',
   quotationExportSnapshotMissing: 'QUOTATION_EXPORT_SNAPSHOT_MISSING',
   quoteTemplateInUse: 'QUOTE_TEMPLATE_IN_USE',
   excelPdfDisabled: 'EXCEL_PDF_DISABLED',
@@ -612,7 +613,9 @@ export const QUOTATION_EXPORT_LIMITS = {
   // The product-quote template export has produced legitimate source image
   // sets above 40 MiB in production. Keep its higher cap isolated from the
   // calculator/order snapshot export cap below.
-  maxProductQuoteTotalImageBytes: 64 * 1024 * 1024,
+  // Product quote work now runs on the isolated, serial Worker (4 GiB in the
+  // production compose profile). Leave headroom for ExcelJS and ZIP buffers.
+  maxProductQuoteTotalImageBytes: 256 * 1024 * 1024,
   maxTotalImageBytes: 40 * 1024 * 1024,
   imageReadConcurrency: 4,
   maxImagePixels: 20_000_000,

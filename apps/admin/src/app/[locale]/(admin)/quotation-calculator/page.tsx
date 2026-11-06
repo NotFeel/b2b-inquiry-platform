@@ -28,10 +28,8 @@ function SimpleField({ label, children }: { label: string; children: ReactNode }
 
 type ItemDraft = {
   productId: string;
-  quantity: string;
   markupPercent: string;
   cartonCount: string;
-  unitsPerCarton: string;
   cartonLengthCm: string;
   cartonWidthCm: string;
   cartonHeightCm: string;
@@ -40,10 +38,8 @@ type ItemDraft = {
 type FeeDraft = { feeTypeCode: string; name: string; amountCny: string };
 const blankItem = (): ItemDraft => ({
   productId: '',
-  quantity: '1',
   markupPercent: '20',
   cartonCount: '',
-  unitsPerCarton: '',
   cartonLengthCm: '',
   cartonWidthCm: '',
   cartonHeightCm: '',
@@ -197,11 +193,6 @@ export default function QuotationCalculatorPage() {
         item.cartonWidthCm = product.packaging.cartonWidthCm ?? '';
         item.cartonHeightCm = product.packaging.cartonHeightCm ?? '';
         item.cartonGrossWeightKg = product.packaging.cartonGrossWeightKg ?? '';
-        item.unitsPerCarton = product.packaging.unitsPerCarton?.toString() ?? '';
-        item.cartonCount = product.packaging.unitsPerCarton
-          ? String(Math.ceil(1 / product.packaging.unitsPerCarton))
-          : '';
-        item.cartonCount = '';
         nextItems.push(item);
       }
       return nextItems;
@@ -256,10 +247,8 @@ export default function QuotationCalculatorPage() {
     deliveryFeeCny: deliveryFee,
     items: items.map((item) => ({
       productId: item.productId,
-      quantity: item.quantity,
       markupPercent: item.markupPercent,
-      cartonCount: item.cartonCount ? Number(item.cartonCount) : null,
-      unitsPerCarton: item.unitsPerCarton ? Number(item.unitsPerCarton) : null,
+      cartonCount: item.cartonCount ? Number(item.cartonCount) : 0,
       cartonLengthCm: item.cartonLengthCm || null,
       cartonWidthCm: item.cartonWidthCm || null,
       cartonHeightCm: item.cartonHeightCm || null,
@@ -268,7 +257,47 @@ export default function QuotationCalculatorPage() {
     fees: fees.map((fee) => ({ ...fee })),
   });
 
+  const validateItemQuantities = (): boolean => {
+    if (items.length === 0) {
+      setError(t('quotationCenter.itemsRequired'));
+      return false;
+    }
+    const invalidCarton = items.find((item) => {
+      const count = Number(item.cartonCount);
+      return (
+        !/^\d+$/.test(item.cartonCount) ||
+        !Number.isSafeInteger(count) ||
+        count < 1 ||
+        count > 100000
+      );
+    });
+    if (invalidCarton) {
+      const product = chosenProducts[invalidCarton.productId];
+      setError(
+        t('quotationCenter.cartonCountRequiredForSku', {
+          sku: product?.sku ?? invalidCarton.productId,
+        }),
+      );
+      return false;
+    }
+    const missingUnitsPerCarton = items.find((item) => {
+      const quantity = chosenProducts[item.productId]?.packaging.unitsPerCarton;
+      return quantity === null || quantity === undefined || quantity <= 0;
+    });
+    if (missingUnitsPerCarton) {
+      const product = chosenProducts[missingUnitsPerCarton.productId];
+      setError(
+        t('quotationCenter.unitsPerCartonMissingForSku', {
+          sku: product?.sku ?? missingUnitsPerCarton.productId,
+        }),
+      );
+      return false;
+    }
+    return true;
+  };
+
   const runPreview = async () => {
+    if (!validateItemQuantities()) return;
     const input = buildInput();
     if (!isValidFreightRate(input.cbmRatePerCbm) || !isValidFreightRate(input.kgRatePerKg)) {
       setPreviewRatesInvalid(true);
@@ -299,6 +328,7 @@ export default function QuotationCalculatorPage() {
   };
 
   const saveDraft = async () => {
+    if (!validateItemQuantities()) return;
     setSaving(true);
     setError('');
     try {
@@ -318,6 +348,7 @@ export default function QuotationCalculatorPage() {
   };
 
   const createOrder = async () => {
+    if (!validateItemQuantities()) return;
     setSaving(true);
     setError('');
     try {
@@ -529,9 +560,10 @@ export default function QuotationCalculatorPage() {
                     <th scope="col">{t('quotationCenter.productImage')}</th>
                     <th scope="col">SKU / {t('quotationCenter.productName')}</th>
                     <th scope="col">{t('quotationCenter.internalPrice')}</th>
-                    <th scope="col">{t('quotationCenter.quantity')}</th>
+                    <th scope="col">{t('quotationCenter.unitsPerCarton')}</th>
                     <th scope="col">{t('quotationCenter.markup')}</th>
                     <th scope="col">{t('quotationCenter.cartons')}</th>
+                    <th scope="col">{t('quotationCenter.totalQuantity')}</th>
                     <th scope="col">{t('quotationCenter.dimensions')}</th>
                     <th scope="col">{t('quotationCenter.cartonWeight')}</th>
                     <th scope="col">
@@ -548,12 +580,20 @@ export default function QuotationCalculatorPage() {
                 <tbody>
                   {items.length === 0 ? (
                     <tr>
-                      <td colSpan={15}>{t('quotationCenter.emptyItems')}</td>
+                      <td colSpan={16}>{t('quotationCenter.emptyItems')}</td>
                     </tr>
                   ) : (
                     items.map((item, index) => {
                       const product = chosenProducts[item.productId];
                       const calculatedItem = result?.items[index];
+                      const unitsPerCarton =
+                        calculatedItem?.unitsPerCarton ?? product?.packaging.unitsPerCarton;
+                      const cartonCount = Number(item.cartonCount);
+                      const totalQuantity =
+                        (calculatedItem ? formatCalculatedValue(calculatedItem.quantity) : null) ??
+                        (unitsPerCarton && Number.isSafeInteger(cartonCount) && cartonCount > 0
+                          ? String(unitsPerCarton * cartonCount)
+                          : '—');
                       return (
                         <tr
                           key={item.productId}
@@ -624,16 +664,13 @@ export default function QuotationCalculatorPage() {
                           </td>
                           <td>{product?.costCny ? `¥${product.costCny}` : '—'}</td>
                           <td>
-                            <Input
-                              inputMode="decimal"
-                              aria-label={t('quotationCenter.quantityForSku', {
+                            <span
+                              aria-label={t('quotationCenter.unitsPerCartonForSku', {
                                 sku: product?.sku ?? '',
                               })}
-                              value={item.quantity}
-                              onChange={(event) =>
-                                changeItem(index, 'quantity', event.target.value)
-                              }
-                            />
+                            >
+                              {unitsPerCarton ?? '—'}
+                            </span>
                           </td>
                           <td>
                             <Input
@@ -649,6 +686,10 @@ export default function QuotationCalculatorPage() {
                           </td>
                           <td>
                             <Input
+                              type="number"
+                              min={1}
+                              max={100000}
+                              step={1}
                               inputMode="numeric"
                               aria-label={t('quotationCenter.cartonsForSku', {
                                 sku: product?.sku ?? '',
@@ -659,6 +700,7 @@ export default function QuotationCalculatorPage() {
                               }
                             />
                           </td>
+                          <td>{totalQuantity}</td>
                           <td>
                             <div
                               style={{
@@ -1061,7 +1103,7 @@ export default function QuotationCalculatorPage() {
                     <thead>
                       <tr>
                         <th>{t('quotationCenter.product')}</th>
-                        <th>{t('quotationCenter.quantity')}</th>
+                        <th>{t('quotationCenter.totalQuantity')}</th>
                         <th>{t('quotationCenter.unitPrice', { currency: currencyCode })}</th>
                         <th>{t('quotationCenter.amount', { currency: currencyCode })}</th>
                         {canReadFreightAllocation ? (

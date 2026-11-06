@@ -43,9 +43,9 @@ MVP 建议单次最多 200 件（必须压测后确认）。默认只允许 publ
 |B|Product Image|商品主图 original asset，嵌入|
 |C|Product Name|ProductTranslation en-US，必填|
 |D|Unit Price (所选币种)|后端计算，动态币种，0.00|
-|E|Packing Quantity (PCS / carton)|每箱数量，正整数|
-|F|Case Dimensions (L × W × H cm)|如 40 × 30 × 30 cm|
-|G|Gross Weight (KG)|箱规毛重，不能误用单件重量|
+|E|Packing Quantity (PCS / carton)|可选；有值时必须为正整数，缺失时留空|
+|F|Case Dimensions (L × W × H cm)|可选；如 40 × 30 × 30 cm，缺失时留空|
+|G|Gross Weight (KG)|可选；箱规毛重，不能误用单件重量，缺失时留空|
 
 模板可以提供 `itemStartRow` 起的示例商品行，也可以只保留商品表头；没有示例商品行时，填充器从 `itemStartRow` 创建安全的默认数据行。存在示例行时，填充器保留其单元格样式、行高、边框、底色和行内合并，并按商品数量动态增删商品行。导出时会更新筛选区、打印区域、重复标题行和冻结窗格。价格写数值单元格，格式 0.00；所有客户与商品文本均防止公式注入。图片等比缩放、不裁切，也不写入或泄露 `storageKey`；模板自带的 Logo 等非商品图片会保留。
 
@@ -91,7 +91,7 @@ MVP 建议单次最多 200 件（必须压测后确认）。默认只允许 publ
 - preview 和 export 共用同一后端价格函数。
 - 缺成本、汇率错误或商品不合格时禁止导出并显示原因。
 - 导出按钮需 loading、防重复提交、失败提示和 requestId，导出前确认模板名称与版本、商品数/币种/markup/rate。
-- 缺少商品长宽高或重量时，对应 Excel 单元格留空或显示 `—`，不作为阻止导出的错误；有值但数值无效时仍拒绝。页面至少覆盖 Initial、Loading、Ready、PartiallySelected、NoProducts、MissingCost、MissingImages、MissingEnglishName、InvalidRate、Exporting、ExportFailed、PermissionDenied。
+- SKU、图片、英文名称和价格是报价清单唯一必需字段。缺少每箱数量、箱规尺寸、箱规毛重、商品长宽高或商品重量时，对应 Excel 单元格留空或显示 `—`，不阻止导出；可选包装字段已填写但数值无效时仍拒绝。页面至少覆盖 Initial、Loading、Ready、PartiallySelected、NoProducts、MissingCost、MissingImages、MissingEnglishName、InvalidRate、Exporting、ExportFailed、PermissionDenied。
 - 360px 手机布局表格局部横向滚动，整个页面不横向溢出，表单改单列。
 
 ## 4. 价格计算（后端唯一实现）
@@ -124,7 +124,7 @@ export function calculateQuotationUnitPrice(input: { costCny: string; markupPerc
 
 Export 请求仅接收 templateId、categoryId、includeDescendants、productIds、locale 和 pricing。SKU、名称、成本、图片、箱规及品类名称从数据库后端读取，绝不信任前端传值。抬头内容由模板静态维护。
 
-商品必须属于所选品类范围、存在且未删除；成本有效且 >0；有 en-US 名称；有有效主图；主图 FileAsset/对象未删除或 pending-delete。默认仅允许 published 且 lifecycle != discontinued，未发布商品需要独立权限。cartonQty 必须是正整数。箱规 L/W/H 全部缺失或部分缺失时输出空白/`—`，不阻止导出；全部存在时必须为正数。箱规毛重可缺失并留空，但已填写的值必须为正数，不得误用单件重量。产品长宽高或重量数据缺失时也留空或使用 `—`。
+商品必须属于所选品类范围、存在且未删除；成本有效且 >0（用于生成报价价格）；有 en-US 名称和有效主图；主图 FileAsset/对象未删除或 pending-delete。默认仅允许 published 且 lifecycle != discontinued，未发布商品需要独立权限。报价单 SKU、图片、名称和价格为唯一必需字段。cartonQty 可缺失并留空，有值时必须是正整数。箱规 L/W/H 全部缺失或部分缺失时输出空白/`—`，不阻止导出；全部存在时必须为正数。箱规毛重可缺失并留空，但已填写的值必须为正数，不得误用单件重量。产品长宽高或重量数据缺失时也留空或使用 `—`。
 
 一次聚合返回所有错误：PRODUCT_NOT_IN_CATEGORY、PRODUCT_NOT_EXPORTABLE、MISSING_COST、MISSING_ENGLISH_NAME、MISSING_PRIMARY_IMAGE、IMAGE_NOT_READY、INVALID_CARTON_QUANTITY、INVALID_CARTON_DIMENSIONS、INVALID_CARTON_WEIGHT、TOO_MANY_PRODUCTS。返回 422 QUOTATION_EXPORT_VALIDATION_FAILED，errors[] 至少含 productId、sku、field、code、messageKey。没有成本读取权限时错误不能泄漏成本金额。
 
@@ -132,7 +132,7 @@ Export 请求仅接收 templateId、categoryId、includeDescendants、productIds
 
 ## 6. 原图读取与嵌入
 
-商品图片必须来自 Product 主图 original asset，而不是 CDN URL、缩略图、裁切/水印图、DISPIMG 公式或截图。用现有 Storage adapter 根据服务端受管 key 读取；禁止 fetch 任意用户 URL（SSRF）。PNG/JPEG 按魔数确认并原样嵌入；WebP 在 Sharp 像素上限内解码，透明图转 PNG、非透明图转 JPEG 后嵌入，以兼容 Excel。拒绝损坏图、未知格式、SVG active content、路径穿越 key 和超限图像。单图≤10 MiB、≤20MP、商品报价模板导出图片总量≤64 MiB，读取并发≤4。该总量上限独立于计算器/订单快照导出的 40 MiB 上限。
+商品图片必须来自 Product 主图 original asset，而不是 CDN URL、缩略图、裁切/水印图、DISPIMG 公式或截图。用现有 Storage adapter 根据服务端受管 key 读取；禁止 fetch 任意用户 URL（SSRF）。PNG/JPEG 按魔数确认并原样嵌入；WebP 在 Sharp 像素上限内解码，透明图转 PNG、非透明图转 JPEG 后嵌入，以兼容 Excel。拒绝损坏图、未知格式、SVG active content、路径穿越 key 和超限图像。单图≤10 MiB、≤20MP、商品报价模板导出图片总量≤256 MiB，由串行 Worker 按序读取；该总量上限独立于计算器/订单快照导出的 40 MiB 上限。
 
 ExcelJS 示意：
 
@@ -207,7 +207,7 @@ worksheet.addImage(imageId, {
 }
 ```
 
-响应 HTTP 200，Content-Type `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`，Content-Disposition 安全 filename* UTF-8，附 X-Request-Id。文件名如 `Quotation_USD_20261030_103000.xlsx`。Admin 认证 fetch Blob 下载并 revokeObjectURL。DTO 使用项目统一 validation；`templateId` 必填 UUID；productIds UUID 数组去重、非空、限量；币种必须对应当前启用的字典项；decimal string 禁止科学计数法；不接受客户抬头、成本价、最终价、图片 URL、storageKey 等字段。服务端必须重新读取并校验模板，不能信任上传时的一次性检查结果。
+响应 HTTP 202，返回持久化 `jobId` 与队列状态。Admin 轮询 `GET /admin/quotation-export/jobs/:id`，任务成功后调用 `GET /admin/quotation-export/jobs/:id/download` 下载私有对象；下载和状态查询均按当前操作者授权。服务端仍用统一 validation；`templateId` 必填 UUID；productIds UUID 数组去重、非空、限量；币种必须对应当前启用的字典项；decimal string 禁止科学计数法；不接受客户抬头、成本价、最终价、图片 URL、storageKey 等字段。Worker 必须重新读取并校验模板和商品，不能信任入队时快照。
 
 ## 9. 后端模块边界
 
@@ -241,7 +241,7 @@ XLSX 验收：Price List 工作表；抬头合并；七列且没有重复价格�
 
 ## 12. 部署、容量与回滚
 
-初始建议商品≤200、单图≤10 MiB、商品报价模板导出图片总量≤64 MiB、读取并发≤4。生产日志显示有效商品图片总量约 41–46 MiB，原 40 MiB 限制会拒绝该类正常导出，因此将此接口上限提高到 64 MiB；上线后继续监控峰值耗时、RSS、文件大小和失败率。配置优先复用 GlobalSetting；新增环境变量时更新 .env.example 与部署文档。不记录成本或客户联系方式；设置用户/IP 频率限制。
+商品数仍限制≤200，单图≤10 MiB；商品报价模板导出累计图片上限为 256 MiB，按序读取，生成放在 PostgreSQL 持久化 Worker 任务中，不占用 API 请求内存。Worker 当前生产 Compose 内存上限为 4 GiB、任务串行执行；这不是无限容量承诺，需监控峰值 RSS、磁盘、耗时、输出大小和失败率。计算器/订单历史 Excel 导出目前仍是同步接口，并由 100 行、40 MiB 累计图片上限约束；若要放宽这些上限，应先迁入同一持久任务模型。新增环境变量时更新 `.env.example` 与部署文档。不记录成本或客户联系方式；设置用户/IP 频率限制。
 
 发布前执行幂等权限/菜单 seed、lint、typecheck、API/Admin tests、build；生产冒烟导出 1/20/100 件并记录 CPU/RSS/耗时/文件大小。API 运行镜像需要包含 `sharp` 原生模块；本次不改数据库且无需 migration，回滚时部署上一版 API/Admin 镜像即可。使用 feature flag 或隐藏菜单止损。本期不持久化客户报价文件。
 
@@ -278,6 +278,8 @@ Phase 5 Validation：执行全部测试、Excel/WPS 实测、压测 1/20/100/最
 
 ## 14. 实施与验收记录（2026-10-30）
 
+> 2026-11-05 容量改造补充：下方早期阶段记录中的“同步下载”和 64 MiB 图片上限已被 §14.8 覆盖。
+
 ### 14.1 Phase 1–5 状态
 
 | 阶段 | 状态 | 实际结果 |
@@ -306,7 +308,7 @@ Phase 5 Validation：执行全部测试、Excel/WPS 实测、压测 1/20/100/最
 - 价格只由后端按 `CEILING_2(costCny × (1 + markup/100) × exchangeRate)` 计算；所有币种（含 JPY）统一两位小数；CNY 汇率固定为 1。
 - preview 与 export 共用同一价格计算和商品校验；export 重新读取数据库并重算，任一商品不合法时整单返回 422，不生成或返回部分 XLSX。
 - preview 与 export 均按 `productIds` 请求数组顺序输出；自动化测试直接读取导出工作簿，验证 `itemStartRow` 起的 SKU/名称顺序与页面请求一致。
-- 单图上限 10 MiB、商品报价模板导出图片总量上限 64 MiB、20 MP、读取并发 4；读取失败、格式伪造或超限均整单失败。PNG/JPEG 原样嵌入，WebP 转成 PNG/JPEG。计算器/订单快照导出仍沿用独立的 40 MiB 总量上限。
+- 单图上限 10 MiB、商品报价模板导出图片总量上限现为 256 MiB、20 MP；读取失败、格式伪造或超限均整单失败。PNG/JPEG 原样嵌入，WebP 转成 PNG/JPEG。计算器/订单快照导出仍沿用独立的 40 MiB 总量上限。
 - 审计 `QUOTATION_EXCEL_EXPORTED` 成功后才返回文件；审计不记录成本、客户邮箱/电话、storageKey、图片字节或 XLSX 内容。
 - 预览和导出均按登录用户限流：预览 120 次/分钟、导出 10 次/分钟。当前限流为单 API 进程内存窗口，多实例部署前需改为共享存储或边缘限流。
 - “选择商品”的成本列仅在操作者具备 `product.cost.read`（或为超级管理员）时返回数据库中的精确 CNY 成本；无权限响应为 `costCny: null`，页面显示“成本已隐藏（无权限）”，不会通过其他字段序列化成本。
@@ -372,7 +374,7 @@ ADMIN_API_PROXY_TARGET=http://localhost:3002 pnpm build
 - 在报价模板页面选择“产品报价单”，上传 `assets/templates/B2B_Quotation_Template.xlsx`，模板名称保持不变时会创建下一个不可变 draft 版本。
 - 标准模板登记后的 `QuoteTemplate` 记录 `sheetName=Quotation`、`headerRow=6`、`itemStartRow=7`；自定义模板的头行和数据行按实际 `Product SKU` 位置自动登记。
 - 公司抬头及联系方式需直接维护为模板静态文本；不得保留 `[COMPANY NAME]`、`[CONTACT PERSON]`、`[EMAIL]`、`[PHONE]`、`[QUOTATION TITLE]`。`[MATERIAL]`、`[CURRENCY]` 必须存在，`[RATE]`、`[MARKUP]` 可选。缺少必需占位符、存在旧抬头占位符、缺少必需商品列、关键列重复或商品起点不是表头下一行时，`layoutValid=false`，禁止激活和导出。
-- `fieldMapping` 应为：A `product.sku`、B `product.image`、C `product.name`、D `product.price_cny`、E `product.carton_qty`、F `product.carton_size_cm`、G `product.carton_weight_kg`。
+- `fieldMapping` 必须包含 SKU、图片、名称、价格（A `product.sku`、B `product.image`、C `product.name`、D `product.price_cny`）；E `product.carton_qty`、F `product.carton_size_cm`、G `product.carton_weight_kg` 为可选字段映射。
 - 文件以 `purpose=quote-template`、`isPublic=false` 保存在私有存储；列表只返回文件元数据，不返回公开 URL 或 `storageKey`。
 - 每个版本应先验证下载文件名和内容，再打开预览检查工作表、样式、合并单元格与内嵌图片；预览超出 200 行或 40 列时页面必须明确提示截断，不能把截断预览误认为完整文件。
 - 删除一个无历史导出、无共享文件引用的测试版本后，`QuoteTemplate` 与 `FileAsset` 元数据应删除，私有存储对象也应不存在；删除任务应最终为 `SUCCEEDED`，审计链包含请求成功/失败事件。
@@ -384,7 +386,7 @@ ADMIN_API_PROXY_TARGET=http://localhost:3002 pnpm build
 
 - 尚未在 Microsoft Excel、LibreOffice 和 WPS 中人工打开实际导出文件，未验证目标桌面软件的图片渲染、打印分页与公式/样式兼容性。
 - 用户可修改模板样式、合并区域和商品表头所在行；若修改触及工作表名、`[MATERIAL]` / `[CURRENCY]` 占位符、旧抬头占位符、`Product SKU` 表头、商品必需列或“表头下一行即商品起点”的规则，模板会被拒绝。这是有意的结构保护，不应通过放宽校验绕过。
-- 尚未使用真实 1/20/100/200 件商品记录 CPU、RSS、耗时、输出体积和失败率；商品报价模板导出总量上限根据线上 41–46 MiB 图片组调整为 64 MiB，仍需压测确认上限下的内存和耗时表现。
+- 尚未使用真实 1/20/100/200 件商品记录 CPU、RSS、耗时、输出体积和失败率；2026-11-05 商品报价导出图像总量限制调整到 256 MiB，仍需 staging 压测确认峰值内存和耗时。
 - 当前图片校验基于文件签名、尺寸和像素上限，没有对全部图片字节做完整解码沙箱；若后续允许不可信外部上传源，应增加成熟图像解码器/隔离进程。
 - 回滚无需回退数据库 schema：先隐藏或停用 `quote-templates` / `products.quotation-export` 菜单，再撤销 `quote.delete` 及三个 quotation 权限即可停止新入口。已经提交的模板删除任务不能被回滚撤销，必须由 Worker 完成或人工按任务记录核对；已生成报价文件不保存在服务端，不涉及额外文件清理。
 
@@ -396,3 +398,12 @@ ADMIN_API_PROXY_TARGET=http://localhost:3002 pnpm build
 - Validation 13/13、Admin 184/184、Worker 68/68、Quotation API 模块 105/105 通过；根 `pnpm typecheck`、`pnpm lint`、API/Worker/Admin build 通过。
 - 使用真实多页 XLSX 经当前打印规范化和 LibreOffice 转换，生成 7 页 A4 横向 PDF；第一页含公司/联系人/邮箱/电话，后续 6 页只重复报价名称与 `Product SKU` 表头。
 - API 全量测试仍受仓库缺少 `docs/凡士林.xlsx` 测试夹具影响，4 个既有商品导入解析用例失败；本次报价模块定向测试全部通过。全仓 `pnpm format:check` 仍有 123 个既有未格式化文件，本次改动文件已单独通过 Prettier。
+
+### 14.8 大文件任务化补充（2026-11-05）
+
+- `POST /admin/quotation-export/export` 现在创建 `QuoteExportJob` 并返回 HTTP 202；Worker 重新检查操作者权限、模板、品类、商品、币种和图片，再生成工作簿。状态与下载仅限任务发起者及对应报价读取权限，不把商品报价任务暴露给通用历史报价导出列表。
+- 图片总量上限提高到 256 MiB，Worker 按序读取，避免并发持有多张大图。上限之外仍失败且不产生部分下载，避免无限内存增长及 ZIP/XLSX 膨胀风险。
+- API 下载端使用私有对象流；Admin 等待任务完成后导航到鉴权下载 URL，由浏览器直接接收附件，不在 API/Admin 代码中把完整文件读入 Buffer/Blob。
+- 无数据库结构变更，复用已有 `QuoteExportJob`、租约、重试、审计和对象删除基础设施，无需 migration。发布时 Worker 必须先部署，新 API 与 Admin 随后成套发布；回滚时先暂停 Worker，处理新增 `filterSnapshot.exportKind=product-quotation` 的排队任务，再一起回滚 API/Admin/Worker，防止旧 Worker 把新任务误识别成通用导出。
+- 商品导入目前也已在 Worker 中串行处理，但 ExcelJS/JSZip 仍在内存载入整份工作簿；300 MiB 文件、1 GiB 解压、1,000 行是当前限制。计算器和历史报价/订单 Excel 导出仍同步运行，受 100 行和 40 MiB 累计图片限制；提高其容量前应迁入任务队列。
+- 本轮完成 Admin/API/Worker/package 类型检查；未运行测试、构建、Office/WPS 实际打开或容量压测。4 GiB Worker 资源配置未变，256 MiB 图片上限的峰值 RSS 仍需 staging 压测后确认。

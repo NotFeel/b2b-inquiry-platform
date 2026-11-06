@@ -134,6 +134,7 @@ XLSX 解析和字段校验在事务外完成。commit 阶段重新检查关键�
 - `STORAGE_DRIVER=local` 时，API 和 Worker 都把相对 `STORAGE_LOCAL_ROOT` 按仓库根目录解析；默认实际目录为 `<repo>/.data/uploads`。工作簿分块位于 `product-import/<uploadId>/chunks/`，产品原图位于 `product-image/`。
 - PostgreSQL 只保存 `FileAsset`、`ProductImage`、`ProductImportUpload`、`ProductImportChunk` 和验证结果元数据。图片字节、Base64、Node `Buffer` 序列化内容不得进入任何 JSONB；validation payload 只允许 storageKey、大小、尺寸、MIME、SHA-256 和 fileAssetId。
 - 本地导入 200 MB 文件时，建议 Worker 并发为 1、Node heap 2–4 GB，并为 `.data` 预留至少 2 GB 空间。Worker 合并分块只分配一份整文件 Buffer；ExcelJS 解析、图片解码和 staging 仍需额外内存，不能仅按“文件大小的两倍”做容量规划。
+- 现有解析器会同时使用 JSZip 与 ExcelJS 检查完整 XLSX，并把解析出的图片暂存在 Worker 内存后再顺序写入对象存储。它不是流式解析器；300 MiB 压缩文件、1 GiB 解压内容、1,000 行是受当前 4 GiB Worker 资源约束的上限，不表示任意大文件都能安全处理。要突破这些上限，需要改成磁盘暂存/按条目流式解析并限制累计图片内存，再按目标主机内存压测后调整 Compose 限额。
 - `.data` 只适用于单机开发或单实例自托管。生产 API/Worker 多实例、Serverless/Wrangler 或重启后仍需保留图片时，必须使用共享 S3/R2 私有桶；不同实例的本地磁盘互不可见，不能作为生产对象存储。
 - 上传会话默认 1 小时过期，验证 token 默认 10 分钟过期。Worker 成功或失败后删除分块；过期 upload、validation 和未被商品引用的 staging 图片由 cleanup job 幂等清理。
 

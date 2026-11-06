@@ -31,7 +31,7 @@
 ### 0.2 先解决的字段语义问题
 
 1. 盘点 `Product.priceCny` 在所有代码、表单、导入和现有报价导出中的读写语义。如果它是采购成本，代码与文档统一命名为“内部采购成本（CNY）”；如果它是其他价格，不能直接复用，需新增明确的 `costCny` 字段并制定回填/兼容计划。
-2. 现有 Product 箱规长宽高为 Decimal(12,3) 厘米、单箱毛重 Decimal、每箱数量；它们可作为默认值，但报价必须允许按本次交易覆盖并将覆盖值快照保存，不能修改 Product 主档。
+2. 现有 Product 箱规长宽高为 Decimal(12,3) 厘米、单箱毛重 Decimal、每箱数量；箱规尺寸和毛重可按本次交易覆盖并保存快照，但每箱数量只读 Product 主档，由服务端用于计算商品总数，不能在报价中覆盖。
 3. 当前 Customer 的 `phoneE164` 是必填唯一字段。正式客户资料允许电话可选的业务需求与当前模型冲突。实现前选择：正式订单要求电话必填（本文件默认）；或改成 nullable 并设计重复客户识别/合并规则。不得用空字符串或虚构号码填充。
 4. Customer 现有 `displayName` 可作为客户名称，但 email、账单地址、收货地址应 additive 增加；历史订单必须保存客户快照，不能依赖客户主档当前值。
 5. 现有 `PiDocument` 和 `PiItem` 保留；后续为 `PiDocument` 增加 `orderId`，而不是本期重建 PI。
@@ -93,7 +93,7 @@
 ### 1.0 商品行与选择弹窗优化（2026-11-04）
 
 - 销售单价按目标币种单件向上进位到两位小数；目标币种商品金额按已进位单价 × 数量计算，页面显示与保存的明细金额一致。
-- 商品明细表隐藏“每箱数量”列，但保留已有包装字段和历史快照兼容。
+- 2026-11-06 调整：商品明细显示 Product 主档的只读“每箱数量”，用户输入“箱数”，商品总数由后端相乘得出；旧报价/订单保留原历史数量快照，不回写历史数据。
 - 添加商品弹窗从 `publish_status` 字典加载筛选值，服务端搜索始终排除草稿；弹窗分别从发布状态和商品生命周期字典显示对应 locale 标签。无数据库迁移。
 
 ### 1.1 目标币种商品金额及 CBM 运费精度（2026-11-04）
@@ -157,8 +157,8 @@
 报价计算器采用单页分区/步骤式工作台，桌面端可左右布局，手机端单列：
 
 1. **客户与报价信息**：模式切换（临时计算/保存报价草稿/直接创建订单）、客户选择或新增、客户名称、联系人、电话、邮箱、国家、账单地址、收货地址、报价日期、有效期、订单日期（创建订单时）。
-2. **商品明细**：商品搜索/选择、SKU、商品名称、数量、采购成本 CNY、涨幅百分比、销售单价和商品金额。销售价按 CNY 核算，预览展示跟随目标币种。
-3. **包装参数**：每个商品的箱数、单箱长宽高、单箱毛重；展示每行单箱 CBM、商品总 CBM、商品总体积重和总毛重。每箱数量可保留在商品/历史快照中，但报价计算器明细表不显示此字段。商品行不单独选择体积重系数。
+2. **商品明细**：商品搜索/选择、SKU、商品名称、每箱数量（读取 Product.cartonQuantity，只读）、箱数（用户输入）、采购成本 CNY、涨幅百分比、销售单价和商品金额。商品总数由服务端按每箱数量 × 箱数计算，客户端不提交可篡改的总数量。
+3. **包装参数**：每个商品的箱数、单箱长宽高、单箱毛重；展示每行单箱 CBM、商品总 CBM、商品总体积重和总毛重。每箱数量读取 Product 主档并在历史快照中保存，不允许报价时覆盖。商品行不单独选择体积重系数。
 4. **海运双报价与订单级费用**：同时配置 CNY/CBM 和 CNY/kg 单价；海运费率输入固定使用 CNY，不随报价目标币种切换。KG 报价区域统一选择一个体积重系数（来自字典），应用于整个订单。预览中的 CBM/KG 两种报价、选中海运费及分摊金额均展示为页面选择的目标币种；CNY 报价按汇率转换后展示。另录入仍以 CNY 为单位的配送费和其他费用行。
 5. **货币与汇率**：报价币种（字典）、人工汇率；明确显示 `1 CNY = X USD`。
 6. **实时计算摘要**：商品金额合计、订单总 CBM、总体积重、总毛重、KG 计费重量、CBM 海运报价、KG 海运报价、当前选中的海运费、配送费、其他费用和按目标币种展示的订单总额。
@@ -172,13 +172,13 @@
 |---|---|---|
 | 商品 | 产品选择器 | 读取后台可报价商品 |
 | SKU/名称 | Product 快照 | 不可将客户端提交值作为权威数据 |
-| 数量 | 人工输入 | Decimal 正数，单位默认 pcs |
+| 每箱数量（件） | Product.cartonQuantity | 只读；必须为正整数，缺失时提示先补全商品包装数据 |
+| 箱数 | 人工输入 | 正整数，1–100000 |
+| 商品总数（件） | 自动计算 | 每箱数量 × 箱数；服务端使用 Product.cartonQuantity 重新计算，不接受客户端提供的总数 |
 | 采购成本 CNY | Product 默认值，可按报价覆盖 | 成本权限控制；仅内部可见 |
 | 涨幅 % | 人工输入 | 0–500，最多 4 位小数；每商品独立 |
 | 销售单价 | 自动计算 | CNY 成本 × (1 + 涨幅/100) 后按汇率换算；目标币种单价向上进位到两位 |
 | 商品金额 | 自动计算 | 目标币种已进位销售单价 × 数量，按两位小数四舍五入；预览表格标签和金额跟随页面选择币种 |
-| 箱数 | 人工输入/默认值 | 正整数 |
-| 每箱数量 | Product 默认/本次覆盖 | 正整数；保留在数据快照中，但不在报价计算器商品明细表显示 |
 | 单箱尺寸 | Product 默认/本次覆盖 | 长宽高完整填写或全部为空 |
 | 单箱毛重 kg | Product 默认/本次覆盖 | 非负，正式物流报价要求有效正数 |
 | 单箱 CBM | 自动计算 | 长 × 宽 × 高 ÷ 1,000,000，单位 CBM |
@@ -234,9 +234,11 @@
 
 `unitSalePriceCny = costCny × (1 + markupPercent / 100)`
 
+`quantity = unitsPerCarton × cartonCount`
+
 `itemAmountCny = unitSalePriceCny × quantity`
 
-示例：采购成本 ¥5，涨幅 20%，销售单价 ¥6；数量 100 时商品金额 ¥600。
+示例：采购成本 ¥5，涨幅 20%，销售单价 ¥6；每箱 50 件、输入 2 箱，服务端计算商品总数 100 件，商品金额 ¥600。
 
 内部成本和 CNY 核算单价、金额使用 Decimal，保留原始精度；目标币种每件销售单价先向上进位到两位，再乘商品数量计算目标币种行金额，行金额按两位小数四舍五入。人民币核算金额仍保留完整精度。
 
@@ -245,7 +247,8 @@
 对商品 i：
 
 - `cartonCount_i`：本次报价箱数。
-- `unitsPerCarton_i`：每箱数量。
+- `unitsPerCarton_i`：Product 主档的每箱数量，用户不可在报价中覆盖。
+- `quantity_i = cartonCount_i × unitsPerCarton_i`：商品总件数，由服务端 Decimal 计算，用于金额和历史快照；不得接受客户端传入 quantity。
 - `cartonLengthCm_i`、`cartonWidthCm_i`、`cartonHeightCm_i`：单箱外箱尺寸。
 - `cartonGrossWeightKg_i`：单箱毛重。
 - `volumetricDivisor`：KG 报价配置中的订单级统一体积重系数，来自启用的 `volumetric_weight_divisor` 字典项；整个订单所有商品共用一个系数，不按商品行分别选择，不得硬编码 6000。
@@ -538,14 +541,14 @@ QuotationModule
 
 ### 5.1 预览请求规则
 
-请求包含 customer draft、items（productId、quantity、markup、包装覆盖值）、订单级 KG 报价 `volumetricDivisorItemId`、CNY/CBM 与 CNY/kg 单价、`freightCurrencyCode=CNY`、`freightBillingMethod`、订单费用输入、`currencyCode`、`exchangeRate`。服务端校验 freightCurrencyCode 必须为 CNY，并重新计算选中的海运费及目标币种总额。不要接受客户端提供的成本、最终售价、分摊结果作为权威值。若有成本覆盖功能，必须单独权限并明确区分 `costOverrideCny` 与 Product 成本。
+请求包含 customer draft、items（productId、cartonCount、markup、包装尺寸/毛重覆盖值），不含 quantity 或 unitsPerCarton；服务端从 Product 读取 unitsPerCarton，并按箱数重新计算商品总数、金额和运输数据。订单级 KG 报价使用 `volumetricDivisorItemId`、CNY/CBM 与 CNY/kg 单价、`freightCurrencyCode=CNY`、`freightBillingMethod` 和费用输入；服务端重新计算选中的海运费及目标币种总额。不要接受客户端提供的数量、每箱数量、成本、最终售价或分摊结果作为权威值。
 
 响应包括：
-- items：SKU/名称快照、成本（仅有成本读取权限）、markup、CNY unit price/line amount、单箱 CBM、商品总 CBM、商品总体积重、商品总毛重、分摊依据、allocated freight。
+- items：SKU/名称快照、成本（仅有成本读取权限）、markup、服务端计算的 quantity（Product 每箱数量 × 箱数）、箱数和每箱数量快照、CNY unit price/line amount、单箱 CBM、商品总 CBM、商品总体积重、商品总毛重、分摊依据、allocated freight。
 - freight：总 CBM、CNY/CBM 单价/金额；订单统一体积重系数、总体积重、总毛重、KG 计费重量、计费依据、CNY/kg 单价/金额；海运费币种 CNY、最终选择方式、最终采用 CNY 海运费、目标币种金额与商品分摊。两种报价同时返回。
 - fees：每条费用 CNY 和分配后的外币展示值。
 - totals：subtotal CNY、freight CNY、delivery CNY、other CNY、total CNY、exchange rate、foreign exact、foreign total。
-- warnings：例如每箱数量与总数量不整除、产品箱规被覆盖。
+- warnings：例如产品箱规被本次报价覆盖。
 - errors：结构化 code、field、productId。
 
 ### 5.2 幂等与并发
@@ -580,7 +583,7 @@ QuotationModule
 ### 7.1 Decimal 与商品金额
 
 - [ ] 成本 ¥5，markup 20%，销售单价 = ¥6。
-- [ ] 数量 100，商品金额 = ¥600。
+- [ ] 每箱 50 件、箱数 2，服务端得到商品总数 100 件、商品金额 = ¥600；篡改客户端 quantity 或 unitsPerCarton 不会改变计算结果。
 - [ ] markup 0、500、负数、超过 500、超精度分别测试。
 - [ ] Decimal 极小数、长小数、字符串输入；拒绝 NaN/Infinity/科学计数法。
 - [ ] 任何计算不得通过 JS Number 累加。
@@ -643,7 +646,7 @@ QuotationModule
 ### 7.6 UI、回归和发布
 
 - [ ] 360px、768px、桌面布局无整页横向溢出。
-- [ ] 商品增删、排序、数量修改、包装覆盖后自动重新计算。
+- [ ] 商品增删、排序、箱数修改、包装覆盖后自动重新计算；每箱数量始终显示 Product 主档值，总件数随箱数自动变化。
 - [ ] 字典接口加载失败时禁用报价提交并提示，不使用硬编码 fallback。
 - [ ] 所有输入有 label、错误提示、loading/disabled 和键盘可用性。
 - [ ] Storefront 公共 API、HTML、SSR、缓存无成本/报价/订单字段。

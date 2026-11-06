@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ERROR_CODES, type QuoteTemplateSummary, type QuoteTemplateType } from '@b2b/contracts';
-import type { QuoteTemplate } from '@b2b/database';
+import type { Prisma, QuoteTemplate } from '@b2b/database';
 import type {
   QuoteExportCreateInput,
   QuoteExportPreviewInput,
@@ -558,7 +558,10 @@ export class QuoteService {
   }
 
   async listExports(query: { page: number; pageSize: number; status?: string }) {
-    const where = query.status ? { status: query.status as never } : {};
+    const where: Prisma.QuoteExportJobWhereInput = {
+      ...(query.status ? { status: query.status as never } : {}),
+      NOT: { filterSnapshot: { path: ['exportKind'], equals: 'product-quotation' } },
+    };
     const [total, jobs] = await this.prisma.$transaction([
       this.prisma.quoteExportJob.count({ where }),
       this.prisma.quoteExportJob.findMany({
@@ -603,7 +606,9 @@ export class QuoteService {
 
   async getExport(id: string) {
     const job = await this.prisma.quoteExportJob.findUnique({ where: { id } });
-    if (!job) throw new ApiError(ERROR_CODES.jobNotFound, 'Export job not found.');
+    if (!job || isProductQuotationJob(job.filterSnapshot)) {
+      throw new ApiError(ERROR_CODES.jobNotFound, 'Export job not found.');
+    }
     return {
       id: job.id,
       status: job.status,
@@ -622,7 +627,9 @@ export class QuoteService {
    */
   async requestDeletion(id: string, actorId: string, requestId: string) {
     const job = await this.prisma.quoteExportJob.findUnique({ where: { id } });
-    if (!job) throw new ApiError(ERROR_CODES.jobNotFound, 'Export job not found.');
+    if (!job || isProductQuotationJob(job.filterSnapshot)) {
+      throw new ApiError(ERROR_CODES.jobNotFound, 'Export job not found.');
+    }
     if (job.purgeState === 'PENDING') {
       return { status: 'deletion_pending' as const };
     }
@@ -656,6 +663,15 @@ export class QuoteService {
     });
     return { status: 'deletion_pending' as const };
   }
+}
+
+function isProductQuotationJob(snapshot: Prisma.JsonValue): boolean {
+  return (
+    typeof snapshot === 'object' &&
+    snapshot !== null &&
+    !Array.isArray(snapshot) &&
+    snapshot.exportKind === 'product-quotation'
+  );
 }
 
 function isManagedTemplateKey(storageKey: string): boolean {

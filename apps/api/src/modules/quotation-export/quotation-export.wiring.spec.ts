@@ -1,7 +1,6 @@
 import { RequestMethod } from '@nestjs/common';
 import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { PERMISSIONS } from '@b2b/contracts';
-import type { Response } from 'express';
 import { describe, expect, it, vi } from 'vitest';
 import type { AuthenticatedActor } from '../../common/request-context';
 import { PERMISSIONS_KEY } from '../../common/decorators';
@@ -32,9 +31,9 @@ function fakeService() {
     listTemplates: vi.fn().mockResolvedValue([]),
     listProducts: vi.fn().mockResolvedValue({ items: [], totalCount: 0 }),
     preview: vi.fn().mockResolvedValue({ items: [], errors: [] }),
-    export: vi
-      .fn()
-      .mockResolvedValue({ buffer: Buffer.from('xlsx'), filename: 'Quotation_USD.xlsx' }),
+    requestExport: vi.fn().mockResolvedValue({ jobId: 'export-job', status: 'QUEUED', productCount: 1 }),
+    getExportJob: vi.fn().mockResolvedValue({ jobId: 'export-job', status: 'PROCESSING' }),
+    getExportJobDownload: vi.fn(),
   };
 }
 
@@ -59,7 +58,7 @@ function controller(
 }
 
 describe('quotation export controller wiring', () => {
-  it('declares the five admin routes and their HTTP methods', () => {
+    it('declares the admin routes and their HTTP methods', () => {
     expect(Reflect.getMetadata(PATH_METADATA, QuotationExportController)).toBe(
       'admin/quotation-export',
     );
@@ -69,6 +68,8 @@ describe('quotation export controller wiring', () => {
       products: [RequestMethod.GET, 'products'],
       preview: [RequestMethod.POST, 'preview'],
       export: [RequestMethod.POST, 'export'],
+      exportJob: [RequestMethod.GET, 'jobs/:id'],
+      downloadExportJob: [RequestMethod.GET, 'jobs/:id/download'],
     };
     for (const [name, [method, path]] of Object.entries(expected)) {
       const handler = (QuotationExportController.prototype as unknown as Record<string, object>)[
@@ -87,6 +88,8 @@ describe('quotation export controller wiring', () => {
       products: PERMISSIONS.quotationExportRead,
       preview: PERMISSIONS.quotationExportCreate,
       export: PERMISSIONS.quotationExportCreate,
+      exportJob: PERMISSIONS.quotationExportRead,
+      downloadExportJob: PERMISSIONS.quotationExportRead,
     };
     for (const [name, permission] of Object.entries(expected)) {
       const handler = (QuotationExportController.prototype as unknown as Record<string, object>)[
@@ -120,15 +123,10 @@ describe('quotation export controller wiring', () => {
     expect(service.listProducts).toHaveBeenLastCalledWith(query, true, true);
   });
 
-  it('sets safe download headers before sending the generated XLSX', async () => {
+  it('queues the generated XLSX and returns its task reference', async () => {
     const service = fakeService();
     const rateLimit = fakeRateLimit();
     const quotationController = controller(service, rateLimit);
-    const headers = new Map<string, string>();
-    const response = {
-      setHeader: vi.fn((name: string, value: string) => headers.set(name, value)),
-      send: vi.fn(),
-    } as unknown as Response;
     const input = {
       templateId: TEMPLATE_ID,
       categoryId: CATEGORY_ID,
@@ -137,18 +135,12 @@ describe('quotation export controller wiring', () => {
       pricing: { markupPercent: '15', currencyCode: 'USD' as const, exchangeRate: '0.1385' },
     };
 
-    await quotationController.export(input, actor(), 'request-123', response);
+    await expect(quotationController.export(input, actor(), 'request-123')).resolves.toEqual({
+      data: { jobId: 'export-job', status: 'QUEUED', productCount: 1 },
+    });
 
-    expect(service.export).toHaveBeenCalledWith(input, false, actor().id, 'request-123');
+    expect(service.requestExport).toHaveBeenCalledWith(input, false, actor().id, 'request-123');
     expect(rateLimit.consume).toHaveBeenCalledWith(`quotation-export:export:${actor().id}`, 10, 60);
-    expect(headers.get('Content-Type')).toBe(
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    );
-    expect(headers.get('Content-Disposition')).toContain('filename*=UTF-8');
-    expect(headers.get('Cache-Control')).toBe('private, no-store');
-    expect(headers.get('X-Content-Type-Options')).toBe('nosniff');
-    expect(headers.get('X-Request-Id')).toBe('request-123');
-    expect(response.send).toHaveBeenCalledWith(Buffer.from('xlsx'));
   });
 
   it('rejects preview and export when the create rate limit is exhausted', async () => {

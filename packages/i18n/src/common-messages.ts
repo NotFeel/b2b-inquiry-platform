@@ -144,6 +144,8 @@ export const commonMessages: Record<'en-US' | 'zh-CN', Messages> = {
         'The markup, currency or exchange rate is invalid. No file was generated.',
       QUOTATION_EXPORT_IMAGE_UNAVAILABLE:
         'A product image could not be read safely. No file was generated.',
+      QUOTATION_EXPORT_IMAGE_SET_TOO_LARGE:
+        'The selected images exceed the safe per-export size. Select fewer products and retry.',
       QUOTATION_EXPORT_SNAPSHOT_MISSING:
         'This saved quotation or order is missing the historical product, terminal category or freight snapshot required for export.',
       QUOTE_TEMPLATE_IN_USE: 'This template version is referenced by previous exports.',
@@ -421,6 +423,7 @@ export const commonMessages: Record<'en-US' | 'zh-CN', Messages> = {
       QUOTATION_EXPORT_VALIDATION_FAILED: '一个或多个所选商品不满足报价条件，未生成任何文件。',
       QUOTATION_EXPORT_PRICING_INVALID: '加价率、币种或汇率无效，未生成任何文件。',
       QUOTATION_EXPORT_IMAGE_UNAVAILABLE: '无法安全读取商品主图，未生成任何文件。',
+      QUOTATION_EXPORT_IMAGE_SET_TOO_LARGE: '所选商品图片总量超过单次安全处理上限，请减少商品后重试。',
       QUOTATION_EXPORT_SNAPSHOT_MISSING:
         '该历史报价或订单缺少导出所需的商品图片、末端品类或运费快照。',
       QUOTE_TEMPLATE_IN_USE: '该模板版本已被历史导出引用。',

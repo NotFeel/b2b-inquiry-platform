@@ -81,10 +81,8 @@ export type CalculatorInput = {
   deliveryFeeCny: string;
   items: {
     productId: string;
-    quantity: string;
     markupPercent: string;
-    cartonCount: number | null;
-    unitsPerCarton: number | null;
+    cartonCount: number;
     cartonLengthCm: string | null;
     cartonWidthCm: string | null;
     cartonHeightCm: string | null;
@@ -98,6 +96,8 @@ export type CalculationResult = {
     lineNo: number;
     sku: string;
     productName: string;
+    cartonCount: number | null;
+    unitsPerCarton: number | null;
     costCny?: string;
     quantity: string;
     unitSalePriceCny: string;

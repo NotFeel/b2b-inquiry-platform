@@ -1467,10 +1467,8 @@ export type QuotationProductSearchQuery = z.infer<typeof quotationProductSearchQ
 
 const quotationInputItemSchema = z.object({
   productId: uuidSchema,
-  quantity: quotationDecimalStringSchema(3),
   markupPercent: quotationDecimalStringSchema(4),
-  cartonCount: z.number().int().min(1).max(100000).nullable().optional(),
-  unitsPerCarton: z.number().int().min(1).max(100000).nullable().optional(),
+  cartonCount: z.number().int().min(1).max(100000),
   cartonLengthCm: quotationDecimalStringSchema(3).nullable().optional(),
   cartonWidthCm: quotationDecimalStringSchema(3).nullable().optional(),
   cartonHeightCm: quotationDecimalStringSchema(3).nullable().optional(),

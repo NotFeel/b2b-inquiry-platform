@@ -23,6 +23,8 @@ export interface QuoteExportJobPayload {
     tag?: string;
     search?: string;
     piDocumentId?: string;
+    /** Payload for the image-heavy product quotation template export path. */
+    productQuotation?: { input: unknown };
   };
 }
 

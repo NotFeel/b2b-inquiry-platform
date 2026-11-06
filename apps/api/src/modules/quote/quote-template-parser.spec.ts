@@ -131,8 +131,8 @@ describe('inspectQuoteTemplateWorkbook', () => {
 
   it('marks required fields missing instead of accepting a partial template', async () => {
     const buffer = await workbookBuffer([
-      ['Product SKU', 'Product Image', 'Gross Weight (KG)'],
-      ['SKU-1', 'image.png', '12'],
+      ['Product SKU', 'Product Image'],
+      ['SKU-1', 'image.png'],
     ]);
 
     const inspection = await inspectQuoteTemplateWorkbook(buffer, {
@@ -140,12 +140,7 @@ describe('inspectQuoteTemplateWorkbook', () => {
     });
 
     expect(inspection.requiredFieldsPresent).toBe(false);
-    expect(inspection.missingRequiredFields).toEqual([
-      'product.name',
-      'product.price_cny',
-      'product.carton_qty',
-      'product.carton_size_cm',
-    ]);
+    expect(inspection.missingRequiredFields).toEqual(['product.name', 'product.price_cny']);
   });
 
   it('rejects duplicate critical columns', async () => {

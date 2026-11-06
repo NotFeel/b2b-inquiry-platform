@@ -3,6 +3,7 @@ import ExcelJS from 'exceljs';
 import type { WorkerEnv } from '../env';
 import type { WorkerLogger } from '../logger';
 import type { ObjectStorage } from '../storage';
+import { processProductQuotationExport } from './product-quotation-export';
 
 interface Payload {
   jobId: string;
@@ -17,6 +18,7 @@ interface Payload {
     tag?: string;
     search?: string;
     piDocumentId?: string;
+    productQuotation?: { input: unknown };
   };
 }
 
@@ -51,6 +53,16 @@ export async function processQuoteExport(
   try {
     const template = await prisma.quoteTemplate.findUnique({ where: { id: payload.templateId } });
     if (!template) throw new Error('template.not_found');
+
+    if (payload.filter.productQuotation) {
+      return await processProductQuotationExport(
+        payload.jobId,
+        payload.templateId,
+        payload.templateVersion,
+        payload.filter.productQuotation.input,
+        { prisma, storage, logger },
+      );
+    }
 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet(template.sheetName ?? 'Quote');

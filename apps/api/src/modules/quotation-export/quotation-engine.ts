@@ -14,7 +14,8 @@ export type QuotationEngineItemInput = {
   productName: string;
   description: string | null;
   costCny: string;
-  quantity: string;
+  /** Legacy internal callers may still send this; calculation ignores it. */
+  quantity?: string;
   markupPercent: string;
   cartonCount: number | null;
   unitsPerCarton: number | null;
@@ -113,11 +114,32 @@ export function calculateQuotation(input: QuotationEngineInput) {
 
   const items = input.items.map((source, index) => {
     const lineNo = index + 1;
-    const quantity = decimal(source.quantity, 'quantity', lineNo);
     const cost = decimal(source.costCny, 'costCny', lineNo);
     const markup = decimal(source.markupPercent, 'markupPercent', lineNo);
-    if (quantity.isZero()) throw new QuotationEngineError('INVALID_DECIMAL', 'quantity', lineNo);
     if (markup.gt(500)) throw new QuotationEngineError('INVALID_DECIMAL', 'markupPercent', lineNo);
+
+    if (source.cartonCount === null) {
+      throw new QuotationEngineError('PACKAGING_REQUIRED', 'packaging', lineNo);
+    }
+    if (
+      !Number.isSafeInteger(source.cartonCount) ||
+      source.cartonCount <= 0 ||
+      source.cartonCount > 100_000
+    ) {
+      throw new QuotationEngineError('INVALID_PACKAGING', 'cartonCount', lineNo);
+    }
+    if (source.unitsPerCarton === null) {
+      throw new QuotationEngineError('PACKAGING_REQUIRED', 'unitsPerCarton', lineNo);
+    }
+    if (
+      !Number.isSafeInteger(source.unitsPerCarton) ||
+      source.unitsPerCarton <= 0 ||
+      source.unitsPerCarton > 1_000_000
+    ) {
+      throw new QuotationEngineError('INVALID_PACKAGING', 'unitsPerCarton', lineNo);
+    }
+    const quantity = new Decimal(source.cartonCount).times(source.unitsPerCarton);
+
     const unitSalePrice = cost
       .times(new Decimal(1).plus(markup.div(100)))
       .toDecimalPlaces(MONEY_SCALE, Decimal.ROUND_HALF_UP);
@@ -139,19 +161,8 @@ export function calculateQuotation(input: QuotationEngineInput) {
     }
 
     const packagingRequested = input.requirePackaging;
-    if (
-      packagingRequested &&
-      (!source.cartonCount || !source.cartonGrossWeightKg || !hasAllDimensions)
-    ) {
+    if (packagingRequested && (!source.cartonGrossWeightKg || !hasAllDimensions)) {
       throw new QuotationEngineError('PACKAGING_REQUIRED', 'packaging', lineNo);
-    }
-    if (
-      source.cartonCount !== null &&
-      (!Number.isSafeInteger(source.cartonCount) ||
-        source.cartonCount <= 0 ||
-        source.cartonCount > 100_000)
-    ) {
-      throw new QuotationEngineError('INVALID_PACKAGING', 'cartonCount', lineNo);
     }
 
     const dimensionsDecimal = hasAllDimensions
@@ -168,7 +179,7 @@ export function calculateQuotation(input: QuotationEngineInput) {
       throw new QuotationEngineError('PACKAGING_REQUIRED', 'cartonGrossWeightKg', lineNo);
     }
 
-    const cartonCount = source.cartonCount ?? 0;
+    const cartonCount = source.cartonCount;
     const cartonVolume = dimensionsDecimal
       ? dimensionsDecimal[0]!
           .times(dimensionsDecimal[1]!)
