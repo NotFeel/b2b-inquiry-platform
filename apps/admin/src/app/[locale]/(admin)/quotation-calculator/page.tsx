@@ -212,30 +212,32 @@ export default function QuotationCalculatorPage() {
     setResult(null);
   };
 
-  const buildInput = (): CalculatorInput => ({
+  const buildInput = (calculationOnly = false): CalculatorInput => ({
     title: title.trim(),
-    customerId: customerId || null,
-    customer: {
-      companyName: companyName.trim(),
-      contactName: contactName.trim(),
-      phoneE164: phone.trim(),
-      countryCode,
-      ...(email.trim() ? { email: email.trim() } : {}),
-      ...(recipient && city && addressLine
-        ? {
-            shippingAddress: {
-              recipient: recipient.trim(),
-              countryCode,
-              region: region.trim(),
-              city: city.trim(),
-              postalCode: postalCode.trim(),
-              line1: addressLine.trim(),
-              line2: '',
-            },
-          }
-        : {}),
-    },
-    orderDate,
+    customerId: calculationOnly ? null : customerId || null,
+    customer: calculationOnly
+      ? { companyName: '', contactName: '', phoneE164: '' }
+      : {
+          companyName: companyName.trim(),
+          contactName: contactName.trim(),
+          phoneE164: phone.trim(),
+          countryCode,
+          ...(email.trim() ? { email: email.trim() } : {}),
+          ...(recipient && city && addressLine
+            ? {
+                shippingAddress: {
+                  recipient: recipient.trim(),
+                  countryCode,
+                  region: region.trim(),
+                  city: city.trim(),
+                  postalCode: postalCode.trim(),
+                  line1: addressLine.trim(),
+                  line2: '',
+                },
+              }
+            : {}),
+        },
+    orderDate: calculationOnly ? null : orderDate,
     currencyCode,
     exchangeRate: currencyCode === 'CNY' ? '1' : exchangeRate,
     exchangeRateDate,
@@ -298,7 +300,7 @@ export default function QuotationCalculatorPage() {
 
   const runPreview = async () => {
     if (!validateItemQuantities()) return;
-    const input = buildInput();
+    const input = buildInput(true);
     if (!isValidFreightRate(input.cbmRatePerCbm) || !isValidFreightRate(input.kgRatePerKg)) {
       setPreviewRatesInvalid(true);
       setResult(null);
@@ -347,27 +349,71 @@ export default function QuotationCalculatorPage() {
     }
   };
 
+  const orderFieldLabels: Record<string, string> = {
+    customerName: t('quotationCenter.orderFieldCustomerName'),
+    phone: t('quotationCenter.phone'),
+    countryCode: t('quotationCenter.countryCode'),
+    shippingCountryCode: t('quotationCenter.countryCode'),
+    orderDate: t('quotationCenter.orderDate'),
+    recipient: t('quotationCenter.recipient'),
+    city: t('quotationCenter.city'),
+    addressLine: t('quotationCenter.addressLine'),
+  };
+
+  const validateOrderCustomer = () => {
+    const fields: string[] = [];
+    if (!companyName.trim() && !contactName.trim()) fields.push('customerName');
+    if (!/^[A-Z]{2}$/.test(countryCode.trim())) fields.push('countryCode');
+    if (!orderDate) fields.push('orderDate');
+    if (!recipient.trim()) fields.push('recipient');
+    if (!city.trim()) fields.push('city');
+    if (!addressLine.trim()) fields.push('addressLine');
+
+    if (!/^\+[1-9]\d{1,14}$/.test(phone.trim())) {
+      setError(t('quotationCenter.orderPhoneInvalid'));
+      return false;
+    }
+    if (fields.length) {
+      setError(
+        t('quotationCenter.orderFieldsRequired', {
+          fields: fields.map((field) => orderFieldLabels[field] ?? field).join('、'),
+        }),
+      );
+      return false;
+    }
+    return true;
+  };
+
   const createOrder = async () => {
     if (!validateItemQuantities()) return;
+    if (!validateOrderCustomer()) return;
     setSaving(true);
     setError('');
     try {
       const saved = await quotationOrderApi.createOrder(buildInput());
       toast.success(t('quotationCenter.orderCreated', { number: saved.orderNo }));
     } catch (cause) {
-      setError(
-        cause instanceof AdminApiError
-          ? translateError(locale, cause.code)
-          : cause instanceof Error
-            ? cause.message
-            : t('quotationCenter.saveError'),
-      );
+      if (cause instanceof AdminApiError) {
+        const fields = cause.details?.fields;
+        if (Array.isArray(fields) && fields.length) {
+          const fieldNames = fields.filter((field): field is string => typeof field === 'string');
+          setError(
+            fieldNames.includes('phone')
+              ? t('quotationCenter.orderPhoneInvalid')
+              : t('quotationCenter.orderFieldsRequired', {
+                  fields: fieldNames
+                    .map((field) => orderFieldLabels[field] ?? field)
+                    .join('、'),
+                }),
+          );
+        } else setError(translateError(locale, cause.code));
+      } else setError(cause instanceof Error ? cause.message : t('quotationCenter.saveError'));
     } finally {
       setSaving(false);
     }
   };
 
-  const currentInputSignature = JSON.stringify(buildInput());
+  const currentInputSignature = JSON.stringify(buildInput(true));
   const previewMatchesCurrentInput = Boolean(
     result && previewSignature && previewSignature === currentInputSignature,
   );
@@ -377,7 +423,7 @@ export default function QuotationCalculatorPage() {
     setExportingExcel(true);
     setError('');
     try {
-      const file = await quotationOrderApi.exportCalculatorExcel(excelTemplateId, buildInput());
+      const file = await quotationOrderApi.exportCalculatorExcel(excelTemplateId, buildInput(true));
       quotationOrderApi.saveQuotationExcelDownload(file);
       toast.success(t('quotationCenter.excelExported'));
     } catch (cause) {
@@ -432,6 +478,7 @@ export default function QuotationCalculatorPage() {
         <>
           <section className="panel stack-sm">
             <h2>{t('quotationCenter.customerSection')}</h2>
+            <p className="muted">{t('quotationCenter.orderRequirementsHint')}</p>
             {customers.length ? (
               <SimpleField label={t('quotationCenter.existingCustomer')}>
                 <Select
@@ -481,6 +528,7 @@ export default function QuotationCalculatorPage() {
                   value={phone}
                   onChange={(event) => setPhone(event.target.value)}
                   maxLength={24}
+                  placeholder={t('quotationCenter.phonePlaceholder')}
                 />
               </SimpleField>
               <SimpleField label={t('quotationCenter.email')}>
@@ -496,6 +544,7 @@ export default function QuotationCalculatorPage() {
                   value={countryCode}
                   onChange={(event) => setCountryCode(event.target.value.toUpperCase().slice(0, 2))}
                   maxLength={2}
+                  placeholder={t('quotationCenter.countryCodePlaceholder')}
                 />
               </SimpleField>
               <SimpleField label={t('quotationCenter.orderDate')}>

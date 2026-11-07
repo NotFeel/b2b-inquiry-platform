@@ -1076,16 +1076,22 @@ export class QuotationOrderService {
 
   private assertOrderCustomer(input: QuotationCalculationInput) {
     const customer = input.customer;
-    if (
-      !input.orderDate ||
-      (!customer.companyName && !customer.contactName) ||
-      !customer.phoneE164 ||
-      !/^\+[1-9]\d{1,14}$/.test(customer.phoneE164) ||
-      !customer.countryCode ||
-      !customer.shippingAddress
-    ) {
+    const address = customer.shippingAddress;
+    const fields: string[] = [];
+    if (!input.orderDate) fields.push('orderDate');
+    if (!customer.companyName && !customer.contactName) fields.push('customerName');
+    if (!customer.phoneE164 || !/^\+[1-9]\d{1,14}$/.test(customer.phoneE164))
+      fields.push('phone');
+    if (!customer.countryCode) fields.push('countryCode');
+    if (!address?.recipient) fields.push('recipient');
+    if (!address?.countryCode) fields.push('shippingCountryCode');
+    if (!address?.city) fields.push('city');
+    if (!address?.line1) fields.push('addressLine');
+
+    if (fields.length) {
       throw ApiError.validation(
         'A customer name, phone, country, complete shipping address and order date are required to create an order.',
+        { fields },
       );
     }
   }

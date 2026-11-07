@@ -541,7 +541,9 @@ QuotationModule
 
 ### 5.1 预览请求规则
 
-请求包含 customer draft、items（productId、cartonCount、markup、包装尺寸/毛重覆盖值），不含 quantity 或 unitsPerCarton；服务端从 Product 读取 unitsPerCarton，并按箱数重新计算商品总数、金额和运输数据。订单级 KG 报价使用 `volumetricDivisorItemId`、CNY/CBM 与 CNY/kg 单价、`freightCurrencyCode=CNY`、`freightBillingMethod` 和费用输入；服务端重新计算选中的海运费及目标币种总额。不要接受客户端提供的数量、每箱数量、成本、最终售价或分摊结果作为权威值。
+计算预览与当前报价 Excel 导出只依赖商品、运费、币种和费用输入；客户身份、联系方式、收货地址及订单日期不参与计算，不应因这些资料未填写或尚未完成而阻塞预览/导出。保存报价草稿可保留可选 customer draft。创建正式订单时必须提供有效的客户姓名、E.164 电话、两位 ISO 国家/地区代码、订单日期和完整收货地址。
+
+商品输入为 items（productId、cartonCount、markup、包装尺寸/毛重覆盖值），不含 quantity 或 unitsPerCarton；服务端从 Product 读取 unitsPerCarton，并按箱数重新计算商品总数、金额和运输数据。订单级 KG 报价使用 `volumetricDivisorItemId`、CNY/CBM 与 CNY/kg 单价、`freightCurrencyCode=CNY`、`freightBillingMethod` 和费用输入；服务端重新计算选中的海运费及目标币种总额。不要接受客户端提供的数量、每箱数量、成本、最终售价或分摊结果作为权威值。
 
 响应包括：
 - items：SKU/名称快照、成本（仅有成本读取权限）、markup、服务端计算的 quantity（Product 每箱数量 × 箱数）、箱数和每箱数量快照、CNY unit price/line amount、单箱 CBM、商品总 CBM、商品总体积重、商品总毛重、分摊依据、allocated freight。
