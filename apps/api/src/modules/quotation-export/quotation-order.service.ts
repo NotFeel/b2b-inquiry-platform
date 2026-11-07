@@ -673,25 +673,35 @@ export class QuotationOrderService {
       }),
     ]);
     const ids = rows.map((row) => row.id);
-    const documents =
+    const [documents, itemSummaries] =
       ids.length === 0
-        ? []
-        : await this.prisma.commercialDocument.findMany({
-            where: { orderId: { in: ids }, status: { not: 'CANCELLED' } },
-            orderBy: [{ createdAt: 'desc' }],
-            select: {
-              id: true,
-              orderId: true,
-              documentType: true,
-              documentNo: true,
-              revisionNo: true,
-              status: true,
-              createdAt: true,
-              issuedAt: true,
-              totalAmount: true,
-              currency: true,
-            },
-          });
+        ? [[], []]
+        : await Promise.all([
+            this.prisma.commercialDocument.findMany({
+              where: { orderId: { in: ids }, status: { not: 'CANCELLED' } },
+              orderBy: [{ createdAt: 'desc' }],
+              select: {
+                id: true,
+                orderId: true,
+                documentType: true,
+                documentNo: true,
+                revisionNo: true,
+                status: true,
+                createdAt: true,
+                updatedAt: true,
+                issuedAt: true,
+                totalAmount: true,
+                currency: true,
+                pdfFileKey: true,
+              },
+            }),
+            this.prisma.orderItem.groupBy({
+              by: ['orderId'],
+              where: { orderId: { in: ids } },
+              _count: { _all: true },
+              _sum: { quantity: true, cartonCount: true },
+            }),
+          ]);
     const documentsByOrder = new Map<string, typeof documents>();
     for (const document of documents) {
       if (!document.orderId) continue;
@@ -699,31 +709,71 @@ export class QuotationOrderService {
       existing.push(document);
       documentsByOrder.set(document.orderId, existing);
     }
+    const itemSummaryByOrder = new Map(itemSummaries.map((summary) => [summary.orderId, summary] as const));
+    const documentSummary = (document: (typeof documents)[number] | null) =>
+      document
+        ? {
+            id: document.id,
+            type: document.documentType,
+            documentNo: document.documentNo,
+            revisionNo: document.revisionNo,
+            status: document.status,
+            totalAmount: document.totalAmount.toString(),
+            currency: document.currency,
+            hasPdf: Boolean(document.pdfFileKey),
+            createdAt: document.createdAt.toISOString(),
+            updatedAt: document.updatedAt.toISOString(),
+            issuedAt: document.issuedAt?.toISOString() ?? null,
+          }
+        : null;
+    // "Current" is resolved on the server: highest revision per document type,
+    // with creation time only as the tie-breaker between separate document
+    // series. The client never guesses from a sorted created-at list.
+    const currentByType = (related: typeof documents, type: 'PI' | 'CI') => {
+      const series = new Map<string, typeof documents>();
+      for (const document of related) {
+        if (document.documentType !== type) continue;
+        const existing = series.get(document.documentNo) ?? [];
+        existing.push(document);
+        series.set(document.documentNo, existing);
+      }
+      const candidates = [...series.values()].map((documentsInSeries) =>
+        [...documentsInSeries].sort(
+          (left, right) =>
+            right.revisionNo - left.revisionNo ||
+            right.createdAt.getTime() - left.createdAt.getTime(),
+        )[0]!,
+      );
+      // Revisions are compared only inside one documentNo series. Separate
+      // series are ordered by the creation time of their latest revision.
+      return (
+        candidates.sort(
+          (left, right) => right.createdAt.getTime() - left.createdAt.getTime(),
+        )[0] ?? null
+      );
+    };
     return {
       data: rows.map((row) => {
         const related = documentsByOrder.get(row.id) ?? [];
         const piCount = related.filter((document) => document.documentType === 'PI').length;
         const ciCount = related.filter((document) => document.documentType === 'CI').length;
         const latest = related[0] ?? null;
+        const items = itemSummaryByOrder.get(row.id);
         return {
           ...this.orderDto(row, false),
           buyer: this.orderBuyer(row),
+          updatedAt: row.updatedAt.toISOString(),
+          itemSummary: {
+            lineCount: items?._count._all ?? 0,
+            totalQuantity: items?._sum.quantity?.toString() ?? '0',
+            totalCartons: items?._sum.cartonCount ?? 0,
+          },
           documents: {
             piCount,
             ciCount,
-            latest: latest
-              ? {
-                  id: latest.id,
-                  type: latest.documentType,
-                  documentNo: latest.documentNo,
-                  revisionNo: latest.revisionNo,
-                  status: latest.status,
-                  totalAmount: latest.totalAmount.toString(),
-                  currency: latest.currency,
-                  createdAt: latest.createdAt.toISOString(),
-                  issuedAt: latest.issuedAt?.toISOString() ?? null,
-                }
-              : null,
+            latest: documentSummary(latest),
+            pi: documentSummary(currentByType(related, 'PI')),
+            ci: documentSummary(currentByType(related, 'CI')),
           },
         };
       }),
@@ -1783,6 +1833,7 @@ export class QuotationOrderService {
       totalAmountCny: Prisma.Decimal;
       totalAmountForeign: Prisma.Decimal;
       orderDate: Date;
+      updatedAt?: Date;
       version?: number;
       buyerReference?: string | null;
       contractNo?: string | null;
@@ -1849,6 +1900,7 @@ export class QuotationOrderService {
       orderDate: row.orderDate.toISOString().slice(0, 10),
       totalAmountCny: row.totalAmountCny.toString(),
       totalAmountForeign: row.totalAmountForeign.toString(),
+      updatedAt: row.updatedAt?.toISOString() ?? null,
       version: row.version ?? 1,
       buyer: this.orderBuyer(row),
       consignee: row.consigneeSnapshot ?? null,

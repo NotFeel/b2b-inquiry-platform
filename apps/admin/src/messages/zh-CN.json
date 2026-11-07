@@ -2142,7 +2142,10 @@
       "total": "金额",
       "documents": "单据",
       "updatedAt": "最后修改",
-      "actions": "操作"
+      "actions": "操作",
+      "items": "商品",
+      "pi": "PI",
+      "ci": "CI"
     },
     "renderStatus": {
       "QUEUED": "排队中",
@@ -2360,7 +2363,33 @@
       "createPi": "创建 PI",
       "createCi": "创建 CI",
       "exportExcel": "导出 Excel",
-      "loadError": "订单加载失败。"
+      "loadError": "订单加载失败。",
+      "filters": "筛选",
+      "activeFilters": "已选条件",
+      "showAdvanced": "高级筛选",
+      "hideAdvanced": "收起高级筛选",
+      "clearAll": "清空筛选",
+      "removeFilter": "移除筛选 {{label}}",
+      "copyOrderNo": "复制订单编号",
+      "itemsSummary": "{{lines}} 行 · {{quantity}} 件 · {{cartons}} 箱",
+      "notCreated": "未创建",
+      "results": "共 {{total}} 个订单",
+      "refreshing": "正在刷新订单…",
+      "noResults": "没有符合筛选条件的订单。",
+      "noResultsHint": "请调整或清空筛选条件。",
+      "emptyHint": "可在报价计算器中创建报价或订单。",
+      "openCalculator": "打开报价计算器",
+      "permissionDenied": "没有查看订单的权限。",
+      "permissionDeniedHint": "请联系管理员授予 order.read 权限。",
+      "exportGroup": "导出",
+      "exportHint": "选择模板后，在订单行执行导出。",
+      "exportTemplate": "导出模板",
+      "noTemplate": "请先上传并启用订单 Excel 模板。",
+      "emptyTitle": "暂无订单。"
+    },
+    "orderStatuses": {
+      "confirmed": "已确认",
+      "cancelled": "已取消"
     }
   },
   "documentTemplates": {

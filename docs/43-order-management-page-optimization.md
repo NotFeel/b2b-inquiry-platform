@@ -605,3 +605,98 @@ Page 管理路由级状态、列表请求、分页和 Drawer 生命周期；展�
 - 未经授权不执行生产迁移和部署。
 
 **DOC-43 只规范订单管理页面体验和现有功能补齐，不代表商品/价格/费用编辑、订单变更历史或物流履约已实现。**
+
+---
+
+## 14. 阶段 A 复核结论与阶段 B 实施记录
+
+> 实施日期：2026-11-07
+>
+> 范围：仅阶段 A（只读复核）与阶段 B（订单列表优化）。阶段 C/D/E 未在本轮实施。
+
+### 14.1 阶段 A：字段真实来源
+
+| 列表字段 | 当前前端来源 | 服务端来源 | 结论 |
+|---|---|---|---|
+| Order No. | `OrderListRow.orderNo` | `orders.orderNo` | 可展示；点击打开详情，支持复制 |
+| Customer / Contact | `buyer.companyName` / `buyer.contactName` | `Order.buyerSnapshot`；旧订单回退 `customerSnapshot` / 结构化 buyer 列 | 来自订单快照，不读 Customer 实时主档 |
+| Country | `buyer.countryCode` | 同上 | 可展示，不展示电话/邮箱/税号/完整地址 |
+| Order Date | `orderDate` | `orders.orderDate`（date） | 前端按 locale + UTC 格式化，避免日期偏移 |
+| Order Status | `status` | `orders.status`（`OrderStatus`） | 仅展示 CONFIRMED/CANCELLED |
+| Items summary | `itemSummary` | `order_items` 按 `orderId` 聚合行数、`quantity`、`cartonCount` | 真实订单快照；语义为“行数 / 订购件数 / 箱数” |
+| Amount | `totalAmountForeign`、`totalAmountCny`、`currencyCode` | `orders` 金额快照 | 主金额为订单币种，CNY 为弱化参考；不在前端重算 |
+| PI / CI | `documents.pi` / `documents.ci` | `commercial_documents` 按订单和类型聚合，服务端选择当前版本 | 类型、编号、revision、状态、PDF 是否生成均来自单据记录 |
+| Actions | 前端权限 | `order.read`、`commercial_document.create`、Excel 模板读取权限 | 无权限不渲染对应按钮；API 仍独立校验 |
+| Updated At | `updatedAt` | `orders.updatedAt` | 已返回，本期列表未作为独立列展示 |
+
+字段复核补充：
+
+1. 订单状态与单据状态是两个独立事实来源，列表未混用。
+2. `OrderItem.quantity` 是订单快照中的订购总件数，`cartonCount` 是箱数；列表聚合不使用 Product 当前包装字段。
+3. 列表不展示内部成本、markup、电话、邮箱、税号或完整地址。
+4. 详情 Drawer、客户快照修正、PI/CI prefill 与创建继续复用既有 API Client，没有新增第二套客户端。
+
+### 14.2 阶段 A 发现的 API 差异及处理
+
+| 差异 | 处理 |
+|---|---|
+| 列表只有 `documents.piCount/ciCount/latest`，无法可靠区分 PI 与 CI 当前版本 | 服务端新增 `documents.pi` / `documents.ci`。同一 `documentNo` 系列内按最高 revision 选择；不同系列之间按最新 revision 创建时间选择。前端不自行推断 |
+| 列表缺少商品行数、总件数、总箱数 | 服务端用一次 `orderItem.groupBy` 聚合，避免 N+1；新增 `itemSummary` |
+| 列表未返回 `updatedAt` | `orderDto` 增加 `updatedAt`（向后兼容可选字段） |
+| 详情类型已有 `documents`、`buyer`、`trade` 等字段 | 未改动详情接口结构 |
+| 没有订单统计聚合 API | 本期不展示虚构的 Summary Strip 数字 |
+| 没有商品/价格/费用编辑 API | Items、Charges 保持只读；本期未新增编辑按钮 |
+
+本轮未新增 Prisma Model 或数据库迁移，仅扩展列表响应字段。
+
+### 14.3 阶段 B：已实施内容
+
+新增/修改文件：
+
+- `apps/admin/src/components/orders/order-list-view.tsx`：列表工具栏、桌面表格、移动卡片、空/错/加载状态、单据状态单元格。
+- `apps/admin/src/lib/order-list.ts`：URL 筛选、筛选 chips、清空、金额/日期/数量格式化、状态 tone/label。
+- `apps/admin/src/lib/order-list.spec.ts`：筛选、URL 解析、格式化、状态映射单元测试。
+- `apps/admin/src/app/[locale]/(admin)/orders/page.tsx`：列表请求编排、debounce、URL 同步、过期请求忽略、权限门禁、模板/导出状态。
+- `apps/admin/src/app/globals.css`：订单工具条、chips、金额/单据单元格、移动卡片样式。
+- `apps/admin/src/lib/commercial-documents-api.ts`：补充列表类型。
+- `apps/api/src/modules/quotation-export/quotation-order.service.ts`：列表单据当前版本与商品聚合。
+- `apps/admin/src/messages/{en-US,zh-CN}.json`：订单列表中英文文案。
+- `apps/api/src/modules/quotation-export/quotation-order.service.spec.ts`：列表聚合单元测试。
+
+列表行为：
+
+1. 常用筛选（关键词、状态、日期）与高级筛选（币种、国家、有 PI、有 CI）分组；高级筛选可折叠。
+2. 已选筛选以 chips 展示，支持逐项移除和一键清空；清空后回到第 1 页。
+3. 关键词输入 350ms debounce；Enter 可立即提交；筛选写入 URL query，刷新/分享/前进后退可恢复。
+4. 首次加载显示 Skeleton；刷新时保留旧列表并显示局部刷新提示；过期请求不会覆盖新结果。
+5. 首次失败显示 ErrorState + requestId + 重试；筛选无结果显示清空筛选；无订单时按权限提供报价计算器入口。
+6. 无 `order.read` 时不发请求，显示权限不足提示。
+7. 桌面/平板使用表格，移动端（<768px）使用订单卡片；页面本身不依赖固定宽度。
+8. 订单号支持复制；客户列显示公司/联系人，国家独立展示；不展示电话、邮箱、税号、完整地址。
+9. 金额显示订单币种代码和两位小数，CNY 作为弱化参考；无金额显示 `—`。
+10. PI、CI 分别显示当前编号、revision、状态和 PDF 可用性；点击进入商业单据编辑器。
+11. Excel 模板选择归入导出操作组；每个订单行提供导出按钮；未选择模板时禁用并说明原因。
+
+### 14.4 本轮验证
+
+已执行：
+
+- `pnpm --filter @b2b/admin run typecheck`：通过。
+- `pnpm --filter @b2b/api run typecheck`：通过。
+- `pnpm --filter @b2b/admin test`：193 项通过（含新增 `order-list.spec.ts`）。
+- `pnpm --filter @b2b/api test`：421/424 通过；新增列表聚合测试通过；既有 3 项真实模板夹具测试仍失败（与 DOC-43 无关）。
+- `pnpm run lint`：通过。
+- `pnpm --filter @b2b/admin run build`（带本地 API 代理变量）：通过。
+- 使用真实 Prisma Client 调用 `listOrders` 验证：返回 `itemSummary`、`documents.pi`、`documents.ci`，订单金额与单据金额来自数据库快照。
+
+未执行：
+
+- 浏览器 360px/768px/桌面实机截图回归（沙箱环境未建立登录后的浏览器会话）。
+- 阶段 C（Overview/Customer 重构）、阶段 D（Items/Charges/Documents/Audit 深度优化）、阶段 E 全链路回归。
+- Shipment/物流履约相关能力按规范未实现。
+
+### 14.5 回滚
+
+- 仅回退本轮 Admin 页面/组件/文案和 API 列表查询扩展即可。
+- 无数据库迁移，无业务数据写入，无需数据回滚。
+- 历史订单、金额、商品/费用/包装快照和已签发单据均未被修改。

@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
-import { useRouter } from 'next/navigation';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   Badge,
   Button,
@@ -11,7 +11,6 @@ import {
   Input,
   Modal,
   PageHeader,
-  Pagination,
   Select,
   Tabs,
   TabPanel,
@@ -33,8 +32,17 @@ import type {
 import { quotationOrderApi } from '../../../../lib/quotation-order-api';
 import type { CalculatorExcelTemplateOption } from '../../../../lib/quotation-order-api';
 import { localeHref, translateError } from '../../../../lib/i18n';
+import {
+  EMPTY_ORDER_FILTERS,
+  orderFiltersToQueryString,
+  readOrderListFilters,
+  type OrderFilterKey,
+  type OrderListFilters,
+} from '../../../../lib/order-list';
 import { useBreadcrumb } from '../../../../components/use-breadcrumb';
+import { useViewport } from '../../../../components/use-viewport';
 import { useSession } from '../../../../components/session-provider';
+import { OrderListView } from '../../../../components/orders/order-list-view';
 
 type DocumentType = 'PI' | 'CI';
 
@@ -116,6 +124,9 @@ export default function OrdersPage() {
   const breadcrumb = useBreadcrumb();
   const toast = useToast();
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const viewport = useViewport();
 
   const [rows, setRows] = useState<OrderListRow[]>([]);
   const [pagination, setPagination] = useState<PaginatedResponse<OrderListRow>['pagination']>({
@@ -127,16 +138,11 @@ export default function OrdersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [requestId, setRequestId] = useState<string | null>(null);
-  const [filters, setFilters] = useState({
-    q: '',
-    status: '',
-    currency: '',
-    country: '',
-    from: '',
-    to: '',
-    hasPi: '',
-    hasCi: '',
-  });
+  const [filters, setFilters] = useState<OrderListFilters>(() =>
+    readOrderListFilters(searchParams),
+  );
+  const [searchInput, setSearchInput] = useState(() => readOrderListFilters(searchParams).q);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
 
@@ -176,7 +182,29 @@ export default function OrdersPage() {
   const canCreateDocument = can('commercial_document.create');
   const canSyncProfile = can('order.customer_profile.sync') && can('customer.update');
 
+  const canReadOrders = can('order.read');
+  const loadSequence = useRef(0);
+  const detailSequence = useRef(0);
+  const filtersRef = useRef(filters);
+  filtersRef.current = filters;
+
+  const syncUrl = useCallback(
+    (next: OrderListFilters) => {
+      const query = orderFiltersToQueryString(next);
+      router.replace(query.length > 0 ? `${pathname}?${query}` : pathname, { scroll: false });
+    },
+    [pathname, router],
+  );
+
   const load = useCallback(async () => {
+    const sequence = ++loadSequence.current;
+    if (!canReadOrders) {
+      setRows([]);
+      setLoading(false);
+      setError(null);
+      setRequestId(null);
+      return;
+    }
     setLoading(true);
     setError(null);
     setRequestId(null);
@@ -193,9 +221,11 @@ export default function OrdersPage() {
         ...(filters.hasPi ? { hasPi: filters.hasPi } : {}),
         ...(filters.hasCi ? { hasCi: filters.hasCi } : {}),
       });
+      if (sequence !== loadSequence.current) return;
       setRows(result.data);
       setPagination(result.pagination);
     } catch (cause) {
+      if (sequence !== loadSequence.current) return;
       setError(
         cause instanceof AdminApiError
           ? translateError(locale, cause.code)
@@ -203,13 +233,38 @@ export default function OrdersPage() {
       );
       setRequestId(cause instanceof AdminApiError ? (cause.requestId ?? null) : null);
     } finally {
-      setLoading(false);
+      if (sequence === loadSequence.current) setLoading(false);
     }
-  }, [filters, locale, page, pageSize, t]);
+  }, [canReadOrders, filters, locale, page, pageSize, t]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Back/forward navigation restores the filters encoded in the URL. The
+  // comparison prevents our own router.replace from re-applying state.
+  useEffect(() => {
+    const next = readOrderListFilters(searchParams);
+    if (orderFiltersToQueryString(next) === orderFiltersToQueryString(filtersRef.current)) {
+      return;
+    }
+    setFilters(next);
+    setSearchInput(next.q);
+    setPage(1);
+  }, [searchParams]);
+
+  // Keep typing responsive while avoiding one request per keystroke (docs/43 §3.5).
+  useEffect(() => {
+    const trimmed = searchInput.trim();
+    if (trimmed === filters.q) return undefined;
+    const timer = window.setTimeout(() => {
+      const next = { ...filters, q: trimmed };
+      setPage(1);
+      setFilters(next);
+      syncUrl(next);
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [filters, searchInput, syncUrl]);
 
   useEffect(() => {
     if (!can('order.read')) return;
@@ -230,19 +285,23 @@ export default function OrdersPage() {
   }, [can]);
 
   const openDetail = async (id: string) => {
+    const sequence = ++detailSequence.current;
     setDetailLoading(true);
     setDetailError(null);
     setActiveTab('overview');
     try {
-      setDetail(await commercialDocumentsApi.orderDetail(id));
+      const next = await commercialDocumentsApi.orderDetail(id);
+      if (sequence !== detailSequence.current) return;
+      setDetail(next);
     } catch (cause) {
+      if (sequence !== detailSequence.current) return;
       setDetailError(
         cause instanceof AdminApiError
           ? translateError(locale, cause.code)
           : t('commercialDocuments.orders.loadError'),
       );
     } finally {
-      setDetailLoading(false);
+      if (sequence === detailSequence.current) setDetailLoading(false);
     }
   };
 
@@ -397,6 +456,35 @@ export default function OrdersPage() {
     }
   };
 
+  const changeFilter = (key: OrderFilterKey, value: string) => {
+    const next = { ...filters, [key]: value };
+    setPage(1);
+    setFilters(next);
+    syncUrl(next);
+  };
+
+  const clearFilter = (key: OrderFilterKey) => {
+    const next = { ...filters, [key]: '' };
+    setPage(1);
+    setFilters(next);
+    syncUrl(next);
+    if (key === 'q') setSearchInput('');
+  };
+
+  const clearAllFilters = () => {
+    setPage(1);
+    setFilters(EMPTY_ORDER_FILTERS);
+    setSearchInput('');
+    syncUrl(EMPTY_ORDER_FILTERS);
+  };
+
+  const submitSearch = () => {
+    const next = { ...filters, q: searchInput.trim() };
+    setPage(1);
+    setFilters(next);
+    syncUrl(next);
+  };
+
   const exportExcel = async (row: OrderListRow) => {
     if (!templateId) return;
     setExportBusyId(row.id);
@@ -444,287 +532,61 @@ export default function OrdersPage() {
         title={t('commercialDocuments.orders.title')}
         description={t('commercialDocuments.orders.description')}
         actions={
-          <Button variant="secondary" loading={loading} onClick={() => void load()}>
-            {t('commercialDocuments.orders.refresh')}
-          </Button>
+          canReadOrders ? (
+            <Button variant="secondary" loading={loading} onClick={() => void load()}>
+              {t('commercialDocuments.orders.refresh')}
+            </Button>
+          ) : undefined
         }
       />
 
-      {error ? (
-        <div className="alert alert-error" role="alert">
-          {error}
-          {requestId ? <span className="mono"> · {requestId}</span> : null}
-        </div>
-      ) : null}
-
-      <section className="panel stack-sm" aria-label={t('commercialDocuments.orders.search')}>
-        <div className="form-grid">
-          <Field label={t('commercialDocuments.orders.search')}>
-            {({ inputId, describedBy }) => (
-              <Input
-                inputId={inputId}
-                describedBy={describedBy}
-                value={filters.q}
-                onChange={(event) => {
-                  setPage(1);
-                  setFilters((current) => ({ ...current, q: event.target.value }));
-                }}
-                maxLength={120}
-              />
-            )}
-          </Field>
-          <Field label={t('commercialDocuments.orders.status')}>
-            {({ inputId, describedBy }) => (
-              <Select
-                inputId={inputId}
-                describedBy={describedBy}
-                value={filters.status}
-                placeholder={t('commercialDocuments.orders.any')}
-                options={[
-                  { value: 'CONFIRMED', label: 'CONFIRMED' },
-                  { value: 'CANCELLED', label: 'CANCELLED' },
-                ]}
-                onChange={(event) => {
-                  setPage(1);
-                  setFilters((current) => ({ ...current, status: event.target.value }));
-                }}
-              />
-            )}
-          </Field>
-          <Field label={t('commercialDocuments.orders.currency')}>
-            {({ inputId, describedBy }) => (
-              <Input
-                inputId={inputId}
-                describedBy={describedBy}
-                value={filters.currency}
-                onChange={(event) => {
-                  setPage(1);
-                  setFilters((current) => ({
-                    ...current,
-                    currency: event.target.value.toUpperCase().slice(0, 3),
-                  }));
-                }}
-                maxLength={3}
-              />
-            )}
-          </Field>
-          <Field label={t('commercialDocuments.orders.country')}>
-            {({ inputId, describedBy }) => (
-              <Input
-                inputId={inputId}
-                describedBy={describedBy}
-                value={filters.country}
-                onChange={(event) => {
-                  setPage(1);
-                  setFilters((current) => ({
-                    ...current,
-                    country: event.target.value.toUpperCase().slice(0, 2),
-                  }));
-                }}
-                maxLength={2}
-              />
-            )}
-          </Field>
-          <Field label={t('commercialDocuments.orders.from')}>
-            {({ inputId, describedBy }) => (
-              <Input
-                inputId={inputId}
-                describedBy={describedBy}
-                type="date"
-                value={filters.from}
-                onChange={(event) => {
-                  setPage(1);
-                  setFilters((current) => ({ ...current, from: event.target.value }));
-                }}
-              />
-            )}
-          </Field>
-          <Field label={t('commercialDocuments.orders.to')}>
-            {({ inputId, describedBy }) => (
-              <Input
-                inputId={inputId}
-                describedBy={describedBy}
-                type="date"
-                value={filters.to}
-                onChange={(event) => {
-                  setPage(1);
-                  setFilters((current) => ({ ...current, to: event.target.value }));
-                }}
-              />
-            )}
-          </Field>
-          <Field label={t('commercialDocuments.orders.hasPi')}>
-            {({ inputId, describedBy }) => (
-              <Select
-                inputId={inputId}
-                describedBy={describedBy}
-                value={filters.hasPi}
-                placeholder={t('commercialDocuments.orders.any')}
-                options={[
-                  { value: 'true', label: t('commercialDocuments.orders.yes') },
-                  { value: 'false', label: t('commercialDocuments.orders.no') },
-                ]}
-                onChange={(event) => {
-                  setPage(1);
-                  setFilters((current) => ({ ...current, hasPi: event.target.value }));
-                }}
-              />
-            )}
-          </Field>
-          <Field label={t('commercialDocuments.orders.hasCi')}>
-            {({ inputId, describedBy }) => (
-              <Select
-                inputId={inputId}
-                describedBy={describedBy}
-                value={filters.hasCi}
-                placeholder={t('commercialDocuments.orders.any')}
-                options={[
-                  { value: 'true', label: t('commercialDocuments.orders.yes') },
-                  { value: 'false', label: t('commercialDocuments.orders.no') },
-                ]}
-                onChange={(event) => {
-                  setPage(1);
-                  setFilters((current) => ({ ...current, hasCi: event.target.value }));
-                }}
-              />
-            )}
-          </Field>
-        </div>
-        {can('order.read') ? (
-          <div className="row-between">
-            <label className="field" style={{ maxWidth: 340 }}>
-              <span className="field-label">{t('quotationCenter.excelTemplate')}</span>
-              <Select
-                value={templateId}
-                disabled={templates.length === 0}
-                options={templates.map((template) => ({
-                  value: template.id,
-                  label: `${template.name} v${template.version}`,
-                }))}
-                onChange={(event) => setTemplateId(event.target.value)}
-              />
-            </label>
-            <span className="muted">
-              {templates.length === 0 ? t('quotationCenter.noExcelTemplate') : ''}
-            </span>
-          </div>
-        ) : null}
-      </section>
-
-      <section className="panel table-scroll" aria-live="polite">
-        {loading ? (
-          <p>{t('commercialDocuments.orders.loading')}</p>
-        ) : rows.length === 0 ? (
-          <p>{t('commercialDocuments.orders.empty')}</p>
-        ) : (
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>{t('commercialDocuments.columns.orderNo')}</th>
-                <th>{t('commercialDocuments.columns.customer')}</th>
-                <th>{t('commercialDocuments.columns.contact')}</th>
-                <th>{t('commercialDocuments.columns.country')}</th>
-                <th>{t('commercialDocuments.columns.orderDate')}</th>
-                <th>{t('commercialDocuments.columns.status')}</th>
-                <th>{t('commercialDocuments.columns.currency')}</th>
-                <th>{t('commercialDocuments.columns.total')}</th>
-                <th>{t('commercialDocuments.columns.documents')}</th>
-                <th>{t('commercialDocuments.columns.actions')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.id}>
-                  <td className="mono">
-                    <button type="button" className="link-button" onClick={() => void openDetail(row.id)}>
-                      {row.orderNo}
-                    </button>
-                  </td>
-                  <td>{String(row.buyer?.companyName ?? '—')}</td>
-                  <td>{String(row.buyer?.contactName ?? '—')}</td>
-                  <td>{String(row.buyer?.countryCode ?? '—')}</td>
-                  <td>{row.orderDate}</td>
-                  <td>
-                    <Badge tone={row.status === 'CANCELLED' ? 'danger' : 'success'}>
-                      {row.status}
-                    </Badge>
-                  </td>
-                  <td>{row.currencyCode}</td>
-                  <td className="mono">
-                    {row.totalAmountForeign} {row.currencyCode}
-                  </td>
-                  <td>
-                    {t('commercialDocuments.orders.documents', {
-                      pi: row.documents?.piCount ?? 0,
-                      ci: row.documents?.ciCount ?? 0,
-                    })}
-                  </td>
-                  <td>
-                    <div className="row-actions">
-                      <Button size="sm" variant="ghost" onClick={() => void openDetail(row.id)}>
-                        {t('commercialDocuments.orders.view')}
-                      </Button>
-                      {canCreateDocument && row.status === 'CONFIRMED' ? (
-                        <>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => void openDetail(row.id).then(() => openCreate('PI', row.id))}
-                          >
-                            {t('commercialDocuments.orders.createPi')}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => void openDetail(row.id).then(() => openCreate('CI', row.id))}
-                          >
-                            {t('commercialDocuments.orders.createCi')}
-                          </Button>
-                        </>
-                      ) : null}
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        loading={exportBusyId === row.id}
-                        disabled={!templateId || Boolean(exportBusyId)}
-                        onClick={() => void exportExcel(row)}
-                      >
-                        {t('commercialDocuments.orders.exportExcel')}
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-        <Pagination
-          page={pagination.page}
-          pageSize={pagination.pageSize}
-          total={pagination.total}
-          totalPages={pagination.totalPages}
-          onPageChange={setPage}
-          onPageSizeChange={(size) => {
-            setPage(1);
-            setPageSize(size);
-          }}
-          labels={{
-            previous: t('common.previous'),
-            next: t('common.next'),
-            rowsPerPage: t('common.rowsPerPage'),
-            range: t('list.range', {
-              from: (pagination.page - 1) * pagination.pageSize + 1,
-              to: Math.min(pagination.page * pagination.pageSize, pagination.total),
-              total: pagination.total,
-            }),
-          }}
-        />
-      </section>
+      <OrderListView
+        rows={rows}
+        loading={loading}
+        error={error}
+        requestId={requestId}
+        filters={filters}
+        searchInput={searchInput}
+        advancedOpen={advancedOpen}
+        templates={templates}
+        templateId={templateId}
+        exportBusyId={exportBusyId}
+        page={pagination.page}
+        pageSize={pagination.pageSize}
+        total={pagination.total}
+        totalPages={pagination.totalPages}
+        canRead={canReadOrders}
+        canCreateDocument={canCreateDocument}
+        canExport={canReadOrders}
+        canOpenCalculator={can('quotation.read') || can('quotation.calculate')}
+        isMobile={viewport === 'mobile'}
+        locale={locale}
+        t={t}
+        onSearchInputChange={setSearchInput}
+        onSearchSubmit={submitSearch}
+        onToggleAdvanced={() => setAdvancedOpen((current) => !current)}
+        onChangeFilter={changeFilter}
+        onClearFilter={clearFilter}
+        onClearAll={clearAllFilters}
+        onRefresh={() => void load()}
+        onPageChange={setPage}
+        onPageSizeChange={(size) => {
+          setPage(1);
+          setPageSize(size);
+        }}
+        onOpenDetail={(id) => void openDetail(id)}
+        onCreateDocument={(type, orderId) => void openCreate(type, orderId)}
+        onExport={(row) => void exportExcel(row)}
+        onTemplateChange={setTemplateId}
+        onOpenDocument={(id) => router.push(localeHref(locale, `/commercial-documents/${id}`))}
+        onOpenCalculator={() => router.push(localeHref(locale, '/quotation-calculator'))}
+      />
 
       <Drawer
         open={Boolean(detail) || detailLoading}
         title={detail?.orderNo ?? t('commercialDocuments.orderDetail.title')}
         onClose={() => {
+          detailSequence.current += 1;
           setDetail(null);
           setDetailError(null);
         }}

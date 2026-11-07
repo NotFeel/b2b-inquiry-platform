@@ -82,3 +82,112 @@ describe('quotation product search', () => {
     expect(result[0]?.costCny).toBeNull();
   });
 });
+
+describe('order list aggregation', () => {
+  it('returns per-type current documents and item snapshot totals', async () => {
+    const now = new Date('2026-11-07T10:00:00.000Z');
+    const orderFindMany = vi.fn(async () => [
+      {
+        id: '11111111-2222-4333-8444-555555555555',
+        orderNo: 'O-20261107-AAAAAA',
+        status: 'CONFIRMED',
+        currencyCode: 'USD',
+        totalAmountCny: new Decimal('1250.00'),
+        totalAmountForeign: new Decimal('172.50'),
+        orderDate: new Date('2026-11-07T00:00:00.000Z'),
+        customerSnapshot: { companyName: 'ACME', contactName: 'Bob', countryCode: 'US' },
+        buyerCompanyName: 'ACME',
+        buyerContactName: 'Bob',
+        buyerCountryCode: 'US',
+        version: 2,
+        updatedAt: now,
+      },
+    ]);
+    const orderCount = vi.fn(async () => 1);
+    const documentFindMany = vi.fn(async () => [
+      {
+        id: '22222222-3333-4444-8555-666666666666',
+        orderId: '11111111-2222-4333-8444-555555555555',
+        documentType: 'PI',
+        documentNo: 'PI-1',
+        revisionNo: 2,
+        status: 'DRAFT',
+        createdAt: new Date('2026-11-07T09:00:00.000Z'),
+        updatedAt: now,
+        issuedAt: null,
+        totalAmount: new Decimal('172.50'),
+        currency: 'USD',
+        pdfFileKey: null,
+      },
+      {
+        id: '33333333-4444-4555-8666-777777777777',
+        orderId: '11111111-2222-4333-8444-555555555555',
+        documentType: 'PI',
+        documentNo: 'PI-1',
+        revisionNo: 1,
+        status: 'SUPERSEDED',
+        createdAt: new Date('2026-11-07T08:00:00.000Z'),
+        updatedAt: now,
+        issuedAt: new Date('2026-11-07T08:30:00.000Z'),
+        totalAmount: new Decimal('172.50'),
+        currency: 'USD',
+        pdfFileKey: 'private/commercial-documents/old.pdf',
+      },
+      {
+        id: '44444444-5555-4666-8777-888888888888',
+        orderId: '11111111-2222-4333-8444-555555555555',
+        documentType: 'CI',
+        documentNo: 'CI-1',
+        revisionNo: 1,
+        status: 'ISSUED',
+        createdAt: new Date('2026-11-07T09:30:00.000Z'),
+        updatedAt: now,
+        issuedAt: new Date('2026-11-07T09:30:00.000Z'),
+        totalAmount: new Decimal('172.50'),
+        currency: 'USD',
+        pdfFileKey: 'private/commercial-documents/ci.pdf',
+      },
+    ]);
+    const orderItemGroupBy = vi.fn(async () => [
+      {
+        orderId: '11111111-2222-4333-8444-555555555555',
+        _count: { _all: 2 },
+        _sum: { quantity: new Decimal('528'), cartonCount: 3 },
+      },
+    ]);
+    const prisma = {
+      order: { count: orderCount, findMany: orderFindMany },
+      commercialDocument: { findMany: documentFindMany },
+      orderItem: { groupBy: orderItemGroupBy },
+      $transaction: async (operations: Promise<unknown>[]) => Promise.all(operations),
+    } as unknown as PrismaService;
+    const service = new QuotationOrderService(
+      prisma,
+      {} as AuditService,
+      {} as StorageService,
+      {} as CategoriesService,
+      { error: vi.fn(), warn: vi.fn() } as unknown as JsonLogger,
+    );
+
+    const result = await service.listOrders({ page: 1, pageSize: 20, sortOrder: 'desc' } as never);
+
+    expect(documentFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          orderId: { in: ['11111111-2222-4333-8444-555555555555'] },
+          status: { not: 'CANCELLED' },
+        },
+      }),
+    );
+    expect(result.data[0]).toMatchObject({
+      itemSummary: { lineCount: 2, totalQuantity: '528', totalCartons: 3 },
+      documents: {
+        piCount: 2,
+        ciCount: 1,
+        pi: { documentNo: 'PI-1', revisionNo: 2, status: 'DRAFT', hasPdf: false },
+        ci: { documentNo: 'CI-1', revisionNo: 1, status: 'ISSUED', hasPdf: true },
+      },
+    });
+    expect(result.data[0]?.updatedAt).toBe(now.toISOString());
+  });
+});

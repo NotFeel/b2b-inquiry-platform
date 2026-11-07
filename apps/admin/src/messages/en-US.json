@@ -2142,7 +2142,10 @@
       "total": "Total",
       "documents": "Documents",
       "updatedAt": "Updated",
-      "actions": "Actions"
+      "actions": "Actions",
+      "items": "Items",
+      "pi": "PI",
+      "ci": "CI"
     },
     "renderStatus": {
       "QUEUED": "Queued",
@@ -2360,7 +2363,33 @@
       "createPi": "Create PI",
       "createCi": "Create CI",
       "exportExcel": "Export Excel",
-      "loadError": "Orders could not be loaded."
+      "loadError": "Orders could not be loaded.",
+      "filters": "Filters",
+      "activeFilters": "Active filters",
+      "showAdvanced": "Advanced filters",
+      "hideAdvanced": "Hide advanced",
+      "clearAll": "Clear all",
+      "removeFilter": "Remove filter {{label}}",
+      "copyOrderNo": "Copy order number",
+      "itemsSummary": "{{lines}} lines · {{quantity}} units · {{cartons}} cartons",
+      "notCreated": "Not created",
+      "results": "{{total}} orders",
+      "refreshing": "Refreshing orders…",
+      "noResults": "No orders match these filters.",
+      "noResultsHint": "Adjust or clear the active filters.",
+      "emptyHint": "Create a quotation or order in the quotation calculator.",
+      "openCalculator": "Open quotation calculator",
+      "permissionDenied": "You do not have permission to view orders.",
+      "permissionDeniedHint": "Ask an administrator for the order.read permission.",
+      "exportGroup": "Export",
+      "exportHint": "Choose a template, then export from an order row.",
+      "exportTemplate": "Export template",
+      "noTemplate": "Upload and activate an order Excel template before exporting.",
+      "emptyTitle": "No orders yet."
+    },
+    "orderStatuses": {
+      "confirmed": "Confirmed",
+      "cancelled": "Cancelled"
     }
   },
   "documentTemplates": {

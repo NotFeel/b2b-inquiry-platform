@@ -83,7 +83,9 @@ export type OrderDocumentSummary = {
   status: string;
   currency: string;
   totalAmount: string;
+  hasPdf: boolean;
   createdAt: string;
+  updatedAt: string;
   issuedAt?: string | null;
 };
 
@@ -95,12 +97,20 @@ export type OrderListRow = {
   totalAmountCny: string;
   totalAmountForeign: string;
   orderDate: string;
+  updatedAt?: string | null;
   version: number;
   buyer?: DocumentParty | null;
+  itemSummary?: {
+    lineCount: number;
+    totalQuantity: string;
+    totalCartons: number;
+  };
   documents?: {
     piCount: number;
     ciCount: number;
     latest: OrderDocumentSummary | null;
+    pi: OrderDocumentSummary | null;
+    ci: OrderDocumentSummary | null;
   };
 };
 
