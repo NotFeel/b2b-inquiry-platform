@@ -159,7 +159,12 @@
       "sortOrder": "排序值",
       "tags": "标签",
       "images": "图片",
-      "appendRandomSlug": "追加 6 位随机数字（推荐）"
+      "appendRandomSlug": "追加 6 位随机数字（推荐）",
+      "hsCode": "HS 编码",
+      "originCountryCode": "原产国",
+      "customsDescription": "报关品名",
+      "netWeightPerUnitKg": "单件净重（kg）",
+      "exportUnit": "出口单位"
     },
     "sections": {
       "basic": "基本信息",
@@ -169,7 +174,8 @@
       "tags": "标签与运营",
       "cost": "内部报价信息",
       "images": "图片图库",
-      "seo": "SEO"
+      "seo": "SEO",
+      "export": "出口与报关"
     },
     "actions": {
       "save": "保存并返回列表",
@@ -342,7 +348,7 @@
     "moveUp": "上移 {{name}}",
     "moveDown": "下移 {{name}}",
     "deleteTitle": "删除品类",
-    "deleteConfirm": "确认删除「{{name}}」？",
+    "deleteConfirm": "确认删除该品类？存在子品类或商品时系统会阻止删除。",
     "deleteConfirmOk": "确认删除「{{name}}」？该操作无法撤销。",
     "deleteBlocked": "存在子品类或关联商品时不能删除，可改为停用或前台隐藏。",
     "deleteHasChildren": "该品类仍有 {{count}} 个子品类，请先移动或删除子品类。",
@@ -434,7 +440,6 @@
     "enabled": "启用",
     "visible": "前台显示",
     "productCount": "商品数",
-    "deleteConfirm": "确认删除该品类？存在子品类或商品时系统会阻止删除。",
     "moveHint": "不允许把品类移动到自身或其后代之下。"
   },
   "tags": {
@@ -1305,14 +1310,25 @@
       "update": "编辑报价草稿",
       "delete": "归档报价",
       "convert_to_order": "将报价转为订单",
-      "cost": { "read": "查看报价成本与利润", "update": "覆盖报价成本" }
+      "cost": {
+        "read": "查看报价成本与利润",
+        "update": "覆盖报价成本"
+      }
     },
     "order": {
       "read": "查看订单",
       "create": "创建订单",
       "update": "修改订单",
       "cancel": "取消订单",
-      "cost": { "read": "查看订单成本与运费分摊" }
+      "cost": {
+        "read": "查看订单成本与运费分摊"
+      },
+      "customer_snapshot": {
+        "update": "修正订单客户快照"
+      },
+      "customer_profile": {
+        "sync": "同步订单客户资料至客户主档"
+      }
     },
     "tag": {
       "read": "查看标签",
@@ -1380,7 +1396,8 @@
     "customer": {
       "read": "查看客户",
       "create": "新建客户",
-      "export": "导出客户"
+      "export": "导出客户",
+      "update": "更新客户主档"
     },
     "analytics": {
       "read": "查看分析数据"
@@ -1397,6 +1414,30 @@
       "download": "下载或预览 PDF",
       "retry": "重试 PDF 转换",
       "delete": "删除 PDF 转换记录"
+    },
+    "commercial_document": {
+      "read": "查看商业单据",
+      "create": "创建商业单据",
+      "update": "编辑草稿商业单据",
+      "preview": "预览与生成商业单据",
+      "issue": "签发商业单据",
+      "revision": {
+        "create": "创建商业单据修订"
+      },
+      "cancel": "取消商业单据",
+      "download": "下载商业单据 PDF"
+    },
+    "document_template": {
+      "read": "查看单据模板",
+      "create": "创建单据模板",
+      "update": "编辑单据模板",
+      "publish": "发布单据模板版本"
+    },
+    "company_profile": {
+      "manage": "管理公司资料"
+    },
+    "bank_account": {
+      "manage": "管理银行账户"
     }
   },
   "permissionModules": {
@@ -1420,7 +1461,10 @@
     "analytics": "分析",
     "audit": "审计日志",
     "job": "后台任务",
-    "excel-pdf": "Excel 转 PDF"
+    "excel-pdf": "Excel 转 PDF",
+    "commercial-document": "商业单据",
+    "document-template": "单据模板",
+    "company-profile": "公司资料"
   },
   "roles": {
     "title": "角色与权限",
@@ -1695,7 +1739,7 @@
     "errors": {
       "row": "Excel 行",
       "sku": "SKU",
-      "field": "字段",
+      "field": "字段格式、长度或数值范围不合法。",
       "code": "错误代码",
       "message": "问题与修复方式",
       "validate": "工作簿校验失败，请检查文件后重试。",
@@ -1716,7 +1760,6 @@
       "priceFormula": "内部价格只允许数字、括号和 + - * /。",
       "price": "内部价格必须是合法的非负 Decimal。",
       "required": "必填字段不能为空。",
-      "field": "字段格式、长度或数值范围不合法。",
       "duplicateSku": "文件内存在重复 SKU。",
       "duplicateSlug": "文件内存在重复 slug。",
       "skuExists": "SKU 已存在于商品库。",
@@ -1972,7 +2015,23 @@
     "ordersTitle": "订单管理",
     "ordersDescription": "查看已确认订单及其保存的金额快照。",
     "noOrders": "暂无订单。",
-    "orderNo": "订单编号"
+    "orderNo": "订单编号",
+    "customerType": "客户类型",
+    "customerTypeCompany": "企业",
+    "customerTypeIndividual": "个人",
+    "legalCompanyName": "公司法定名称",
+    "taxId": "税号 / VAT",
+    "preferredLanguage": "单据语言",
+    "buyerReference": "买方参考号",
+    "contractNo": "合同编号",
+    "tradeTerms": "贸易条款",
+    "incoterm": "贸易术语",
+    "namedPlace": "指定地点",
+    "paymentTerms": "付款条件",
+    "billingAddress": "账单地址",
+    "billingSameAsShipping": "账单地址与收货地址相同",
+    "shippingCompany": "收货公司",
+    "shippingPhone": "收货电话"
   },
   "auditActions": {
     "auth_login_succeeded": "登录成功",
@@ -2034,5 +2093,563 @@
     "customer_create": "新建客户",
     "inquiry_activity_create": "新增接待记录",
     "maintenance_orphan_assets_removed": "清理孤立文件"
+  },
+  "commercialDocuments": {
+    "title": "商业单据",
+    "description": "从已确认订单创建 PI、CI 单据，补齐贸易与运输信息，预览、签发并保留每次修订。",
+    "filters": {
+      "search": "订单、单据编号或买方",
+      "type": "单据类型",
+      "status": "状态",
+      "order": "订单",
+      "from": "开始日期",
+      "to": "结束日期",
+      "all": "全部"
+    },
+    "types": {
+      "PI": "形式发票（PI）",
+      "CI": "商业发票（CI）",
+      "all": "全部类型"
+    },
+    "locales": {
+      "en-US": "英文（en-US）",
+      "zh-CN": "简体中文（zh-CN）"
+    },
+    "statuses": {
+      "DRAFT": "草稿",
+      "REVIEW": "待审核",
+      "ISSUED": "已签发",
+      "SUPERSEDED": "已被替代",
+      "CANCELLED": "已取消",
+      "all": "全部状态"
+    },
+    "columns": {
+      "documentNo": "单据编号",
+      "type": "单据类型",
+      "revision": "修订版本",
+      "order": "订单编号",
+      "buyer": "买方",
+      "issueDate": "签发日期",
+      "template": "模板",
+      "render": "PDF 状态",
+      "orderNo": "订单编号",
+      "customer": "客户",
+      "contact": "联系人",
+      "country": "国家",
+      "orderDate": "订单日期",
+      "status": "状态",
+      "currency": "币种",
+      "total": "金额",
+      "documents": "单据",
+      "updatedAt": "最后修改",
+      "actions": "操作"
+    },
+    "renderStatus": {
+      "QUEUED": "排队中",
+      "PROCESSING": "生成中",
+      "SUCCEEDED": "已生成",
+      "FAILED": "失败",
+      "CANCELLED": "已取消",
+      "none": "未生成"
+    },
+    "actions": {
+      "open": "打开编辑",
+      "download": "下载 PDF",
+      "preview": "预览",
+      "render": "生成 PDF",
+      "retryRender": "重试 PDF",
+      "refresh": "刷新",
+      "new": "新建单据"
+    },
+    "create": {
+      "title": "创建商业单据",
+      "type": "单据类型",
+      "template": "模板",
+      "locale": "语言",
+      "create": "创建草稿",
+      "missing": "签发前仍需补全的字段",
+      "missingItems": "部分商品行仍需补全报关信息。",
+      "orderMissing": "请先选择订单。"
+    },
+    "editor": {
+      "title": "商业单据",
+      "back": "返回单据列表",
+      "save": "保存草稿",
+      "saved": "草稿已保存。",
+      "preview": "预览",
+      "issue": "签发",
+      "issueConfirm": "签发后将冻结当前修订并生成最终 PDF，后续修改需创建新修订。",
+      "issued": "单据已签发。",
+      "render": "生成 PDF",
+      "rendered": "PDF 生成任务已提交。",
+      "download": "下载 PDF",
+      "revision": "创建修订",
+      "revised": "新修订已创建。",
+      "cancel": "取消单据",
+      "cancelConfirm": "单据将被取消。已签发的文件仍保留在私有存储并保留审计记录。",
+      "cancelled": "单据已取消。",
+      "refresh": "重新加载",
+      "unsaved": "有未保存的修改。",
+      "frozen": "该单据已冻结，请创建修订后再修改。",
+      "issuedWarning": "该单据已签发，修改订单不会改变已签发文件。",
+      "missingTitle": "签发前请补全以下字段",
+      "missingItemLine": "第 {line} 行缺少：{fields}",
+      "missingFields": {
+        "items": "至少需要一条商品明细"
+      },
+      "previewUnavailable": "请先保存草稿再预览。",
+      "sections": {
+        "document": "订单与模板",
+        "seller": "卖方 / 出口商",
+        "buyer": "买方 / Sold To",
+        "consignee": "收货人 / Ship To",
+        "notifyParty": "通知方",
+        "invoice": "发票信息",
+        "trade": "贸易条款",
+        "shipping": "运输与交付",
+        "payment": "付款信息",
+        "declaration": "声明",
+        "signature": "签章",
+        "items": "商品明细",
+        "totals": "金额与费用",
+        "notes": "备注"
+      },
+      "fields": {
+        "companyName": "公司",
+        "contactName": "联系人",
+        "phone": "电话",
+        "email": "邮箱",
+        "taxId": "税号 / VAT",
+        "addressLine1": "地址 1",
+        "addressLine2": "地址 2",
+        "city": "城市",
+        "state": "州/省/地区",
+        "postalCode": "邮编",
+        "countryCode": "国家代码",
+        "documentNo": "单据编号",
+        "issueDate": "签发日期",
+        "validUntil": "有效期至",
+        "revision": "版本",
+        "currency": "币种",
+        "locale": "语言",
+        "template": "模板",
+        "incoterm": "贸易术语",
+        "namedPlace": "指定地点",
+        "paymentTerms": "付款条件",
+        "exchangeRate": "汇率",
+        "shippingMethod": "运输方式",
+        "portOfLoading": "起运港",
+        "portOfDischarge": "目的港",
+        "route": "路线 / 目的地",
+        "transitTime": "预计运输时间",
+        "cartonCount": "箱数",
+        "netWeightKg": "净重（kg）",
+        "grossWeightKg": "毛重（kg）",
+        "cbm": "体积（CBM）",
+        "marks": "唛头",
+        "accountHolder": "账户名称",
+        "bankName": "银行名称",
+        "bankAddress": "银行地址",
+        "accountNumber": "账号",
+        "swift": "SWIFT / BIC",
+        "wireRouting": "电汇路由号",
+        "achRouting": "ACH 路由号",
+        "originCountry": "原产国",
+        "declarationText": "原产地声明",
+        "authenticity": "真实性声明",
+        "sellerName": "卖方签署人",
+        "sellerTitle": "职务",
+        "notes": "备注",
+        "subtotal": "商品金额合计",
+        "discount": "折扣",
+        "freight": "运费",
+        "insurance": "保险",
+        "otherCharges": "其他费用",
+        "total": "合计"
+      },
+      "items": {
+        "add": "添加商品行",
+        "remove": "移除",
+        "lineNo": "序号",
+        "sku": "SKU",
+        "description": "品名",
+        "hsCode": "HS 编码",
+        "origin": "原产国",
+        "quantity": "数量",
+        "unit": "单位",
+        "unitPrice": "单价",
+        "discount": "折扣",
+        "amount": "金额",
+        "cartons": "箱数",
+        "netWeight": "净重（kg）",
+        "grossWeight": "毛重（kg）",
+        "cbm": "CBM",
+        "currencyMismatch": "每行必须使用单据币种。"
+      }
+    },
+    "orderEditor": {
+      "title": "修正客户资料",
+      "description": "仅修改本订单快照，不会修改商品、费用、价格或总额。",
+      "syncLabel": "同时更新客户主档",
+      "syncHint": "需要客户更新权限，且不会修改其他订单。",
+      "sync": "同步至客户主档",
+      "syncConfirm": "使用这些值更新客户主档？其他订单仍保留各自快照。",
+      "synced": "客户主档已更新。",
+      "issuedHint": "该订单已有已签发单据。修改订单不会改变该文件，请创建修订。",
+      "buyerSection": "买方",
+      "consigneeSection": "收货人",
+      "notifySection": "通知方",
+      "referenceSection": "参考信息",
+      "save": "保存修正",
+      "saved": "订单客户资料已更新。"
+    },
+    "orderDetail": {
+      "title": "订单详情",
+      "overview": "概览",
+      "customer": "客户资料",
+      "items": "商品明细",
+      "charges": "费用与汇率",
+      "documents": "商业单据",
+      "audit": "操作日志",
+      "orderNo": "订单编号",
+      "status": "状态",
+      "orderDate": "订单日期",
+      "currency": "币种",
+      "totalCny": "人民币合计",
+      "totalForeign": "外币合计",
+      "version": "版本",
+      "buyer": "买方",
+      "consignee": "收货人",
+      "notifyParty": "通知方",
+      "billingAddress": "账单地址",
+      "shippingAddress": "收货地址",
+      "buyerReference": "买方参考号",
+      "contractNo": "合同编号",
+      "trade": "贸易条款",
+      "incoterm": "贸易术语",
+      "namedPlace": "指定地点",
+      "paymentTerms": "付款条件",
+      "exchangeRate": "汇率",
+      "fees": "费用",
+      "noDocuments": "该订单尚未创建 PI 或 CI。",
+      "noAudit": "暂无操作记录。",
+      "createPi": "创建 PI",
+      "createCi": "创建 CI",
+      "editCustomer": "编辑客户资料"
+    },
+    "orders": {
+      "title": "订单管理",
+      "description": "查询已确认订单、查看完整快照、修正客户资料并创建 PI 或 CI 单据。",
+      "search": "订单号、公司、联系人、电话或邮箱",
+      "status": "状态",
+      "currency": "币种",
+      "country": "国家",
+      "from": "开始日期",
+      "to": "结束日期",
+      "hasPi": "已创建 PI",
+      "hasCi": "已创建 CI",
+      "any": "不限",
+      "yes": "是",
+      "no": "否",
+      "refresh": "刷新",
+      "loading": "正在加载订单…",
+      "empty": "没有符合筛选条件的订单。",
+      "documents": "{{pi}} 个 PI / {{ci}} 个 CI",
+      "view": "查看",
+      "editCustomer": "编辑客户",
+      "createPi": "创建 PI",
+      "createCi": "创建 CI",
+      "exportExcel": "导出 Excel",
+      "loadError": "订单加载失败。"
+    }
+  },
+  "documentTemplates": {
+    "title": "单据模板",
+    "description": "版本化的 PI/CI 模板。已发布版本不可原地修改，已签发单据始终保留其所用版本。",
+    "new": "新建模板",
+    "name": "模板名称",
+    "descriptionField": "说明",
+    "type": "单据类型",
+    "locale": "语言",
+    "paper": "纸张",
+    "orientation": "方向",
+    "status": "状态",
+    "default": "默认模板",
+    "version": "版本",
+    "updatedAt": "更新时间",
+    "actions": "操作",
+    "open": "编辑",
+    "publish": "发布新版本",
+    "publishConfirm": "将当前草稿发布为新的不可变版本？已签发单据仍引用原版本。",
+    "published": "模板已发布。",
+    "validate": "校验",
+    "preview": "预览",
+    "previewHint": "预览使用示例订单数据和已保存的草稿配置。",
+    "save": "保存草稿",
+    "saved": "模板已保存。",
+    "create": "创建模板",
+    "created": "模板已创建。",
+    "versions": "版本历史",
+    "noVersions": "暂无已发布版本。",
+    "warnings": {
+      "buyer.missing": "买方区域已隐藏。",
+      "totals.missing": "金额区域已隐藏。",
+      "items.description.missing": "商品描述列已隐藏。",
+      "items.amount.missing": "商品金额列已隐藏。"
+    },
+    "statuses": {
+      "DRAFT": "草稿",
+      "ACTIVE": "启用",
+      "DISABLED": "停用",
+      "all": "全部状态"
+    },
+    "sections": {
+      "visible": "显示区域",
+      "title": "区域标题",
+      "fields": "字段",
+      "required": "必填",
+      "field": "字段",
+      "label": "标签",
+      "show": "显示"
+    },
+    "columns": {
+      "column": "商品列",
+      "width": "宽度 %",
+      "show": "显示",
+      "label": "表头标签"
+    },
+    "theme": {
+      "title": "样式与素材",
+      "primary": "主色",
+      "accent": "强调色",
+      "font": "字体",
+      "fontSize": "基础字号（pt）",
+      "headerTitle": "抬头标题",
+      "headerSubtitle": "抬头副标题",
+      "showLogo": "显示卖方 Logo",
+      "showDocumentType": "显示单据类型",
+      "footer": "页脚文字",
+      "pageNumbers": "显示页码",
+      "margins": "页边距（mm）"
+    },
+    "terms": {
+      "title": "条款与声明",
+      "payment": "付款说明",
+      "shipment": "运输说明",
+      "authenticity": "真实性声明"
+    },
+    "previewTitle": "模板预览",
+    "loadError": "模板加载失败。",
+    "enable": "启用",
+    "disable": "停用",
+    "documentTypes": {
+      "PI": "形式发票（PI）",
+      "CI": "商业发票（CI）"
+    },
+    "locales": {
+      "en-US": "英文（en-US）",
+      "zh-CN": "简体中文（zh-CN）"
+    },
+    "paperSizes": {
+      "A4": "A4",
+      "Letter": "信纸（Letter）"
+    },
+    "orientations": {
+      "portrait": "纵向",
+      "landscape": "横向"
+    },
+    "marginSides": {
+      "top": "上",
+      "right": "右",
+      "bottom": "下",
+      "left": "左"
+    },
+    "sectionNames": {
+      "seller": "卖方",
+      "buyer": "买方",
+      "consignee": "收货人",
+      "notifyParty": "通知方",
+      "invoice": "发票信息",
+      "trade": "贸易条款",
+      "shipping": "运输与交付",
+      "payment": "付款信息",
+      "totals": "金额汇总",
+      "declaration": "声明",
+      "signature": "签章"
+    },
+    "fieldNames": {
+      "seller": {
+        "companyName": "卖方 / 出口商",
+        "address": "卖方地址",
+        "contact": "卖方联系人",
+        "phone": "卖方电话",
+        "email": "卖方邮箱",
+        "taxId": "卖方税号"
+      },
+      "buyer": {
+        "companyName": "买方",
+        "contact": "买方联系人",
+        "phone": "买方电话",
+        "email": "买方邮箱",
+        "taxId": "买方税号",
+        "address": "账单地址"
+      },
+      "consignee": {
+        "name": "收货人",
+        "companyName": "收货公司",
+        "phone": "收货电话",
+        "address": "收货地址"
+      },
+      "notifyParty": {
+        "name": "通知方",
+        "address": "通知方地址"
+      },
+      "document": {
+        "number": "发票编号",
+        "issueDate": "发票日期",
+        "revision": "版本",
+        "validUntil": "有效期至"
+      },
+      "order": {
+        "number": "订单编号",
+        "date": "订单日期",
+        "contractNo": "合同编号",
+        "buyerReference": "买方参考号"
+      },
+      "trade": {
+        "incoterm": "贸易术语",
+        "namedPlace": "指定地点",
+        "paymentTerms": "付款条件",
+        "currency": "币种",
+        "exchangeRate": "汇率"
+      },
+      "shipping": {
+        "method": "运输方式",
+        "portOfLoading": "起运港",
+        "portOfDischarge": "目的港",
+        "route": "路线 / 目的地",
+        "transitTime": "预计运输时间",
+        "cartonCount": "包装件数 / 箱数",
+        "netWeightKg": "净重（kg）",
+        "grossWeightKg": "毛重（kg）",
+        "cbm": "体积（CBM）",
+        "marks": "唛头"
+      },
+      "payment": {
+        "accountHolder": "账户名称",
+        "bankName": "银行名称",
+        "bankAddress": "银行地址",
+        "accountNumber": "账号",
+        "swift": "SWIFT / BIC",
+        "wireRoutingNumber": "电汇路由号",
+        "achRoutingNumber": "ACH 路由号"
+      },
+      "totals": {
+        "subtotal": "商品金额合计",
+        "discount": "折扣",
+        "freight": "运费",
+        "insurance": "保险",
+        "otherCharges": "其他费用",
+        "grandTotal": "合计",
+        "amountInWords": "金额大写"
+      },
+      "declaration": {
+        "countryOfOrigin": "原产国",
+        "text": "原产地声明",
+        "authenticity": "真实性声明"
+      },
+      "signature": {
+        "seller": "卖方签字 / 盖章",
+        "buyer": "买方签字"
+      }
+    },
+    "columnNames": {
+      "items": {
+        "lineNo": "序号",
+        "sku": "SKU",
+        "description": "品名",
+        "hsCode": "HS 编码",
+        "originCountryCode": "原产国",
+        "quantity": "数量",
+        "unit": "单位",
+        "unitPrice": "单价",
+        "cartons": "箱数",
+        "netWeightKg": "净重（kg）",
+        "grossWeightKg": "毛重（kg）",
+        "cbm": "体积（CBM）",
+        "amount": "金额"
+      }
+    },
+    "accessibility": {
+      "moveSectionUp": "上移区域：{name}",
+      "moveSectionDown": "下移区域：{name}",
+      "fieldVisible": "显示字段：{name}",
+      "fieldLabel": "设置字段输出标签：{name}",
+      "fieldRequired": "将字段设为必填：{name}",
+      "moveFieldUp": "上移字段：{name}",
+      "moveFieldDown": "下移字段：{name}",
+      "columnVisible": "显示商品列：{name}",
+      "columnLabel": "设置商品列表头：{name}",
+      "columnWidth": "设置商品列宽：{name}",
+      "moveColumnUp": "上移商品列：{name}",
+      "moveColumnDown": "下移商品列：{name}"
+    },
+    "validation": {
+      "duplicateSection": "区域重复：{name}。",
+      "duplicateField": "字段重复：{name}。",
+      "fieldInWrongSection": "字段“{name}”应属于“{expected}”，而不是“{actual}”。",
+      "duplicateColumn": "商品列重复：{name}。",
+      "descriptionColumnRequired": "商品描述列为必需项。",
+      "amountColumnRequired": "商品金额列为必需项。",
+      "invalidConfig": "模板配置无效，请检查区域、字段和商品列设置。"
+    }
+  },
+  "companyProfile": {
+    "title": "公司资料",
+    "description": "用于预填 PI/CI 的卖方资料与银行账户。单据保存快照，修改资料不会改变已签发文件。",
+    "companyName": "公司名称",
+    "code": "编码",
+    "contactName": "联系人",
+    "phone": "电话",
+    "email": "邮箱",
+    "taxId": "税号",
+    "website": "网站",
+    "addressLine1": "地址 1",
+    "addressLine2": "地址 2",
+    "city": "城市",
+    "state": "州/省/地区",
+    "postalCode": "邮编",
+    "countryCode": "国家代码",
+    "default": "默认资料",
+    "enabled": "启用",
+    "save": "保存资料",
+    "create": "新增公司资料",
+    "created": "公司资料已创建。",
+    "saved": "公司资料已保存。",
+    "delete": "删除资料",
+    "deleteConfirm": "删除该公司资料？请先移除其银行账户。",
+    "banks": "银行账户",
+    "bank": {
+      "label": "标签",
+      "accountHolder": "账户名称",
+      "bankName": "银行名称",
+      "bankAddress": "银行地址",
+      "accountNumber": "账号",
+      "swiftCode": "SWIFT / BIC",
+      "wireRoutingNumber": "电汇路由号",
+      "achRoutingNumber": "ACH 路由号",
+      "currencyCode": "币种",
+      "default": "默认账户",
+      "enabled": "启用",
+      "sortOrder": "排序",
+      "add": "新增银行账户",
+      "save": "保存银行账户",
+      "created": "银行账户已创建。",
+      "saved": "银行账户已保存。",
+      "delete": "删除",
+      "deleteConfirm": "删除该银行账户？已签发单据仍保留其快照。"
+    },
+    "loadError": "公司资料加载失败。",
+    "saveError": "公司资料保存失败。"
   }
 }

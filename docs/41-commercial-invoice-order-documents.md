@@ -5,7 +5,8 @@
 > 目标分支：`main`  
 > 文档状态：需求与实施基线（不是功能已完成声明）  
 > 关联规范：`docs/08-excel-pdf-pi.md`、`docs/39-admin-quotation-calculator-and-order-center.md`、`docs/04-data-model.md`、`docs/05-api-contract.md`  
-> 本次目标：基于现有报价计算器、订单、PI 模型和用户提供的 Commercial Invoice 样本，扩展订单资料维护、CI/PI 文档创建、可配置 PDF 模板填充与历史文件追溯。
+> 本次目标：基于现有报价计算器、订单、PI 模型和用户提供的 Commercial Invoice 样本，扩展订单资料维护、CI/PI 文档创建、可配置 PDF 模板填充与历史文件追溯。  
+> 实施记录：`docs/42-commercial-documents-implementation.md`（本文件保留为需求与验收基线，不代表所有阶段均已完成）。
 
 ---
 

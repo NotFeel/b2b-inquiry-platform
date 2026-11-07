@@ -1,4 +1,5 @@
 import type {
+  DocumentRenderJobPayload,
   AnalyticsRollupJobPayload,
   ExcelPdfCleanupJobPayload,
   ExcelPdfConvertJobPayload,
@@ -63,6 +64,13 @@ export type ClaimedTask =
       attempts: number;
       eventType: 'excel-pdf-cleanup';
       payload: ExcelPdfCleanupJobPayload;
+    }
+  | {
+      source: 'outbox';
+      id: string;
+      attempts: number;
+      eventType: 'commercial-document-render';
+      payload: DocumentRenderJobPayload;
     };
 
 export interface TaskRunnerOptions {

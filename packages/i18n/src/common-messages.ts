@@ -152,6 +152,38 @@ export const commonMessages: Record<'en-US' | 'zh-CN', Messages> = {
       PI_NOT_EDITABLE: 'An issued PI cannot be edited. Create a revision instead.',
       PI_REVISION_REQUIRED: 'Create a revision before changing an issued PI.',
       PI_CURRENCY_MISMATCH: 'All amounts must use the document currency.',
+      ORDER_CONCURRENT_UPDATE:
+        'This order was changed by another session. Reload it and retry your correction.',
+      ORDER_SNAPSHOT_UPDATE_FORBIDDEN:
+        'This order cannot be corrected in its current status. Reopen it first.',
+      COMMERCIAL_DOCUMENT_NOT_FOUND: 'The commercial document was not found.',
+      COMMERCIAL_DOCUMENT_NOT_EDITABLE:
+        'This document is frozen. Create a new revision to change it.',
+      COMMERCIAL_DOCUMENT_MISSING_FIELDS:
+        'Complete the required trade, party, item and payment fields before issuing.',
+      COMMERCIAL_DOCUMENT_CURRENCY_MISMATCH:
+        'The document currency must match the order currency and all item prices.',
+      COMMERCIAL_DOCUMENT_TEMPLATE_INVALID: 'The document template configuration is invalid.',
+      COMMERCIAL_DOCUMENT_TEMPLATE_REQUIRED:
+        'Select a published document template before issuing.',
+      COMMERCIAL_DOCUMENT_TEMPLATE_IN_USE:
+        'This template version is referenced by an issued document and cannot be changed.',
+      COMMERCIAL_DOCUMENT_PDF_UNAVAILABLE:
+        'The PDF is not ready yet. Wait for rendering to finish or retry.',
+      COMMERCIAL_DOCUMENT_RENDER_FAILED:
+        'The PDF could not be generated. Retry the render request.',
+      COMMERCIAL_DOCUMENT_STATE_CONFLICT:
+        'The document status changed. Reload it before trying again.',
+      COMMERCIAL_DOCUMENT_CONCURRENT_UPDATE:
+        'This document was changed by another session. Reload and retry.',
+      COMMERCIAL_DOCUMENT_ORDER_MISMATCH:
+        'The document does not belong to the selected order.',
+      DOCUMENT_TEMPLATE_NOT_PUBLISHED: 'Only a published template version can be used.',
+      DOCUMENT_TEMPLATE_TYPE_MISMATCH:
+        'This template belongs to a different document type (PI or CI).',
+      COMPANY_PROFILE_NOT_FOUND: 'The company profile was not found.',
+      BANK_ACCOUNT_NOT_FOUND: 'The bank account was not found.',
+      BANK_ACCOUNT_IN_USE: 'This bank account is still used by a company profile.',
       SETTINGS_SECRET_NOT_READABLE: 'Secret values can be replaced but never read back.',
       LAST_SUPER_ADMIN_PROTECTED:
         'The last active super administrator cannot be demoted, disabled or deleted.',
@@ -222,6 +254,9 @@ export const commonMessages: Record<'en-US' | 'zh-CN', Messages> = {
       route: { invalid: 'Use an internal path starting with "/".' },
       email: { invalid: 'Enter a valid email address.' },
       countryCode: { invalid: 'Use a two-letter ISO country code, for example US.' },
+      hsCode: { invalid: 'Use up to 20 letters, digits, spaces, dots or dashes.' },
+      address: { incomplete: 'Enter a street address, city and country.' },
+      document: { totals: 'The document totals could not be calculated.' },
       sessionId: { invalid: 'The session identifier format is invalid.' },
       referrerHost: { invalid: 'The referrer host format is invalid.' },
       storageKey: {
@@ -430,6 +465,25 @@ export const commonMessages: Record<'en-US' | 'zh-CN', Messages> = {
       PI_NOT_EDITABLE: '已正式发出的 PI 不能直接编辑，请创建修订版本。',
       PI_REVISION_REQUIRED: '修改已发出的 PI 前请先创建修订版本。',
       PI_CURRENCY_MISMATCH: '所有金额必须使用单据币种。',
+      ORDER_CONCURRENT_UPDATE: '该订单已被其他会话修改，请刷新后重新提交。',
+      ORDER_SNAPSHOT_UPDATE_FORBIDDEN: '当前状态的订单不能修正客户资料，请先恢复订单。',
+      COMMERCIAL_DOCUMENT_NOT_FOUND: '未找到该商业单据。',
+      COMMERCIAL_DOCUMENT_NOT_EDITABLE: '该单据已冻结，请创建新的修订版本后再修改。',
+      COMMERCIAL_DOCUMENT_MISSING_FIELDS: '签发前请补齐贸易、买卖双方、商品和付款信息。',
+      COMMERCIAL_DOCUMENT_CURRENCY_MISMATCH: '单据币种必须与订单币种及所有商品价格一致。',
+      COMMERCIAL_DOCUMENT_TEMPLATE_INVALID: '单据模板配置无效。',
+      COMMERCIAL_DOCUMENT_TEMPLATE_REQUIRED: '签发前请选择已发布的单据模板。',
+      COMMERCIAL_DOCUMENT_TEMPLATE_IN_USE: '该模板版本已被已签发单据引用，不能修改。',
+      COMMERCIAL_DOCUMENT_PDF_UNAVAILABLE: 'PDF 尚未生成完成，请稍候重试。',
+      COMMERCIAL_DOCUMENT_RENDER_FAILED: 'PDF 生成失败，请重试渲染任务。',
+      COMMERCIAL_DOCUMENT_STATE_CONFLICT: '单据状态已变化，请刷新后重试。',
+      COMMERCIAL_DOCUMENT_CONCURRENT_UPDATE: '该单据已被其他会话修改，请刷新后重试。',
+      COMMERCIAL_DOCUMENT_ORDER_MISMATCH: '该单据不属于所选订单。',
+      DOCUMENT_TEMPLATE_NOT_PUBLISHED: '只能使用已发布的模板版本。',
+      DOCUMENT_TEMPLATE_TYPE_MISMATCH: '该模板属于其他单据类型（PI 或 CI）。',
+      COMPANY_PROFILE_NOT_FOUND: '未找到公司资料。',
+      BANK_ACCOUNT_NOT_FOUND: '未找到银行账户。',
+      BANK_ACCOUNT_IN_USE: '该银行账户仍被公司资料引用。',
       SETTINGS_SECRET_NOT_READABLE: '密钥类配置只能覆盖，不能读取原值。',
       LAST_SUPER_ADMIN_PROTECTED: '不能降权、停用或删除最后一个有效超级管理员。',
       USERNAME_ALREADY_EXISTS: '该登录账号已被占用。',
@@ -485,6 +539,9 @@ export const commonMessages: Record<'en-US' | 'zh-CN', Messages> = {
       route: { invalid: '请使用以 “/” 开头的站内路径。' },
       email: { invalid: '请输入有效的邮箱地址。' },
       countryCode: { invalid: '请使用两位 ISO 国家代码，例如 US。' },
+      hsCode: { invalid: 'HS 编码最多 20 位，可包含字母、数字、空格、点和连字符。' },
+      address: { incomplete: '请填写街道地址、城市和国家。' },
+      document: { totals: '单据金额计算失败。' },
       sessionId: { invalid: '会话标识格式不正确。' },
       referrerHost: { invalid: '来源主机格式不正确。' },
       storageKey: { invalid: '存储 key 格式不正确。', traversal: '不允许路径穿越。' },

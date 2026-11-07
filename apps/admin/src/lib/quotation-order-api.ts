@@ -58,9 +58,15 @@ export type CalculatorInput = {
     phoneE164: string;
     email?: string | null;
     countryCode?: string | null;
-    billingAddress?: null;
-    shippingAddress?: null | {
-      recipient: string;
+    customerType?: 'COMPANY' | 'INDIVIDUAL';
+    legalCompanyName?: string;
+    taxId?: string;
+    website?: string;
+    preferredLanguage?: string;
+    billingAddress?: null | {
+      recipient?: string;
+      companyName?: string;
+      phoneE164?: string;
       countryCode: string;
       region: string;
       city: string;
@@ -68,6 +74,24 @@ export type CalculatorInput = {
       line1: string;
       line2: string;
     };
+    shippingAddress?: null | {
+      recipient: string;
+      companyName?: string;
+      phoneE164?: string;
+      countryCode: string;
+      region: string;
+      city: string;
+      postalCode: string;
+      line1: string;
+      line2: string;
+    };
+  };
+  buyerReference?: string;
+  contractNo?: string;
+  trade?: {
+    incotermCode?: string | null;
+    namedPlace?: string;
+    paymentTerms?: string;
   };
   orderDate?: string | null;
   currencyCode: string;
@@ -265,6 +289,14 @@ export const quotationOrderApi = {
       id: string;
       phoneE164: string;
       displayName: string | null;
+      legalName: string | null;
+      contactName: string | null;
+      email: string | null;
+      taxId: string | null;
+      customerType: string;
+      preferredLanguage: string;
       countryCode: string | null;
+      billingAddress: Record<string, unknown> | null;
+      defaultShippingAddress: Record<string, unknown> | null;
     }>('/admin/customers', { page: 1, pageSize: 100 }),
 };

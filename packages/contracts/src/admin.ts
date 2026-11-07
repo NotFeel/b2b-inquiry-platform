@@ -479,6 +479,11 @@ export interface ProductAdminDetail extends ProductAdminSummary {
   cartonHeightCm: number | null;
   cartonWeightKg: string | null;
   cartonQuantity: number | null;
+  hsCode: string | null;
+  originCountryCode: string | null;
+  customsDescription: string | null;
+  netWeightPerUnitKg: string | null;
+  exportUnit: string | null;
   translations: Record<
     string,
     {
@@ -824,6 +829,14 @@ export interface CustomerSummary {
   phoneDisplay: string;
   countryCode: string | null;
   displayName: string | null;
+  legalName: string | null;
+  contactName: string | null;
+  email: string | null;
+  taxId: string | null;
+  customerType: string;
+  preferredLanguage: string;
+  billingAddress: Record<string, unknown> | null;
+  defaultShippingAddress: Record<string, unknown> | null;
   note: string | null;
   activityCount: number;
   lastActivityAt: string | null;

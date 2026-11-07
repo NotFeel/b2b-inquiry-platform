@@ -10,7 +10,9 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -19,7 +21,8 @@
   },
   "dependencies": {
     "@b2b/contracts": "workspace:*",
-    "zod": "4.6.7"
+    "zod": "4.6.7",
+    "@b2b/commercial-documents": "workspace:*"
   },
   "devDependencies": {
     "@b2b/tsconfig": "workspace:*",

@@ -1029,3 +1029,10 @@ useEffect(() => { /* 记录 previouslyFocused → 聚焦弹窗内第一个可聚
 - 未完成 Neon PITR 恢复演练、R2 CORS/私有匿名访问实测、Cloudflare 完整 Session/CRUD
   与 Excel 下载验收。
 - 未完成 2C/1G + Sharp/Excel/Runner 的 RSS、P95、OOM 和 swap 压测。
+
+## 25. 商业单据中心（PI / CI）实施状态
+
+- 已按 `docs/41` 实现订单客户资料修正、`CommercialDocument`（PI/CI）生命周期、声明式模板、HTML/CSS→PDF Worker 渲染、公司/银行资料、后台工作台、权限/菜单/审计与 additive migration。
+- 迁移：`20261106120000_commercial_documents_center`、`20261106121500_legacy_pi_menu_retired`、`20261106122000_commercial_document_role_grants`、`20261106122500_quotation_item_export_snapshot`；旧 `PiDocument` 表、页面和导出保留，仅停用旧侧栏入口。
+- 详细交付范围、假设、回滚与验证记录见 `docs/42-commercial-documents-implementation.md`。
+- 生产 No-Go 项：需在具备 LibreOffice/`pdfinfo` 的 Worker 镜像完成真实 PDF 金样本与长地址/多行商品视觉回归；R2/S3 私有下载与 360px 实机截图仍待 staging 验收。

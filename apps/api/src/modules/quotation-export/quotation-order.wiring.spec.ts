@@ -14,9 +14,13 @@ describe('quotation/order endpoint authorization metadata', () => {
     ['createOrder', Permission.orderCreate],
     ['orders', Permission.orderRead],
     ['orderDetail', Permission.orderRead],
+    ['updateOrderCustomerSnapshot', Permission.orderCustomerSnapshotUpdate],
+    ['syncOrderCustomerProfile', [Permission.orderCustomerProfileSync, Permission.customerUpdate]],
   ])('%s is protected by %s', (method, permission) => {
     const descriptor = Object.getOwnPropertyDescriptor(QuotationOrderController.prototype, method);
     expect(descriptor).toBeDefined();
-    expect(Reflect.getMetadata(PERMISSIONS_KEY, descriptor!.value)).toEqual([permission]);
+    expect(Reflect.getMetadata(PERMISSIONS_KEY, descriptor!.value)).toEqual(
+      Array.isArray(permission) ? permission : [permission],
+    );
   });
 });

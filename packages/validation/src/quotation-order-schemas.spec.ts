@@ -17,6 +17,7 @@ const input = {
       productId: '0f5e5c7a-1793-4d04-a8ee-4f0c11c1bff5',
       quantity: '100.125',
       markupPercent: '20.0000',
+      cartonCount: 1,
     },
   ],
   fees: [],

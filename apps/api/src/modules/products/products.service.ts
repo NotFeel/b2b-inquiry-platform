@@ -232,6 +232,11 @@ export class ProductsService {
       cartonHeightCm: product.cartonHeightCm?.toNumber() ?? null,
       cartonWeightKg: product.cartonWeightKg?.toString() ?? null,
       cartonQuantity: product.cartonQuantity,
+      hsCode: product.hsCode,
+      originCountryCode: product.originCountryCode,
+      customsDescription: product.customsDescription,
+      netWeightPerUnitKg: product.netWeightPerUnitKg?.toString() ?? null,
+      exportUnit: product.exportUnit,
       translations: Object.fromEntries(
         product.translations.map((translation) => [
           translation.locale,
@@ -304,6 +309,11 @@ export class ProductsService {
           cartonHeightCm: input.cartonHeightCm?.toString() ?? null,
           cartonWeightKg: input.cartonWeightKg ?? null,
           cartonQuantity: input.cartonQuantity ?? null,
+          hsCode: input.hsCode ?? null,
+          originCountryCode: input.originCountryCode ?? null,
+          customsDescription: input.customsDescription ?? null,
+          netWeightPerUnitKg: input.netWeightPerUnitKg ?? null,
+          exportUnit: input.exportUnit ?? null,
           createdById: actorId,
           translations: { create: translationRows },
           tags: { create: tagIds.map((tagId) => ({ tagId })) },
@@ -447,6 +457,17 @@ export class ProductsService {
               : {}),
             ...(input.cartonWeightKg !== undefined ? { cartonWeightKg: input.cartonWeightKg } : {}),
             ...(input.cartonQuantity !== undefined ? { cartonQuantity: input.cartonQuantity } : {}),
+            ...(input.hsCode !== undefined ? { hsCode: input.hsCode } : {}),
+            ...(input.originCountryCode !== undefined
+              ? { originCountryCode: input.originCountryCode }
+              : {}),
+            ...(input.customsDescription !== undefined
+              ? { customsDescription: input.customsDescription }
+              : {}),
+            ...(input.netWeightPerUnitKg !== undefined
+              ? { netWeightPerUnitKg: input.netWeightPerUnitKg }
+              : {}),
+            ...(input.exportUnit !== undefined ? { exportUnit: input.exportUnit } : {}),
           },
           select: { id: true, slug: true, publishStatus: true },
         });

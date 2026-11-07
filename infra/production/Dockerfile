@@ -69,6 +69,7 @@ RUN apt-get update \
       fonts-dejavu-core \
       fonts-noto-cjk \
       libreoffice-calc \
+      libreoffice-writer \
       poppler-utils \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /data/tmp \

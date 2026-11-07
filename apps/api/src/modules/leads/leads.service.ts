@@ -12,6 +12,14 @@ interface CustomerRecord {
   phoneE164: string;
   countryCode: string | null;
   displayName: string | null;
+  legalName: string | null;
+  contactName: string | null;
+  email: string | null;
+  taxId: string | null;
+  customerType: string;
+  preferredLanguage: string;
+  billingAddress: unknown;
+  defaultShippingAddress: unknown;
   note: string | null;
   createdAt: Date;
   lastSeenAt: Date;
@@ -32,6 +40,14 @@ export class LeadsService {
       phoneDisplay: revealPhone ? customer.phoneE164 : maskPhone(customer.phoneE164),
       countryCode: customer.countryCode,
       displayName: customer.displayName,
+      legalName: customer.legalName,
+      contactName: customer.contactName,
+      email: customer.email,
+      taxId: customer.taxId,
+      customerType: customer.customerType,
+      preferredLanguage: customer.preferredLanguage,
+      billingAddress: customer.billingAddress as Record<string, unknown> | null,
+      defaultShippingAddress: customer.defaultShippingAddress as Record<string, unknown> | null,
       note: customer.note,
       activityCount: customer._count.activities,
       lastActivityAt: customer.lastSeenAt.toISOString(),
@@ -153,6 +169,9 @@ export class LeadsService {
         ? {
             OR: [
               { displayName: { contains: query.q, mode: 'insensitive' as const } },
+              { legalName: { contains: query.q, mode: 'insensitive' as const } },
+              { contactName: { contains: query.q, mode: 'insensitive' as const } },
+              { email: { contains: query.q, mode: 'insensitive' as const } },
               { phoneE164: { contains: digitsOnly(query.q) || query.q } },
             ],
           }

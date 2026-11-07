@@ -658,6 +658,82 @@ export function ProductForm({ mode, detail }: ProductFormProps) {
         </div>
       </Card>
 
+      <Card title={t('products.sections.export')}>
+        <div className="form-grid">
+          <Field label={t('products.fields.hsCode')} error={errorFor('specs.hsCode')}>
+            {({ inputId, describedBy }) => (
+              <Input
+                inputId={inputId}
+                describedBy={describedBy}
+                value={state.specs.hsCode}
+                invalid={Boolean(errors['specs.hsCode'])}
+                maxLength={20}
+                onChange={(event) => updateSpec('hsCode', event.target.value)}
+              />
+            )}
+          </Field>
+          <Field
+            label={t('products.fields.originCountryCode')}
+            error={errorFor('specs.originCountryCode')}
+          >
+            {({ inputId, describedBy }) => (
+              <Input
+                inputId={inputId}
+                describedBy={describedBy}
+                value={state.specs.originCountryCode}
+                invalid={Boolean(errors['specs.originCountryCode'])}
+                maxLength={2}
+                onChange={(event) =>
+                  updateSpec('originCountryCode', event.target.value.toUpperCase())
+                }
+              />
+            )}
+          </Field>
+          <Field
+            label={t('products.fields.customsDescription')}
+            error={errorFor('specs.customsDescription')}
+          >
+            {({ inputId, describedBy }) => (
+              <Input
+                inputId={inputId}
+                describedBy={describedBy}
+                value={state.specs.customsDescription}
+                invalid={Boolean(errors['specs.customsDescription'])}
+                maxLength={500}
+                onChange={(event) => updateSpec('customsDescription', event.target.value)}
+              />
+            )}
+          </Field>
+          <Field
+            label={t('products.fields.netWeightPerUnitKg')}
+            error={errorFor('specs.netWeightPerUnitKg')}
+          >
+            {({ inputId, describedBy }) => (
+              <Input
+                inputId={inputId}
+                describedBy={describedBy}
+                unit="kg"
+                value={state.specs.netWeightPerUnitKg}
+                invalid={Boolean(errors['specs.netWeightPerUnitKg'])}
+                onChange={(event) => updateSpec('netWeightPerUnitKg', event.target.value)}
+              />
+            )}
+          </Field>
+          <Field label={t('products.fields.exportUnit')} error={errorFor('specs.exportUnit')}>
+            {({ inputId, describedBy }) => (
+              <Input
+                inputId={inputId}
+                describedBy={describedBy}
+                value={state.specs.exportUnit}
+                invalid={Boolean(errors['specs.exportUnit'])}
+                maxLength={24}
+                onChange={(event) => updateSpec('exportUnit', event.target.value)}
+              />
+            )}
+          </Field>
+        </div>
+      </Card>
+
       <Card title={t('products.sections.tags')}>
         <Field label={t('products.fields.tags')} help={t('products.tagsHelp')}>
           {({ inputId, describedBy }) => (

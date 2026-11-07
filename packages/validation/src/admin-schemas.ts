@@ -8,6 +8,7 @@ import {
   FAQ_CATEGORY_CODES,
   HOME_SECTION_CODES,
   MENU_ICON_NAMES,
+  INCOTERM_CODES,
   PI_STATUSES,
   PRODUCT_IMAGE_LIMITS,
   PRODUCT_IMPORT_LIMITS,
@@ -841,6 +842,17 @@ export const createProductSchema = z.object({
   cartonHeightCm: cartonDimensionSchema.nullable().optional(),
   cartonWeightKg: decimalStringSchema().nullable().optional(),
   cartonQuantity: positiveIntSchema(1_000_000).nullable().optional(),
+  hsCode: z
+    .string()
+    .trim()
+    .max(20)
+    .regex(/^[0-9A-Za-z .-]*$/, 'validation.hsCode.invalid')
+    .nullable()
+    .optional(),
+  originCountryCode: countryCodeSchema.nullable().optional(),
+  customsDescription: optionalText(500),
+  netWeightPerUnitKg: decimalStringSchema().nullable().optional(),
+  exportUnit: z.string().trim().max(24).nullable().optional(),
   /** Structured tag references; the legacy code array is still accepted. */
   tagIds: z.array(uuidSchema).max(30).default([]),
   tagCodes: z.array(codeSchema).max(30).optional(),
@@ -869,6 +881,17 @@ export const updateProductSchema = z.object({
   cartonHeightCm: cartonDimensionSchema.nullable().optional(),
   cartonWeightKg: decimalStringSchema().nullable().optional(),
   cartonQuantity: positiveIntSchema(1_000_000).nullable().optional(),
+  hsCode: z
+    .string()
+    .trim()
+    .max(20)
+    .regex(/^[0-9A-Za-z .-]*$/, 'validation.hsCode.invalid')
+    .nullable()
+    .optional(),
+  originCountryCode: countryCodeSchema.nullable().optional(),
+  customsDescription: optionalText(500),
+  netWeightPerUnitKg: decimalStringSchema().nullable().optional(),
+  exportUnit: z.string().trim().max(24).nullable().optional(),
   tagIds: z.array(uuidSchema).max(30).optional(),
   tagCodes: z.array(codeSchema).max(30).optional(),
   translations: z
@@ -1441,12 +1464,18 @@ export const auditLogQuerySchema = paginationQuerySchema.extend({
 
 const quotationAddressSchema = z.object({
   recipient: z.string().trim().min(1).max(160),
+  companyName: z.string().trim().max(240).default(''),
+  phoneE164: z.string().trim().max(24).default(''),
   countryCode: countryCodeSchema,
   region: z.string().trim().max(120).default(''),
   city: z.string().trim().min(1).max(120),
   postalCode: z.string().trim().max(40).default(''),
   line1: z.string().trim().min(1).max(240),
   line2: z.string().trim().max(240).default(''),
+});
+
+const quotationBillingAddressSchema = quotationAddressSchema.extend({
+  recipient: z.string().trim().max(160).default(''),
 });
 
 const quotationDecimalStringSchema = (scale = 12) =>
@@ -1492,10 +1521,33 @@ const quotationFormObjectSchema = z.object({
       phoneE164: z.string().trim().max(24).default(''),
       email: emailSchema.nullable().optional(),
       countryCode: countryCodeSchema.nullable().optional(),
-      billingAddress: quotationAddressSchema.nullable().optional(),
+      customerType: z.enum(['COMPANY', 'INDIVIDUAL']).default('COMPANY'),
+      legalCompanyName: z.string().trim().max(240).default(''),
+      taxId: z.string().trim().max(60).default(''),
+      website: z.string().trim().max(500).default(''),
+      preferredLanguage: localeSchema.default('en-US'),
+      billingAddress: quotationBillingAddressSchema.nullable().optional(),
       shippingAddress: quotationAddressSchema.nullable().optional(),
     })
-    .default({ companyName: '', contactName: '', phoneE164: '' }),
+    .default({
+      companyName: '',
+      contactName: '',
+      phoneE164: '',
+      customerType: 'COMPANY',
+      legalCompanyName: '',
+      taxId: '',
+      website: '',
+      preferredLanguage: 'en-US',
+    }),
+  buyerReference: z.string().trim().max(120).default(''),
+  contractNo: z.string().trim().max(80).default(''),
+  trade: z
+    .object({
+      incotermCode: z.enum(INCOTERM_CODES).nullable().optional(),
+      namedPlace: z.string().trim().max(240).default(''),
+      paymentTerms: z.string().trim().max(500).default(''),
+    })
+    .optional(),
   quotedAt: z.string().datetime().optional(),
   validUntil: z.string().datetime().nullable().optional(),
   orderDate: z.string().date().nullable().optional(),
@@ -1546,6 +1598,18 @@ export type QuotationListQuery = z.infer<typeof quotationListQuerySchema>;
 export const orderListQuerySchema = paginationQuerySchema.extend({
   q: z.string().trim().max(120).optional(),
   status: z.enum(['CONFIRMED', 'CANCELLED']).optional(),
+  currency: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .regex(/^[A-Z]{3}$/)
+    .optional(),
+  country: countryCodeSchema.optional(),
+  from: z.string().trim().max(40).optional(),
+  to: z.string().trim().max(40).optional(),
+  hasPi: z.enum(['true', 'false']).optional(),
+  hasCi: z.enum(['true', 'false']).optional(),
+  sortOrder: z.enum(['asc', 'desc']).default('desc'),
 });
 export type OrderListQuery = z.infer<typeof orderListQuerySchema>;
 

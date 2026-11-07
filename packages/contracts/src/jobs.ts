@@ -2,6 +2,7 @@
 // (consumer). Keeping them in one place stops the two apps drifting apart.
 
 import type { ExcelPdfCleanupJobPayload, ExcelPdfConvertJobPayload } from './excel-pdf';
+import type { DocumentRenderJobPayload } from './commercial-documents';
 
 export interface ImageDerivativeJobPayload {
   fileAssetId: string;
@@ -58,4 +59,5 @@ export type JobPayload =
   | ProductImportValidateJobPayload
   | ProductImportCleanupJobPayload
   | ExcelPdfConvertJobPayload
-  | ExcelPdfCleanupJobPayload;
+  | ExcelPdfCleanupJobPayload
+  | DocumentRenderJobPayload;

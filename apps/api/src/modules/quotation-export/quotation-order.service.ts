@@ -7,6 +7,7 @@ import type {
   QuotationCalculationInput,
   QuotationListQuery,
   OrderListQuery,
+  UpdateOrderCustomerSnapshotInput,
 } from '@b2b/validation';
 import { ApiError } from '../../common/errors/api-error';
 import { AuditService } from '../../common/services/audit.service';
@@ -345,6 +346,20 @@ export class QuotationOrderService {
             totalAmountCny: result.totals.totalAmountCny,
             totalAmountForeignExact: result.totals.totalAmountForeignExact,
             totalAmountForeign: result.totals.totalAmountForeign,
+            version: 1,
+            buyerReference: input.buyerReference || null,
+            contractNo: input.contractNo || null,
+            buyerCompanyName:
+              input.customer.legalCompanyName || input.customer.companyName || null,
+            buyerContactName: input.customer.contactName || null,
+            buyerEmail: input.customer.email ?? null,
+            buyerPhoneE164: input.customer.phoneE164 || null,
+            buyerCountryCode: input.customer.countryCode ?? null,
+            consigneeName: input.customer.shippingAddress?.recipient ?? null,
+            consigneeCountryCode: input.customer.shippingAddress?.countryCode ?? null,
+            buyerSnapshot: this.buyerSnapshot(input) as Prisma.InputJsonValue,
+            consigneeSnapshot: this.consigneeSnapshot(input) as Prisma.InputJsonValue,
+            tradeSnapshot: this.tradeSnapshot(input) as Prisma.InputJsonValue,
             customerSnapshot: customerSnapshot as Prisma.InputJsonValue,
             billingAddressSnapshot: input.customer.billingAddress as
               Prisma.InputJsonValue | undefined,
@@ -520,6 +535,20 @@ export class QuotationOrderService {
             totalAmountCny: quotation.totalAmountCny,
             totalAmountForeignExact: quotation.totalAmountForeignExact,
             totalAmountForeign: quotation.totalAmountForeign,
+            version: 1,
+            buyerReference: input.buyerReference || null,
+            contractNo: input.contractNo || null,
+            buyerCompanyName:
+              input.customer.legalCompanyName || input.customer.companyName || null,
+            buyerContactName: input.customer.contactName || null,
+            buyerEmail: input.customer.email ?? null,
+            buyerPhoneE164: input.customer.phoneE164 || null,
+            buyerCountryCode: input.customer.countryCode ?? null,
+            consigneeName: input.customer.shippingAddress?.recipient ?? null,
+            consigneeCountryCode: input.customer.shippingAddress?.countryCode ?? null,
+            buyerSnapshot: this.buyerSnapshot(input) as Prisma.InputJsonValue,
+            consigneeSnapshot: this.consigneeSnapshot(input) as Prisma.InputJsonValue,
+            tradeSnapshot: this.tradeSnapshot(input) as Prisma.InputJsonValue,
             customerSnapshot: quotation.customerSnapshot as Prisma.InputJsonValue,
             billingAddressSnapshot: input.customer.billingAddress as
               Prisma.InputJsonValue | undefined,
@@ -568,21 +597,136 @@ export class QuotationOrderService {
   }
 
   async listOrders(query: OrderListQuery) {
+    const documentWhere = (type: 'PI' | 'CI') => {
+      const flag = type === 'PI' ? query.hasPi : query.hasCi;
+      if (flag === undefined) return undefined;
+      const filter = { documentType: type, status: { not: 'CANCELLED' as const } };
+      return flag === 'true' ? { some: filter } : { none: filter };
+    };
+    const and: Prisma.OrderWhereInput[] = [];
+    if (query.q) {
+      and.push({
+        OR: [
+          { orderNo: { contains: query.q, mode: 'insensitive' } },
+          { buyerCompanyName: { contains: query.q, mode: 'insensitive' } },
+          { buyerContactName: { contains: query.q, mode: 'insensitive' } },
+          { buyerEmail: { contains: query.q, mode: 'insensitive' } },
+          { buyerPhoneE164: { contains: query.q } },
+        ],
+      });
+    }
+    if (query.from || query.to) {
+      const range: Prisma.DateTimeFilter = {};
+      if (query.from) {
+        const from = new Date(`${query.from}T00:00:00.000Z`);
+        if (Number.isNaN(from.getTime())) {
+          throw ApiError.validation('The order date range start is invalid.');
+        }
+        range.gte = from;
+      }
+      if (query.to) {
+        const to = new Date(`${query.to}T23:59:59.999Z`);
+        if (Number.isNaN(to.getTime())) {
+          throw ApiError.validation('The order date range end is invalid.');
+        }
+        range.lte = to;
+      }
+      and.push({ orderDate: range });
+    }
+    const pi = documentWhere('PI');
+    if (pi) and.push({ commercialDocuments: pi });
+    const ci = documentWhere('CI');
+    if (ci) and.push({ commercialDocuments: ci });
+
     const where: Prisma.OrderWhereInput = {
       ...(query.status ? { status: query.status } : {}),
-      ...(query.q ? { orderNo: { contains: query.q, mode: 'insensitive' } } : {}),
+      ...(query.currency ? { currencyCode: query.currency } : {}),
+      ...(query.country ? { buyerCountryCode: query.country } : {}),
+      ...(and.length > 0 ? { AND: and } : {}),
     };
+    const orderBy: Prisma.OrderOrderByWithRelationInput[] = [
+      { createdAt: query.sortOrder },
+      { orderNo: query.sortOrder },
+    ];
     const [total, rows] = await this.prisma.$transaction([
       this.prisma.order.count({ where }),
       this.prisma.order.findMany({
         where,
-        orderBy: [{ createdAt: 'desc' }, { orderNo: 'desc' }],
+        orderBy,
         skip: (query.page - 1) * query.pageSize,
         take: query.pageSize,
+        select: {
+          id: true,
+          orderNo: true,
+          status: true,
+          currencyCode: true,
+          totalAmountCny: true,
+          totalAmountForeign: true,
+          orderDate: true,
+          customerSnapshot: true,
+          buyerCompanyName: true,
+          buyerContactName: true,
+          buyerCountryCode: true,
+          version: true,
+          updatedAt: true,
+        },
       }),
     ]);
+    const ids = rows.map((row) => row.id);
+    const documents =
+      ids.length === 0
+        ? []
+        : await this.prisma.commercialDocument.findMany({
+            where: { orderId: { in: ids }, status: { not: 'CANCELLED' } },
+            orderBy: [{ createdAt: 'desc' }],
+            select: {
+              id: true,
+              orderId: true,
+              documentType: true,
+              documentNo: true,
+              revisionNo: true,
+              status: true,
+              createdAt: true,
+              issuedAt: true,
+              totalAmount: true,
+              currency: true,
+            },
+          });
+    const documentsByOrder = new Map<string, typeof documents>();
+    for (const document of documents) {
+      if (!document.orderId) continue;
+      const existing = documentsByOrder.get(document.orderId) ?? [];
+      existing.push(document);
+      documentsByOrder.set(document.orderId, existing);
+    }
     return {
-      data: rows.map((row) => this.orderDto(row, false)),
+      data: rows.map((row) => {
+        const related = documentsByOrder.get(row.id) ?? [];
+        const piCount = related.filter((document) => document.documentType === 'PI').length;
+        const ciCount = related.filter((document) => document.documentType === 'CI').length;
+        const latest = related[0] ?? null;
+        return {
+          ...this.orderDto(row, false),
+          buyer: this.orderBuyer(row),
+          documents: {
+            piCount,
+            ciCount,
+            latest: latest
+              ? {
+                  id: latest.id,
+                  type: latest.documentType,
+                  documentNo: latest.documentNo,
+                  revisionNo: latest.revisionNo,
+                  status: latest.status,
+                  totalAmount: latest.totalAmount.toString(),
+                  currency: latest.currency,
+                  createdAt: latest.createdAt.toISOString(),
+                  issuedAt: latest.issuedAt?.toISOString() ?? null,
+                }
+              : null,
+          },
+        };
+      }),
       pagination: {
         page: query.page,
         pageSize: query.pageSize,
@@ -593,12 +737,294 @@ export class QuotationOrderService {
   }
 
   async orderDetail(id: string) {
-    const row = await this.prisma.order.findUnique({
-      where: { id },
-      include: { items: { orderBy: { lineNo: 'asc' } }, fees: { orderBy: { lineNo: 'asc' } } },
-    });
+    const [row, documents, auditTrail] = await Promise.all([
+      this.prisma.order.findUnique({
+        where: { id },
+        include: { items: { orderBy: { lineNo: 'asc' } }, fees: { orderBy: { lineNo: 'asc' } } },
+      }),
+      this.prisma.commercialDocument.findMany({
+        where: { orderId: id },
+        orderBy: [{ createdAt: 'desc' }],
+        select: {
+          id: true,
+          documentType: true,
+          documentNo: true,
+          revisionNo: true,
+          status: true,
+          currency: true,
+          totalAmount: true,
+          issueDate: true,
+          issuedAt: true,
+          supersedesId: true,
+          templateVersionNo: true,
+          pdfFileKey: true,
+          createdAt: true,
+        },
+      }),
+      this.prisma.auditLog.findMany({
+        where: { entityType: 'Order', entityId: id },
+        orderBy: { createdAt: 'desc' },
+        take: 30,
+        include: { actor: { select: { displayName: true } } },
+      }),
+    ]);
     if (!row) throw ApiError.notFound('Order not found.');
-    return this.orderDto(row);
+    return {
+      ...this.orderDto(row, true),
+      buyer: this.orderBuyer(row),
+      documents: documents.map((document) => ({
+        id: document.id,
+        type: document.documentType,
+        documentNo: document.documentNo,
+        revisionNo: document.revisionNo,
+        status: document.status,
+        currency: document.currency,
+        totalAmount: document.totalAmount.toString(),
+        issueDate: document.issueDate?.toISOString().slice(0, 10) ?? null,
+        issuedAt: document.issuedAt?.toISOString() ?? null,
+        supersedesId: document.supersedesId,
+        templateVersion: document.templateVersionNo,
+        hasPdf: Boolean(document.pdfFileKey),
+        createdAt: document.createdAt.toISOString(),
+      })),
+      auditTrail: auditTrail.map((entry) => ({
+        id: entry.id,
+        action: entry.action,
+        actor: entry.actor?.displayName ?? null,
+        createdAt: entry.createdAt.toISOString(),
+        metadata: entry.metadata,
+      })),
+    };
+  }
+
+  /**
+   * Corrects only the customer/consignee snapshot of one order. Prices, items,
+   * fees and totals are untouched; the version column is an optimistic lock so
+   * two administrators cannot silently overwrite each other (docs/41 §4.3).
+   */
+  async updateOrderCustomerSnapshot(
+    id: string,
+    input: UpdateOrderCustomerSnapshotInput,
+    actorId: string,
+    requestId: string,
+  ) {
+    const order = await this.prisma.order.findUnique({ where: { id } });
+    if (!order) throw ApiError.notFound('Order not found.');
+    if (order.status === 'CANCELLED') {
+      throw new ApiError(
+        ERROR_CODES.orderSnapshotUpdateForbidden,
+        'A cancelled order cannot be corrected. Reopen the order first.',
+      );
+    }
+    const buyer = this.partySnapshot(input.buyer);
+    const consignee = this.partySnapshot(input.consignee);
+    const trade = {
+      ...((order.tradeSnapshot as Record<string, unknown> | null) ?? {}),
+      schemaVersion: 1,
+      ...(input.trade
+        ? {
+            incotermCode: input.trade.incotermCode ?? null,
+            namedPlace: input.trade.namedPlace ?? null,
+            paymentTerms: input.trade.paymentTerms ?? null,
+          }
+        : {}),
+      contractNo: input.contractNo ?? null,
+      buyerReference: input.buyerReference ?? null,
+    };
+    const updated = await this.prisma.order.updateMany({
+      where: { id, version: input.version },
+      data: {
+        version: { increment: 1 },
+        buyerSnapshot: buyer as Prisma.InputJsonValue,
+        consigneeSnapshot: consignee as Prisma.InputJsonValue,
+        notifyPartySnapshot:
+          input.notifyParty === null
+            ? Prisma.DbNull
+            : input.notifyParty
+              ? (this.partySnapshot(input.notifyParty) as Prisma.InputJsonValue)
+              : undefined,
+        tradeSnapshot: trade as Prisma.InputJsonValue,
+        buyerReference: input.buyerReference ?? null,
+        contractNo: input.contractNo ?? null,
+        buyerCompanyName: buyer.companyName,
+        buyerContactName: buyer.contactName,
+        buyerEmail: buyer.email,
+        buyerPhoneE164: buyer.phone,
+        buyerCountryCode: buyer.countryCode,
+        consigneeName: consignee.contactName ?? consignee.companyName,
+        consigneeCountryCode: consignee.shippingAddress?.countryCode ?? null,
+        customerSnapshot: {
+          ...((order.customerSnapshot as Record<string, unknown> | null) ?? {}),
+          schemaVersion: 1,
+          companyName: buyer.companyName,
+          legalCompanyName: buyer.companyName,
+          contactName: buyer.contactName,
+          phoneE164: buyer.phone,
+          email: buyer.email,
+          countryCode: buyer.countryCode,
+          taxId: buyer.taxId,
+          billingAddress: buyer.billingAddress,
+          shippingAddress: consignee.shippingAddress,
+          buyerReference: input.buyerReference ?? null,
+          contractNo: input.contractNo ?? null,
+        } as Prisma.InputJsonValue,
+        billingAddressSnapshot: (buyer.billingAddress ?? undefined) as
+          | Prisma.InputJsonValue
+          | undefined,
+        shippingAddressSnapshot: (consignee.shippingAddress ?? undefined) as
+          | Prisma.InputJsonValue
+          | undefined,
+      },
+    });
+    if (updated.count !== 1) {
+      const current = await this.prisma.order.findUnique({
+        where: { id },
+        select: { version: true },
+      });
+      if (!current) throw ApiError.notFound('Order not found.');
+      throw new ApiError(
+        ERROR_CODES.orderConcurrentUpdate,
+        'The order was changed by another session. Reload and try again.',
+        { status: 409, details: { currentVersion: current.version } },
+      );
+    }
+    const changedFields: string[] = [];
+    if (JSON.stringify(order.buyerSnapshot) !== JSON.stringify(buyer)) {
+      changedFields.push('buyerSnapshot');
+    }
+    if (JSON.stringify(order.consigneeSnapshot) !== JSON.stringify(consignee)) {
+      changedFields.push('consigneeSnapshot');
+    }
+    if ((order.buyerReference ?? null) !== (input.buyerReference ?? null)) {
+      changedFields.push('buyerReference');
+    }
+    if ((order.contractNo ?? null) !== (input.contractNo ?? null)) {
+      changedFields.push('contractNo');
+    }
+    if (input.trade) changedFields.push('tradeSnapshot');
+    if (input.notifyParty) changedFields.push('notifyPartySnapshot');
+    await this.audit.record({
+      actorId,
+      action: 'order.customer_snapshot.updated',
+      entityType: 'Order',
+      entityId: id,
+      requestId,
+      // Only field names: no phone, address, tax id or email content in logs.
+      metadata: { orderNo: order.orderNo, changedFields },
+    });
+    return this.orderDetail(id);
+  }
+
+  /** Explicitly copies the corrected order snapshot into the customer master. */
+  async syncOrderCustomerProfile(
+    id: string,
+    input: { version: number },
+    actorId: string,
+    requestId: string,
+  ) {
+    const order = await this.prisma.order.findUnique({ where: { id } });
+    if (!order) throw ApiError.notFound('Order not found.');
+    if (order.version !== input.version) {
+      throw new ApiError(
+        ERROR_CODES.orderConcurrentUpdate,
+        'The order was changed by another session. Reload and try again.',
+        { status: 409, details: { currentVersion: order.version } },
+      );
+    }
+    if (!order.customerId) {
+      throw ApiError.validation('This order is not linked to a customer profile.');
+    }
+    const buyer = (order.buyerSnapshot ?? {}) as Record<string, unknown>;
+    const consignee = (order.consigneeSnapshot ?? {}) as Record<string, unknown>;
+    const customer = await this.prisma.customer.findUnique({ where: { id: order.customerId } });
+    if (!customer) throw ApiError.notFound('Customer profile not found.');
+    const billing = buyer.billingAddress as Record<string, unknown> | null | undefined;
+    const shipping = consignee.shippingAddress as Record<string, unknown> | null | undefined;
+    await this.prisma.customer.update({
+      where: { id: customer.id },
+      data: {
+        displayName:
+          (typeof buyer.companyName === 'string' && buyer.companyName) ||
+          customer.displayName,
+        legalName: typeof buyer.companyName === 'string' ? buyer.companyName : customer.legalName,
+        contactName:
+          typeof buyer.contactName === 'string' ? buyer.contactName : customer.contactName,
+        email: typeof buyer.email === 'string' ? buyer.email : customer.email,
+        countryCode:
+          typeof buyer.countryCode === 'string' ? buyer.countryCode : customer.countryCode,
+        taxId: typeof buyer.taxId === 'string' ? buyer.taxId : customer.taxId,
+        billingAddress: billing
+          ? (billing as Prisma.InputJsonValue)
+          : customer.billingAddress === null
+            ? Prisma.DbNull
+            : (customer.billingAddress as Prisma.InputJsonValue),
+        defaultShippingAddress: shipping
+          ? (shipping as Prisma.InputJsonValue)
+          : customer.defaultShippingAddress === null
+            ? Prisma.DbNull
+            : (customer.defaultShippingAddress as Prisma.InputJsonValue),
+      },
+    });
+    await this.audit.record({
+      actorId,
+      action: 'order.customer_profile.synced',
+      entityType: 'Customer',
+      entityId: customer.id,
+      requestId,
+      metadata: { orderNo: order.orderNo, fields: ['company', 'contact', 'email', 'tax', 'address'] },
+    });
+    return { customerId: customer.id };
+  }
+
+  private orderBuyer(row: {
+    buyerSnapshot?: Prisma.JsonValue | null;
+    buyerCompanyName?: string | null;
+    buyerContactName?: string | null;
+    buyerCountryCode?: string | null;
+    customerSnapshot?: Prisma.JsonValue;
+  }) {
+    if (row.buyerSnapshot) return row.buyerSnapshot;
+    const snapshot = (row.customerSnapshot ?? {}) as Record<string, unknown>;
+    if (row.buyerCompanyName || row.buyerContactName) {
+      return {
+        companyName: row.buyerCompanyName ?? null,
+        contactName: row.buyerContactName ?? null,
+        countryCode: row.buyerCountryCode ?? null,
+        billingAddress: snapshot.billingAddress ?? null,
+      };
+    }
+    return {
+      companyName: snapshot.companyName ?? null,
+      contactName: snapshot.contactName ?? null,
+      phone: snapshot.phoneE164 ?? null,
+      email: snapshot.email ?? null,
+      countryCode: snapshot.countryCode ?? null,
+      billingAddress: snapshot.billingAddress ?? null,
+    };
+  }
+
+  private partySnapshot(input: {
+    companyName?: string | null;
+    contactName?: string | null;
+    phone?: string | null;
+    email?: string | null;
+    taxId?: string | null;
+    countryCode?: string | null;
+    address?: Record<string, unknown> | null;
+    billingAddress?: Record<string, unknown> | null;
+    shippingAddress?: Record<string, unknown> | null;
+  }) {
+    return {
+      schemaVersion: 1,
+      companyName: input.companyName ?? null,
+      contactName: input.contactName ?? null,
+      phone: input.phone ?? null,
+      email: input.email ?? null,
+      taxId: input.taxId ?? null,
+      countryCode: input.countryCode ?? null,
+      billingAddress: input.billingAddress ?? input.address ?? null,
+      shippingAddress: input.shippingAddress ?? input.address ?? null,
+    };
   }
 
   private async prepare(input: QuotationCalculationInput) {
@@ -992,11 +1418,20 @@ export class QuotationOrderService {
         allocatedFreightForeign: item.allocatedFreightForeign,
         unitSalePriceForeign: item.unitSalePriceForeign,
         lineAmountForeign: item.lineAmountForeign,
+        hsCodeSnapshot: source.product.hsCode ?? null,
+        originCountryCodeSnapshot: source.product.originCountryCode ?? null,
+        customsDescriptionSnapshot: source.product.customsDescription ?? null,
+        netWeightPerUnitKgSnapshot: source.product.netWeightPerUnitKg?.toString() ?? null,
         productDataSnapshot: {
           id: source.product.id,
           sku: source.product.sku,
           priceCny: source.product.priceCny!.toString(),
           name: item.productName,
+          hsCode: source.product.hsCode ?? null,
+          originCountryCode: source.product.originCountryCode ?? null,
+          customsDescription: source.product.customsDescription ?? null,
+          netWeightPerUnitKg: source.product.netWeightPerUnitKg?.toString() ?? null,
+          exportUnit: source.product.exportUnit ?? null,
           categoryId: productHistory.categoryId,
           categoryLeafNameEn: productHistory.categoryLeafNameEn,
           categoryLocale: productHistory.categoryLocale,
@@ -1037,6 +1472,16 @@ export class QuotationOrderService {
       allocatedFreightForeign: item.allocatedFreightForeign,
       unitSalePriceForeign: item.unitSalePriceForeign,
       lineAmountForeign: item.lineAmountForeign,
+      hsCodeSnapshot: this.snapshotString(item.productDataSnapshot, 'hsCode'),
+      originCountryCodeSnapshot: this.snapshotString(item.productDataSnapshot, 'originCountryCode'),
+      customsDescriptionSnapshot: this.snapshotString(
+        item.productDataSnapshot,
+        'customsDescription',
+      ),
+      netWeightPerUnitKgSnapshot: this.snapshotString(
+        item.productDataSnapshot,
+        'netWeightPerUnitKg',
+      ),
       productDataSnapshot: item.productDataSnapshot as Prisma.InputJsonValue,
       packagingSnapshot: item.packagingSnapshot as Prisma.InputJsonValue,
     };
@@ -1062,9 +1507,15 @@ export class QuotationOrderService {
       create: {
         phoneE164: input.customer.phoneE164,
         countryCode: input.customer.countryCode ?? null,
-        displayName: input.customer.companyName || null,
+        displayName:
+          input.customer.legalCompanyName || input.customer.companyName || null,
+        legalName: input.customer.legalCompanyName || null,
         contactName: input.customer.contactName || null,
         email: input.customer.email ?? null,
+        customerType: input.customer.customerType,
+        taxId: input.customer.taxId || null,
+        website: input.customer.website || null,
+        preferredLanguage: input.customer.preferredLanguage,
         billingAddress: input.customer.billingAddress as Prisma.InputJsonValue | undefined,
         defaultShippingAddress: input.customer.shippingAddress as Prisma.InputJsonValue | undefined,
       },
@@ -1098,13 +1549,83 @@ export class QuotationOrderService {
 
   private customerSnapshot(input: QuotationCalculationInput) {
     return {
+      schemaVersion: 1,
       companyName: input.customer.companyName,
+      legalCompanyName: input.customer.legalCompanyName || null,
       contactName: input.customer.contactName,
       phoneE164: input.customer.phoneE164,
       email: input.customer.email ?? null,
       countryCode: input.customer.countryCode ?? null,
-      billingAddress: input.customer.billingAddress ?? null,
-      shippingAddress: input.customer.shippingAddress ?? null,
+      customerType: input.customer.customerType,
+      taxId: input.customer.taxId || null,
+      website: input.customer.website || null,
+      preferredLanguage: input.customer.preferredLanguage,
+      billingAddress: this.normalizeAddress(input.customer.billingAddress),
+      shippingAddress: this.normalizeAddress(input.customer.shippingAddress),
+      buyerReference: input.buyerReference || null,
+      contractNo: input.contractNo || null,
+    };
+  }
+
+  private normalizeAddress(
+    address: QuotationCalculationInput['customer']['billingAddress'] | undefined | null,
+  ) {
+    if (!address) return null;
+    return {
+      recipient: address.recipient || null,
+      companyName: address.companyName || null,
+      phoneE164: address.phoneE164 || null,
+      line1: address.line1 || null,
+      line2: address.line2 || null,
+      city: address.city || null,
+      state: address.region || null,
+      postalCode: address.postalCode || null,
+      countryCode: address.countryCode,
+    };
+  }
+
+  private buyerSnapshot(input: QuotationCalculationInput) {
+    return {
+      schemaVersion: 1,
+      companyName: input.customer.legalCompanyName || input.customer.companyName || null,
+      contactName: input.customer.contactName || null,
+      phone: input.customer.phoneE164 || null,
+      email: input.customer.email ?? null,
+      taxId: input.customer.taxId || null,
+      countryCode: input.customer.countryCode ?? null,
+      customerType: input.customer.customerType,
+      billingAddress: this.normalizeAddress(input.customer.billingAddress),
+      preferredLanguage: input.customer.preferredLanguage,
+    };
+  }
+
+  private consigneeSnapshot(input: QuotationCalculationInput) {
+    const shipping = input.customer.shippingAddress;
+    if (!shipping) return null;
+    return {
+      schemaVersion: 1,
+      companyName: shipping.companyName || input.customer.legalCompanyName || input.customer.companyName || null,
+      contactName: shipping.recipient || input.customer.contactName || null,
+      phone: shipping.phoneE164 || input.customer.phoneE164 || null,
+      email: input.customer.email ?? null,
+      shippingAddress: this.normalizeAddress(shipping),
+    };
+  }
+
+  private tradeSnapshot(input: QuotationCalculationInput) {
+    const rate = new Decimal(input.exchangeRate);
+    const exchangeRateText =
+      input.currencyCode === 'CNY'
+        ? '1 CNY = 1 CNY'
+        : `1 CNY = ${rate.toFixed(6).replace(/0+$/, '').replace(/\.$/, '')} ${input.currencyCode}`;
+    return {
+      schemaVersion: 1,
+      incotermCode: input.trade?.incotermCode ?? null,
+      namedPlace: input.trade?.namedPlace || null,
+      paymentTerms: input.trade?.paymentTerms || null,
+      contractNo: input.contractNo || null,
+      buyerReference: input.buyerReference || null,
+      exchangeRateText,
     };
   }
 
@@ -1262,6 +1783,20 @@ export class QuotationOrderService {
       totalAmountCny: Prisma.Decimal;
       totalAmountForeign: Prisma.Decimal;
       orderDate: Date;
+      version?: number;
+      buyerReference?: string | null;
+      contractNo?: string | null;
+      buyerCompanyName?: string | null;
+      buyerContactName?: string | null;
+      buyerEmail?: string | null;
+      buyerPhoneE164?: string | null;
+      buyerCountryCode?: string | null;
+      consigneeName?: string | null;
+      consigneeCountryCode?: string | null;
+      buyerSnapshot?: Prisma.JsonValue | null;
+      consigneeSnapshot?: Prisma.JsonValue | null;
+      notifyPartySnapshot?: Prisma.JsonValue | null;
+      tradeSnapshot?: Prisma.JsonValue | null;
       customerSnapshot: Prisma.JsonValue;
       items?: {
         id: string;
@@ -1314,6 +1849,13 @@ export class QuotationOrderService {
       orderDate: row.orderDate.toISOString().slice(0, 10),
       totalAmountCny: row.totalAmountCny.toString(),
       totalAmountForeign: row.totalAmountForeign.toString(),
+      version: row.version ?? 1,
+      buyer: this.orderBuyer(row),
+      consignee: row.consigneeSnapshot ?? null,
+      notifyParty: row.notifyPartySnapshot ?? null,
+      trade: row.tradeSnapshot ?? null,
+      buyerReference: row.buyerReference ?? null,
+      contractNo: row.contractNo ?? null,
       customer: row.customerSnapshot,
       items: row.items?.map((item) => ({
         id: item.id,

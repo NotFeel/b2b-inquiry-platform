@@ -27,6 +27,11 @@ export interface ProductSpecFormState {
   cartonHeightCm: string;
   cartonWeightKg: string;
   cartonQuantity: string;
+  hsCode: string;
+  originCountryCode: string;
+  customsDescription: string;
+  netWeightPerUnitKg: string;
+  exportUnit: string;
 }
 
 export interface ProductTranslationFormState {
@@ -74,6 +79,11 @@ export function emptyProductForm(): ProductFormState {
       cartonHeightCm: '',
       cartonWeightKg: '',
       cartonQuantity: '',
+      hsCode: '',
+      originCountryCode: '',
+      customsDescription: '',
+      netWeightPerUnitKg: '',
+      exportUnit: '',
     },
     translations: Object.fromEntries(
       SUPPORTED_LOCALES.map((locale) => [
@@ -111,6 +121,11 @@ export function fromProductDetail(detail: ProductAdminDetail): ProductFormState 
       cartonHeightCm: numberToInput(detail.cartonHeightCm),
       cartonWeightKg: detail.cartonWeightKg ?? '',
       cartonQuantity: numberToInput(detail.cartonQuantity),
+      hsCode: detail.hsCode ?? '',
+      originCountryCode: detail.originCountryCode ?? '',
+      customsDescription: detail.customsDescription ?? '',
+      netWeightPerUnitKg: detail.netWeightPerUnitKg ?? '',
+      exportUnit: detail.exportUnit ?? '',
     },
     translations: Object.fromEntries(
       SUPPORTED_LOCALES.map((locale) => {
@@ -222,6 +237,25 @@ export function validateProductForm(
     const value = state.priceCny.trim();
     if (!/^\d+(\.\d{1,2})?$/.test(value)) errors.priceCny = 'products.validation.price';
   }
+  if (state.specs.hsCode !== '' && !/^[0-9A-Za-z .-]{1,20}$/.test(state.specs.hsCode.trim())) {
+    errors['specs.hsCode'] = 'validation.hsCode.invalid';
+  }
+  if (
+    state.specs.originCountryCode !== '' &&
+    !/^[A-Za-z]{2}$/.test(state.specs.originCountryCode.trim())
+  ) {
+    errors['specs.originCountryCode'] = 'validation.countryCode.invalid';
+  }
+  if (
+    state.specs.netWeightPerUnitKg !== '' &&
+    (!/^\d+(\.\d{1,6})?$/.test(state.specs.netWeightPerUnitKg.trim()) ||
+      Number(state.specs.netWeightPerUnitKg) <= 0)
+  ) {
+    errors['specs.netWeightPerUnitKg'] = 'validation.decimal.invalid';
+  }
+  if (state.specs.exportUnit.length > 24) {
+    errors['specs.exportUnit'] = 'validation.decimal.invalid';
+  }
   if (state.sortOrder !== '' && !/^\d+$/.test(state.sortOrder.trim())) {
     errors.sortOrder = 'products.validation.sortOrder';
   }
@@ -262,6 +296,11 @@ function normalizeFieldKey(field: string): string | null {
     cartonHeightCm: 'specs.cartonHeightCm',
     cartonWeightKg: 'specs.cartonWeightKg',
     cartonQuantity: 'specs.cartonQuantity',
+    hsCode: 'specs.hsCode',
+    originCountryCode: 'specs.originCountryCode',
+    customsDescription: 'specs.customsDescription',
+    netWeightPerUnitKg: 'specs.netWeightPerUnitKg',
+    exportUnit: 'specs.exportUnit',
     'translations.en-US': 'translations.en-US',
   };
   if (map[field]) return map[field];
@@ -315,6 +354,11 @@ export function toWritePayload(
     cartonHeightCm: decimalNumberOrNull(state.specs.cartonHeightCm),
     cartonWeightKg: textOrNull(state.specs.cartonWeightKg),
     cartonQuantity: intOrNull(state.specs.cartonQuantity),
+    hsCode: textOrNull(state.specs.hsCode),
+    originCountryCode: textOrNull(state.specs.originCountryCode)?.toUpperCase() ?? null,
+    customsDescription: textOrNull(state.specs.customsDescription),
+    netWeightPerUnitKg: textOrNull(state.specs.netWeightPerUnitKg),
+    exportUnit: textOrNull(state.specs.exportUnit),
     tagIds: state.tagIds,
     // Only locales with content are submitted: an empty translation row would
     // claim the product is translated when it is not.

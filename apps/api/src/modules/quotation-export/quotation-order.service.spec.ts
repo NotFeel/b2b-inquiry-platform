@@ -23,6 +23,7 @@ describe('quotation product search', () => {
         sku: 'SKU-100',
         priceCny: new Decimal('12.3400'),
         publishStatus: 'PUBLISHED',
+        lifecycleStatus: 'AVAILABLE',
         cartonLengthCm: 20,
         cartonWidthCm: 10,
         cartonHeightCm: 8,

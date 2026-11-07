@@ -1,4 +1,5 @@
 import type {
+  DocumentRenderJobPayload,
   AnalyticsRollupJobPayload,
   ExcelPdfCleanupJobPayload,
   ExcelPdfConvertJobPayload,
@@ -140,7 +141,8 @@ async function claimOutboxEvent(
       'product-import-cleanup',
       'analytics-rollup',
       'excel-pdf-convert',
-      'excel-pdf-cleanup'
+      'excel-pdf-cleanup',
+      'commercial-document-render'
     )
       AND (${options.excelPdfEnabled !== false} OR "eventType" <> 'excel-pdf-convert')
       AND (
@@ -211,6 +213,15 @@ async function claimOutboxEvent(
       attempts: claimed.attempts,
       eventType: 'excel-pdf-cleanup',
       payload: row.payload as ExcelPdfCleanupJobPayload,
+    };
+  }
+  if (row.eventType === 'commercial-document-render') {
+    return {
+      source: 'outbox',
+      id: row.id,
+      attempts: claimed.attempts,
+      eventType: 'commercial-document-render',
+      payload: row.payload as DocumentRenderJobPayload,
     };
   }
   return null;

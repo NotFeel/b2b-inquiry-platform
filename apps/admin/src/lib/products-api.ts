@@ -63,6 +63,11 @@ export interface ProductWritePayload {
   cartonHeightCm: number | null;
   cartonWeightKg: string | null;
   cartonQuantity: number | null;
+  hsCode?: string | null;
+  originCountryCode?: string | null;
+  customsDescription?: string | null;
+  netWeightPerUnitKg?: string | null;
+  exportUnit?: string | null;
   tagIds: string[];
   translations: ProductTranslationPayload[];
   /** Only sent when the actor holds `product.cost.update`. */

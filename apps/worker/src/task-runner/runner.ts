@@ -9,6 +9,7 @@ import { processImageDerivatives } from '../jobs/image-derivatives';
 import { processProductImportCleanup } from '../jobs/product-import-cleanup';
 import { processProductImportValidation } from '../jobs/product-import-validate';
 import { processQuoteExport } from '../jobs/quote-export';
+import { processCommercialDocumentRender } from '../tasks/commercial-documents/render.handler';
 import { processExcelPdfCleanup } from '../tasks/excel-pdf/excel-pdf-cleanup';
 import { processExcelPdfConversion } from '../tasks/excel-pdf/excel-pdf-task.handler';
 import { assertExcelPdfTempWorkspaceWritable } from '../tasks/excel-pdf/temp-workspace';
@@ -200,6 +201,15 @@ export class PostgresTaskRunner {
         prisma: this.prisma,
         logger: this.logger,
         env: this.env,
+      });
+      return;
+    }
+    if (task.eventType === 'commercial-document-render') {
+      await processCommercialDocumentRender(task.payload, {
+        prisma: this.prisma,
+        storage: this.storage,
+        env: this.env,
+        logger: this.logger,
       });
       return;
     }

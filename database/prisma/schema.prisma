@@ -47,6 +47,30 @@ enum OrderStatus {
   CANCELLED
 }
 
+enum CommercialDocumentType {
+  PI
+  CI
+}
+
+enum CommercialDocumentStatus {
+  DRAFT
+  REVIEW
+  ISSUED
+  SUPERSEDED
+  CANCELLED
+}
+
+enum DocumentTemplateStatus {
+  DRAFT
+  ACTIVE
+  DISABLED
+}
+
+enum DocumentTemplateVersionStatus {
+  DRAFT
+  PUBLISHED
+}
+
 enum FreightBillingMethod {
   CBM
   KG
@@ -87,26 +111,32 @@ model AdminUser {
   createdAt          DateTime    @default(now()) @db.Timestamptz(6)
   updatedAt          DateTime    @updatedAt @db.Timestamptz(6)
 
-  userRoles                UserRole[]
-  sessions                 AdminSession[]
-  auditLogs                AuditLog[]
-  createdProducts          Product[]                 @relation("ProductCreatedBy")
-  uploadedFiles            FileAsset[]
-  quoteExports             QuoteExportJob[]
-  quoteTemplates           QuoteTemplate[]
-  pdfConversions           PdfConversionJob[]
-  excelPdfUploads          ExcelPdfUpload[]
-  piDocuments              PiDocument[]
-  quotationsCreated        Quotation[]               @relation("QuotationCreator")
-  quotationRatesSet        Quotation[]               @relation("QuotationRateEditor")
-  ordersCreated            Order[]                   @relation("OrderCreator")
-  inquiryActivities        InquiryActivity[]         @relation("InquirySalespersonUser")
-  factoryMedia             FactoryMedia[]            @relation("FactoryMediaCreatedBy")
-  factoryProcessSteps      FactoryProcessStep[]      @relation("FactoryProcessStepCreatedBy")
-  credentials              Credential[]              @relation("CredentialCreatedBy")
+  userRoles                  UserRole[]
+  sessions                   AdminSession[]
+  auditLogs                  AuditLog[]
+  createdProducts            Product[]                 @relation("ProductCreatedBy")
+  uploadedFiles              FileAsset[]
+  quoteExports               QuoteExportJob[]
+  quoteTemplates             QuoteTemplate[]
+  pdfConversions             PdfConversionJob[]
+  excelPdfUploads            ExcelPdfUpload[]
+  piDocuments                PiDocument[]
+  quotationsCreated          Quotation[]               @relation("QuotationCreator")
+  quotationRatesSet          Quotation[]               @relation("QuotationRateEditor")
+  ordersCreated              Order[]                   @relation("OrderCreator")
+  commercialDocumentsCreated CommercialDocument[]      @relation("CommercialDocumentCreator")
+  commercialDocumentsIssued  CommercialDocument[]      @relation("CommercialDocumentIssuer")
+  documentTemplatesCreated   DocumentTemplate[]        @relation("DocumentTemplateCreator")
+  documentTemplatesUpdated   DocumentTemplate[]        @relation("DocumentTemplateUpdater")
+  documentTemplateVersions   DocumentTemplateVersion[] @relation("DocumentTemplateVersionCreator")
+  commercialDocumentRenders  DocumentRenderJob[]       @relation("CommercialDocumentRenderRequester")
+  inquiryActivities          InquiryActivity[]         @relation("InquirySalespersonUser")
+  factoryMedia               FactoryMedia[]            @relation("FactoryMediaCreatedBy")
+  factoryProcessSteps        FactoryProcessStep[]      @relation("FactoryProcessStepCreatedBy")
+  credentials                Credential[]              @relation("CredentialCreatedBy")
   // Import validation tokens are short-lived and cascade with their owner.
-  productImportValidations ProductImportValidation[]
-  productImportUploads     ProductImportUpload[]
+  productImportValidations   ProductImportValidation[]
+  productImportUploads       ProductImportUpload[]
 
   @@index([status, username])
   @@map("admin_users")
@@ -260,10 +290,10 @@ model DictionaryItem {
   type         DictionaryType              @relation(fields: [typeId], references: [id], onDelete: Cascade)
   translations DictionaryItemTranslation[]
 
-  productsAsLifecycleStatus Product[] @relation("ProductLifecycleStatusItem")
-  productsAsPublishStatus   Product[] @relation("ProductPublishStatusItem")
+  productsAsLifecycleStatus  Product[]   @relation("ProductLifecycleStatusItem")
+  productsAsPublishStatus    Product[]   @relation("ProductPublishStatusItem")
   quotationsAsFreightDivisor Quotation[] @relation("QuotationFreightDivisor")
-  ordersAsFreightDivisor Order[] @relation("OrderFreightDivisor")
+  ordersAsFreightDivisor     Order[]     @relation("OrderFreightDivisor")
 
   @@unique([typeId, code])
   @@index([typeId, enabled, sortOrder])
@@ -401,6 +431,14 @@ model Product {
   cartonHeightCm Decimal? @db.Decimal(12, 3)
   cartonWeightKg Decimal? @db.Decimal(12, 3)
   cartonQuantity Int?
+
+  /// Export/customs attributes. Copied into order/document snapshots so later
+  /// master-data changes never rewrite history (docs/41 §6.3).
+  hsCode             String?  @db.VarChar(20)
+  originCountryCode  String?  @db.VarChar(2)
+  customsDescription String?
+  netWeightPerUnitKg Decimal? @db.Decimal(18, 6)
+  exportUnit         String?  @db.VarChar(24)
 
   createdById String? @db.Uuid
 
@@ -954,6 +992,11 @@ model Customer {
   displayName            String?  @db.VarChar(180)
   email                  String?  @db.VarChar(254)
   contactName            String?  @db.VarChar(160)
+  customerType           String   @default("COMPANY") @db.VarChar(16)
+  legalName              String?  @db.VarChar(240)
+  taxId                  String?  @db.VarChar(60)
+  website                String?  @db.VarChar(500)
+  preferredLanguage      String   @default("en-US") @db.VarChar(16)
   billingAddress         Json?
   defaultShippingAddress Json?
   note                   String?
@@ -974,52 +1017,52 @@ model Customer {
 }
 
 model Quotation {
-  id                      String          @id @default(uuid()) @db.Uuid
-  quotationNo             String          @unique @db.VarChar(40)
-  title                   String          @db.VarChar(180)
-  status                  QuotationStatus @default(DRAFT)
-  revision                Int             @default(1)
-  customerId              String?         @db.Uuid
-  createdById             String?         @db.Uuid
-  idempotencyKey          String?         @db.VarChar(120)
-  idempotencyPayloadHash  String?         @db.VarChar(64)
-  quotedAt                DateTime        @default(now()) @db.Timestamptz(6)
-  validUntil              DateTime?       @db.Timestamptz(6)
-  currencyCode            String          @db.VarChar(3)
-  exchangeRate            Decimal         @db.Decimal(24, 12)
-  freightBillingMethod    FreightBillingMethod?
-  freightCurrencyCode     String?         @db.VarChar(3)
-  cbmRatePerCbm           Decimal?        @db.Decimal(24, 8)
-  orderTotalCbm           Decimal?        @db.Decimal(30, 15)
-  cbmFreightAmount        Decimal?        @db.Decimal(24, 2)
-  kgRatePerKg             Decimal?        @db.Decimal(24, 8)
-  volumetricDivisorItemId String?         @db.Uuid
-  volumetricDivisorCode   String?         @db.VarChar(100)
-  volumetricDivisorValue  Int?
-  orderTotalVolumeWeightKg Decimal?       @db.Decimal(24, 12)
-  orderTotalGrossWeightKg  Decimal?       @db.Decimal(24, 12)
-  chargeableWeightKg       Decimal?       @db.Decimal(24, 12)
-  kgChargeableBasis        KgChargeableBasis?
-  kgFreightAmount          Decimal?       @db.Decimal(24, 2)
-  selectedFreightAmount    Decimal?       @db.Decimal(24, 2)
+  id                        String                @id @default(uuid()) @db.Uuid
+  quotationNo               String                @unique @db.VarChar(40)
+  title                     String                @db.VarChar(180)
+  status                    QuotationStatus       @default(DRAFT)
+  revision                  Int                   @default(1)
+  customerId                String?               @db.Uuid
+  createdById               String?               @db.Uuid
+  idempotencyKey            String?               @db.VarChar(120)
+  idempotencyPayloadHash    String?               @db.VarChar(64)
+  quotedAt                  DateTime              @default(now()) @db.Timestamptz(6)
+  validUntil                DateTime?             @db.Timestamptz(6)
+  currencyCode              String                @db.VarChar(3)
+  exchangeRate              Decimal               @db.Decimal(24, 12)
+  freightBillingMethod      FreightBillingMethod?
+  freightCurrencyCode       String?               @db.VarChar(3)
+  cbmRatePerCbm             Decimal?              @db.Decimal(24, 8)
+  orderTotalCbm             Decimal?              @db.Decimal(30, 15)
+  cbmFreightAmount          Decimal?              @db.Decimal(24, 2)
+  kgRatePerKg               Decimal?              @db.Decimal(24, 8)
+  volumetricDivisorItemId   String?               @db.Uuid
+  volumetricDivisorCode     String?               @db.VarChar(100)
+  volumetricDivisorValue    Int?
+  orderTotalVolumeWeightKg  Decimal?              @db.Decimal(24, 12)
+  orderTotalGrossWeightKg   Decimal?              @db.Decimal(24, 12)
+  chargeableWeightKg        Decimal?              @db.Decimal(24, 12)
+  kgChargeableBasis         KgChargeableBasis?
+  kgFreightAmount           Decimal?              @db.Decimal(24, 2)
+  selectedFreightAmount     Decimal?              @db.Decimal(24, 2)
   freightAllocationSnapshot Json?
-  exchangeRateDate        DateTime        @db.Date
-  exchangeRateSource      String          @default("MANUAL") @db.VarChar(16)
-  exchangeRateEnteredById String?         @db.Uuid
-  roundingMode            String          @default("CEIL_2") @db.VarChar(16)
-  calculationVersion      String          @default("1") @db.VarChar(24)
-  subtotalCny             Decimal         @db.Decimal(24, 8)
-  freightCny              Decimal         @db.Decimal(24, 8)
-  deliveryFeeCny          Decimal         @db.Decimal(24, 8)
-  otherFeesCny            Decimal         @db.Decimal(24, 8)
-  totalAmountCny          Decimal         @db.Decimal(24, 8)
-  totalAmountForeignExact Decimal         @db.Decimal(30, 12)
-  totalAmountForeign      Decimal         @db.Decimal(24, 2)
-  customerSnapshot        Json
-  calculationSnapshot     Json
-  convertedAt             DateTime?       @db.Timestamptz(6)
-  createdAt               DateTime        @default(now()) @db.Timestamptz(6)
-  updatedAt               DateTime        @updatedAt @db.Timestamptz(6)
+  exchangeRateDate          DateTime              @db.Date
+  exchangeRateSource        String                @default("MANUAL") @db.VarChar(16)
+  exchangeRateEnteredById   String?               @db.Uuid
+  roundingMode              String                @default("CEIL_2") @db.VarChar(16)
+  calculationVersion        String                @default("1") @db.VarChar(24)
+  subtotalCny               Decimal               @db.Decimal(24, 8)
+  freightCny                Decimal               @db.Decimal(24, 8)
+  deliveryFeeCny            Decimal               @db.Decimal(24, 8)
+  otherFeesCny              Decimal               @db.Decimal(24, 8)
+  totalAmountCny            Decimal               @db.Decimal(24, 8)
+  totalAmountForeignExact   Decimal               @db.Decimal(30, 12)
+  totalAmountForeign        Decimal               @db.Decimal(24, 2)
+  customerSnapshot          Json
+  calculationSnapshot       Json
+  convertedAt               DateTime?             @db.Timestamptz(6)
+  createdAt                 DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt                 DateTime              @updatedAt @db.Timestamptz(6)
 
   customer              Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
   createdBy             AdminUser?      @relation("QuotationCreator", fields: [createdById], references: [id], onDelete: SetNull)
@@ -1037,40 +1080,44 @@ model Quotation {
 }
 
 model QuotationItem {
-  id                      String   @id @default(uuid()) @db.Uuid
-  quotationId             String   @db.Uuid
-  lineNo                  Int
-  productId               String?  @db.Uuid
-  skuSnapshot             String   @db.VarChar(64)
-  productNameSnapshot     String   @db.VarChar(240)
-  descriptionSnapshot     String?
-  quantity                Decimal  @db.Decimal(14, 3)
-  unit                    String   @default("pcs") @db.VarChar(24)
-  costCny                 Decimal  @db.Decimal(18, 4)
-  markupPercent           Decimal  @db.Decimal(8, 4)
-  unitSalePriceCny        Decimal  @db.Decimal(24, 8)
-  lineAmountCny           Decimal  @db.Decimal(24, 8)
-  cartonCount             Int?
-  unitsPerCarton          Int?
-  cartonLengthCm          Decimal? @db.Decimal(12, 3)
-  cartonWidthCm           Decimal? @db.Decimal(12, 3)
-  cartonHeightCm          Decimal? @db.Decimal(12, 3)
-  cartonGrossWeightKg     Decimal? @db.Decimal(12, 6)
-  cartonVolumeCbm         Decimal? @db.Decimal(30, 15)
-  totalCbm                Decimal? @db.Decimal(30, 15)
+  id                         String   @id @default(uuid()) @db.Uuid
+  quotationId                String   @db.Uuid
+  lineNo                     Int
+  productId                  String?  @db.Uuid
+  skuSnapshot                String   @db.VarChar(64)
+  productNameSnapshot        String   @db.VarChar(240)
+  descriptionSnapshot        String?
+  hsCodeSnapshot             String?  @db.VarChar(20)
+  originCountryCodeSnapshot  String?  @db.VarChar(2)
+  customsDescriptionSnapshot String?
+  netWeightPerUnitKgSnapshot Decimal? @db.Decimal(18, 6)
+  quantity                   Decimal  @db.Decimal(14, 3)
+  unit                       String   @default("pcs") @db.VarChar(24)
+  costCny                    Decimal  @db.Decimal(18, 4)
+  markupPercent              Decimal  @db.Decimal(8, 4)
+  unitSalePriceCny           Decimal  @db.Decimal(24, 8)
+  lineAmountCny              Decimal  @db.Decimal(24, 8)
+  cartonCount                Int?
+  unitsPerCarton             Int?
+  cartonLengthCm             Decimal? @db.Decimal(12, 3)
+  cartonWidthCm              Decimal? @db.Decimal(12, 3)
+  cartonHeightCm             Decimal? @db.Decimal(12, 3)
+  cartonGrossWeightKg        Decimal? @db.Decimal(12, 6)
+  cartonVolumeCbm            Decimal? @db.Decimal(30, 15)
+  totalCbm                   Decimal? @db.Decimal(30, 15)
   /// Legacy per-item value. New calculations use the order-level divisor snapshot.
-  volumetricDivisor       Int?
-  totalVolumeWeightKg     Decimal  @db.Decimal(24, 12)
-  totalGrossWeightKg      Decimal  @db.Decimal(24, 12)
-  freightAllocationBasis  Decimal  @db.Decimal(30, 15)
-  allocatedFreightCny     Decimal  @db.Decimal(24, 8)
-  allocatedFreightForeign Decimal  @db.Decimal(24, 2)
-  unitSalePriceForeign    Decimal  @db.Decimal(24, 8)
-  lineAmountForeign       Decimal  @db.Decimal(24, 2)
-  productDataSnapshot     Json
-  packagingSnapshot       Json
-  createdAt               DateTime @default(now()) @db.Timestamptz(6)
-  updatedAt               DateTime @updatedAt @db.Timestamptz(6)
+  volumetricDivisor          Int?
+  totalVolumeWeightKg        Decimal  @db.Decimal(24, 12)
+  totalGrossWeightKg         Decimal  @db.Decimal(24, 12)
+  freightAllocationBasis     Decimal  @db.Decimal(30, 15)
+  allocatedFreightCny        Decimal  @db.Decimal(24, 8)
+  allocatedFreightForeign    Decimal  @db.Decimal(24, 2)
+  unitSalePriceForeign       Decimal  @db.Decimal(24, 8)
+  lineAmountForeign          Decimal  @db.Decimal(24, 2)
+  productDataSnapshot        Json
+  packagingSnapshot          Json
+  createdAt                  DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt                  DateTime @updatedAt @db.Timestamptz(6)
 
   quotation Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
   product   Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
@@ -1100,102 +1147,126 @@ model QuotationFee {
 }
 
 model Order {
-  id                      String      @id @default(uuid()) @db.Uuid
-  orderNo                 String      @unique @db.VarChar(40)
-  status                  OrderStatus @default(CONFIRMED)
-  sourceQuotationId       String?     @unique @db.Uuid
-  sourceQuotationRevision Int?
-  customerId              String?     @db.Uuid
-  createdById             String?     @db.Uuid
-  idempotencyKey          String?     @db.VarChar(120)
-  idempotencyPayloadHash  String?     @db.VarChar(64)
-  orderDate               DateTime    @db.Date
-  confirmedAt             DateTime    @default(now()) @db.Timestamptz(6)
-  currencyCode            String      @db.VarChar(3)
-  exchangeRate            Decimal     @db.Decimal(24, 12)
-  freightBillingMethod    FreightBillingMethod?
-  freightCurrencyCode     String?     @db.VarChar(3)
-  cbmRatePerCbm           Decimal?    @db.Decimal(24, 8)
-  orderTotalCbm           Decimal?    @db.Decimal(30, 15)
-  cbmFreightAmount        Decimal?    @db.Decimal(24, 2)
-  kgRatePerKg             Decimal?    @db.Decimal(24, 8)
-  volumetricDivisorItemId String?     @db.Uuid
-  volumetricDivisorCode   String?     @db.VarChar(100)
-  volumetricDivisorValue  Int?
-  orderTotalVolumeWeightKg Decimal?   @db.Decimal(24, 12)
-  orderTotalGrossWeightKg  Decimal?   @db.Decimal(24, 12)
-  chargeableWeightKg       Decimal?   @db.Decimal(24, 12)
-  kgChargeableBasis        KgChargeableBasis?
-  kgFreightAmount          Decimal?   @db.Decimal(24, 2)
-  selectedFreightAmount    Decimal?   @db.Decimal(24, 2)
+  id                        String                @id @default(uuid()) @db.Uuid
+  orderNo                   String                @unique @db.VarChar(40)
+  status                    OrderStatus           @default(CONFIRMED)
+  sourceQuotationId         String?               @unique @db.Uuid
+  sourceQuotationRevision   Int?
+  customerId                String?               @db.Uuid
+  createdById               String?               @db.Uuid
+  idempotencyKey            String?               @db.VarChar(120)
+  idempotencyPayloadHash    String?               @db.VarChar(64)
+  orderDate                 DateTime              @db.Date
+  confirmedAt               DateTime              @default(now()) @db.Timestamptz(6)
+  currencyCode              String                @db.VarChar(3)
+  exchangeRate              Decimal               @db.Decimal(24, 12)
+  freightBillingMethod      FreightBillingMethod?
+  freightCurrencyCode       String?               @db.VarChar(3)
+  cbmRatePerCbm             Decimal?              @db.Decimal(24, 8)
+  orderTotalCbm             Decimal?              @db.Decimal(30, 15)
+  cbmFreightAmount          Decimal?              @db.Decimal(24, 2)
+  kgRatePerKg               Decimal?              @db.Decimal(24, 8)
+  volumetricDivisorItemId   String?               @db.Uuid
+  volumetricDivisorCode     String?               @db.VarChar(100)
+  volumetricDivisorValue    Int?
+  orderTotalVolumeWeightKg  Decimal?              @db.Decimal(24, 12)
+  orderTotalGrossWeightKg   Decimal?              @db.Decimal(24, 12)
+  chargeableWeightKg        Decimal?              @db.Decimal(24, 12)
+  kgChargeableBasis         KgChargeableBasis?
+  kgFreightAmount           Decimal?              @db.Decimal(24, 2)
+  selectedFreightAmount     Decimal?              @db.Decimal(24, 2)
   freightAllocationSnapshot Json?
-  exchangeRateDate        DateTime    @db.Date
-  exchangeRateSource      String      @default("MANUAL") @db.VarChar(16)
-  roundingMode            String      @default("CEIL_2") @db.VarChar(16)
-  calculationVersion      String      @default("1") @db.VarChar(24)
-  subtotalCny             Decimal     @db.Decimal(24, 8)
-  freightCny              Decimal     @db.Decimal(24, 8)
-  deliveryFeeCny          Decimal     @db.Decimal(24, 8)
-  otherFeesCny            Decimal     @db.Decimal(24, 8)
-  totalAmountCny          Decimal     @db.Decimal(24, 8)
-  totalAmountForeignExact Decimal     @db.Decimal(30, 12)
-  totalAmountForeign      Decimal     @db.Decimal(24, 2)
-  customerSnapshot        Json
-  billingAddressSnapshot  Json?
-  shippingAddressSnapshot Json
-  calculationSnapshot     Json
-  createdAt               DateTime    @default(now()) @db.Timestamptz(6)
-  updatedAt               DateTime    @updatedAt @db.Timestamptz(6)
+  exchangeRateDate          DateTime              @db.Date
+  exchangeRateSource        String                @default("MANUAL") @db.VarChar(16)
+  roundingMode              String                @default("CEIL_2") @db.VarChar(16)
+  calculationVersion        String                @default("1") @db.VarChar(24)
+  subtotalCny               Decimal               @db.Decimal(24, 8)
+  freightCny                Decimal               @db.Decimal(24, 8)
+  deliveryFeeCny            Decimal               @db.Decimal(24, 8)
+  otherFeesCny              Decimal               @db.Decimal(24, 8)
+  totalAmountCny            Decimal               @db.Decimal(24, 8)
+  totalAmountForeignExact   Decimal               @db.Decimal(30, 12)
+  totalAmountForeign        Decimal               @db.Decimal(24, 2)
+  /// Optimistic lock for customer-snapshot corrections (docs/41 §4.3).
+  version                   Int                   @default(1)
+  buyerReference            String?               @db.VarChar(120)
+  contractNo                String?               @db.VarChar(80)
+  /// Structured buyer/consignee projections used for list filters and search.
+  /// The JSON snapshots remain the document source of truth.
+  buyerCompanyName          String?               @db.VarChar(240)
+  buyerContactName          String?               @db.VarChar(160)
+  buyerEmail                String?               @db.VarChar(254)
+  buyerPhoneE164            String?               @db.VarChar(24)
+  buyerCountryCode          String?               @db.VarChar(2)
+  consigneeName             String?               @db.VarChar(240)
+  consigneeCountryCode      String?               @db.VarChar(2)
+  buyerSnapshot             Json?
+  consigneeSnapshot         Json?
+  notifyPartySnapshot       Json?
+  tradeSnapshot             Json?
+  customerSnapshot          Json
+  billingAddressSnapshot    Json?
+  shippingAddressSnapshot   Json
+  calculationSnapshot       Json
+  createdAt                 DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt                 DateTime              @updatedAt @db.Timestamptz(6)
 
-  sourceQuotation Quotation?   @relation("QuotationOrder", fields: [sourceQuotationId], references: [id], onDelete: Restrict)
-  customer        Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  createdBy       AdminUser?   @relation("OrderCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  volumetricDivisorItem DictionaryItem? @relation("OrderFreightDivisor", fields: [volumetricDivisorItemId], references: [id], onDelete: Restrict)
-  items           OrderItem[]
-  fees            OrderFee[]
-  piDocuments     PiDocument[]
+  sourceQuotation       Quotation?           @relation("QuotationOrder", fields: [sourceQuotationId], references: [id], onDelete: Restrict)
+  customer              Customer?            @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  createdBy             AdminUser?           @relation("OrderCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  volumetricDivisorItem DictionaryItem?      @relation("OrderFreightDivisor", fields: [volumetricDivisorItemId], references: [id], onDelete: Restrict)
+  items                 OrderItem[]
+  fees                  OrderFee[]
+  piDocuments           PiDocument[]
+  commercialDocuments   CommercialDocument[]
 
   @@unique([createdById, idempotencyKey])
   @@index([status, createdAt(sort: Desc)])
   @@index([customerId, createdAt(sort: Desc)])
   @@index([volumetricDivisorItemId])
+  @@index([buyerCompanyName])
+  @@index([buyerCountryCode])
   @@map("orders")
 }
 
 model OrderItem {
-  id                      String   @id @default(uuid()) @db.Uuid
-  orderId                 String   @db.Uuid
-  lineNo                  Int
-  productId               String?  @db.Uuid
-  skuSnapshot             String   @db.VarChar(64)
-  productNameSnapshot     String   @db.VarChar(240)
-  descriptionSnapshot     String?
-  quantity                Decimal  @db.Decimal(14, 3)
-  unit                    String   @default("pcs") @db.VarChar(24)
-  costCny                 Decimal  @db.Decimal(18, 4)
-  markupPercent           Decimal  @db.Decimal(8, 4)
-  unitSalePriceCny        Decimal  @db.Decimal(24, 8)
-  lineAmountCny           Decimal  @db.Decimal(24, 8)
-  cartonCount             Int?
-  unitsPerCarton          Int?
-  cartonLengthCm          Decimal? @db.Decimal(12, 3)
-  cartonWidthCm           Decimal? @db.Decimal(12, 3)
-  cartonHeightCm          Decimal? @db.Decimal(12, 3)
-  cartonGrossWeightKg     Decimal? @db.Decimal(12, 6)
-  cartonVolumeCbm         Decimal? @db.Decimal(30, 15)
-  totalCbm                Decimal? @db.Decimal(30, 15)
+  id                         String   @id @default(uuid()) @db.Uuid
+  orderId                    String   @db.Uuid
+  lineNo                     Int
+  productId                  String?  @db.Uuid
+  skuSnapshot                String   @db.VarChar(64)
+  productNameSnapshot        String   @db.VarChar(240)
+  descriptionSnapshot        String?
+  hsCodeSnapshot             String?  @db.VarChar(20)
+  originCountryCodeSnapshot  String?  @db.VarChar(2)
+  customsDescriptionSnapshot String?
+  netWeightPerUnitKgSnapshot Decimal? @db.Decimal(18, 6)
+  quantity                   Decimal  @db.Decimal(14, 3)
+  unit                       String   @default("pcs") @db.VarChar(24)
+  costCny                    Decimal  @db.Decimal(18, 4)
+  markupPercent              Decimal  @db.Decimal(8, 4)
+  unitSalePriceCny           Decimal  @db.Decimal(24, 8)
+  lineAmountCny              Decimal  @db.Decimal(24, 8)
+  cartonCount                Int?
+  unitsPerCarton             Int?
+  cartonLengthCm             Decimal? @db.Decimal(12, 3)
+  cartonWidthCm              Decimal? @db.Decimal(12, 3)
+  cartonHeightCm             Decimal? @db.Decimal(12, 3)
+  cartonGrossWeightKg        Decimal? @db.Decimal(12, 6)
+  cartonVolumeCbm            Decimal? @db.Decimal(30, 15)
+  totalCbm                   Decimal? @db.Decimal(30, 15)
   /// Legacy per-item value. New calculations use the order-level divisor snapshot.
-  volumetricDivisor       Int?
-  totalVolumeWeightKg     Decimal  @db.Decimal(24, 12)
-  totalGrossWeightKg      Decimal  @db.Decimal(24, 12)
-  freightAllocationBasis  Decimal  @db.Decimal(30, 15)
-  allocatedFreightCny     Decimal  @db.Decimal(24, 8)
-  allocatedFreightForeign Decimal  @db.Decimal(24, 2)
-  unitSalePriceForeign    Decimal  @db.Decimal(24, 8)
-  lineAmountForeign       Decimal  @db.Decimal(24, 2)
-  productDataSnapshot     Json
-  packagingSnapshot       Json
-  createdAt               DateTime @default(now()) @db.Timestamptz(6)
+  volumetricDivisor          Int?
+  totalVolumeWeightKg        Decimal  @db.Decimal(24, 12)
+  totalGrossWeightKg         Decimal  @db.Decimal(24, 12)
+  freightAllocationBasis     Decimal  @db.Decimal(30, 15)
+  allocatedFreightCny        Decimal  @db.Decimal(24, 8)
+  allocatedFreightForeign    Decimal  @db.Decimal(24, 2)
+  unitSalePriceForeign       Decimal  @db.Decimal(24, 8)
+  lineAmountForeign          Decimal  @db.Decimal(24, 2)
+  productDataSnapshot        Json
+  packagingSnapshot          Json
+  createdAt                  DateTime @default(now()) @db.Timestamptz(6)
 
   order   Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
@@ -1517,4 +1588,230 @@ model OutboxEvent {
 
   @@index([status, runAfter, lockedUntil])
   @@map("outbox_events")
+}
+
+// --------------------------------------------------------------- commercial
+
+model CompanyProfile {
+  id           String  @id @default(uuid()) @db.Uuid
+  code         String  @unique @db.VarChar(80)
+  companyName  String  @db.VarChar(240)
+  contactName  String? @db.VarChar(160)
+  phone        String? @db.VarChar(40)
+  email        String? @db.VarChar(254)
+  taxId        String? @db.VarChar(60)
+  website      String? @db.VarChar(500)
+  address      Json
+  logoAssetId  String? @db.Uuid
+  stampAssetId String? @db.Uuid
+  isDefault    Boolean @default(false)
+  enabled      Boolean @default(true)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  bankAccounts BankAccountProfile[]
+
+  @@index([enabled, isDefault])
+  @@map("company_profiles")
+}
+
+model BankAccountProfile {
+  id                String  @id @default(uuid()) @db.Uuid
+  companyProfileId  String  @db.Uuid
+  label             String  @db.VarChar(120)
+  accountHolder     String  @db.VarChar(240)
+  bankName          String  @db.VarChar(240)
+  bankAddress       String?
+  accountNumber     String  @db.VarChar(80)
+  swiftCode         String? @db.VarChar(40)
+  wireRoutingNumber String? @db.VarChar(40)
+  achRoutingNumber  String? @db.VarChar(40)
+  currencyCode      String? @db.VarChar(3)
+  isDefault         Boolean @default(false)
+  enabled           Boolean @default(true)
+  sortOrder         Int     @default(0)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  companyProfile CompanyProfile @relation(fields: [companyProfileId], references: [id], onDelete: Restrict)
+
+  @@index([companyProfileId, enabled, sortOrder])
+  @@map("bank_account_profiles")
+}
+
+model DocumentTemplate {
+  id               String                 @id @default(uuid()) @db.Uuid
+  code             String                 @unique @db.VarChar(80)
+  name             String                 @db.VarChar(180)
+  description      String?
+  documentType     CommercialDocumentType
+  locale           String                 @default("en-US") @db.VarChar(16)
+  paperSize        String                 @default("A4") @db.VarChar(16)
+  orientation      String                 @default("portrait") @db.VarChar(16)
+  status           DocumentTemplateStatus @default(DRAFT)
+  isDefault        Boolean                @default(false)
+  /// Editable, unpublished configuration. Publishing snapshots it into a
+  /// DocumentTemplateVersion that issued documents keep referencing.
+  draftConfig      Json
+  currentVersionId String?                @db.Uuid
+  createdById      String?                @db.Uuid
+  updatedById      String?                @db.Uuid
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  createdBy AdminUser?                @relation("DocumentTemplateCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy AdminUser?                @relation("DocumentTemplateUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  versions  DocumentTemplateVersion[]
+  documents CommercialDocument[]
+
+  @@index([documentType, status, isDefault])
+  @@map("document_templates")
+}
+
+model DocumentTemplateVersion {
+  id          String                        @id @default(uuid()) @db.Uuid
+  templateId  String                        @db.Uuid
+  version     Int
+  status      DocumentTemplateVersionStatus @default(PUBLISHED)
+  config      Json
+  checksum    String                        @db.VarChar(64)
+  createdById String?                       @db.Uuid
+  publishedAt DateTime                      @default(now()) @db.Timestamptz(6)
+  createdAt   DateTime                      @default(now()) @db.Timestamptz(6)
+
+  template   DocumentTemplate     @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  createdBy  AdminUser?           @relation("DocumentTemplateVersionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  documents  CommercialDocument[]
+  renderJobs DocumentRenderJob[]
+
+  @@unique([templateId, version])
+  @@index([templateId, publishedAt(sort: Desc)])
+  @@map("document_template_versions")
+}
+
+model CommercialDocument {
+  id           String                   @id @default(uuid()) @db.Uuid
+  documentType CommercialDocumentType
+  documentNo   String                   @db.VarChar(40)
+  revisionNo   Int                      @default(1)
+  status       CommercialDocumentStatus @default(DRAFT)
+  locale       String                   @default("en-US") @db.VarChar(16)
+  currency     String                   @db.VarChar(3)
+  issueDate    DateTime?                @db.Date
+  validUntil   DateTime?                @db.Date
+  /// Immutable optimistic lock for draft edits and issue/revision transitions.
+  version      Int                      @default(1)
+
+  orderId           String?   @db.Uuid
+  templateId        String?   @db.Uuid
+  templateVersionId String?   @db.Uuid
+  templateVersionNo Int?
+  createdById       String?   @db.Uuid
+  issuedById        String?   @db.Uuid
+  issuedAt          DateTime? @db.Timestamptz(6)
+  supersedesId      String?   @db.Uuid
+
+  sellerSnapshot      Json
+  buyerSnapshot       Json
+  consigneeSnapshot   Json?
+  notifyPartySnapshot Json?
+  tradeSnapshot       Json?
+  shippingSnapshot    Json?
+  paymentSnapshot     Json?
+  declarationSnapshot Json?
+  signatureSnapshot   Json?
+  totalsSnapshot      Json
+  calculationSnapshot Json
+  notes               String?
+
+  subtotal        Decimal @default(0) @db.Decimal(18, 4)
+  discountAmount  Decimal @default(0) @db.Decimal(18, 4)
+  freightAmount   Decimal @default(0) @db.Decimal(18, 4)
+  insuranceAmount Decimal @default(0) @db.Decimal(18, 4)
+  otherCharges    Decimal @default(0) @db.Decimal(18, 4)
+  totalAmount     Decimal @default(0) @db.Decimal(18, 4)
+
+  pdfFileKey   String?   @db.VarChar(500)
+  pdfSha256    String?   @db.VarChar(64)
+  pdfSizeBytes BigInt?
+  generatedAt  DateTime? @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  order           Order?                   @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  template        DocumentTemplate?        @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  templateVersion DocumentTemplateVersion? @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
+  createdBy       AdminUser?               @relation("CommercialDocumentCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  issuedBy        AdminUser?               @relation("CommercialDocumentIssuer", fields: [issuedById], references: [id], onDelete: SetNull)
+  supersedes      CommercialDocument?      @relation("CommercialDocumentRevision", fields: [supersedesId], references: [id], onDelete: Restrict)
+  revisions       CommercialDocument[]     @relation("CommercialDocumentRevision")
+  items           CommercialDocumentItem[]
+  renderJobs      DocumentRenderJob[]
+
+  @@unique([documentType, documentNo, revisionNo])
+  @@index([documentNo])
+  @@index([status, createdAt(sort: Desc)])
+  @@index([orderId, documentType])
+  @@index([supersedesId])
+  @@map("commercial_documents")
+}
+
+model CommercialDocumentItem {
+  id                    String   @id @default(uuid()) @db.Uuid
+  documentId            String   @db.Uuid
+  lineNo                Int
+  productId             String?  @db.Uuid
+  skuSnapshot           String   @default("") @db.VarChar(64)
+  descriptionSnapshot   String?
+  hsCodeSnapshot        String?  @db.VarChar(20)
+  originCountrySnapshot String?  @db.VarChar(2)
+  quantity              Decimal  @db.Decimal(14, 3)
+  unit                  String   @default("pcs") @db.VarChar(24)
+  unitPrice             Decimal  @db.Decimal(18, 4)
+  discountAmount        Decimal  @default(0) @db.Decimal(18, 4)
+  lineAmount            Decimal  @db.Decimal(18, 4)
+  currency              String   @db.VarChar(3)
+  cartons               Int?
+  unitsPerCarton        Int?
+  netWeightKg           Decimal? @db.Decimal(18, 6)
+  grossWeightKg         Decimal? @db.Decimal(18, 6)
+  cbm                   Decimal? @db.Decimal(30, 15)
+  packagingSnapshot     Json?
+  createdAt             DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime @updatedAt @db.Timestamptz(6)
+
+  document CommercialDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, lineNo])
+  @@index([documentId])
+  @@map("commercial_document_items")
+}
+
+model DocumentRenderJob {
+  id                String    @id @default(uuid()) @db.Uuid
+  documentId        String    @db.Uuid
+  templateVersionId String?   @db.Uuid
+  status            JobStatus @default(QUEUED)
+  attemptId         String    @db.Uuid
+  fileKey           String?   @db.VarChar(500)
+  sha256            String?   @db.VarChar(64)
+  sizeBytes         BigInt?
+  errorCode         String?   @db.VarChar(80)
+  requestedById     String?   @db.Uuid
+  createdAt         DateTime  @default(now()) @db.Timestamptz(6)
+  startedAt         DateTime? @db.Timestamptz(6)
+  completedAt       DateTime? @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @db.Timestamptz(6)
+
+  document        CommercialDocument       @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  templateVersion DocumentTemplateVersion? @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
+  requestedBy     AdminUser?               @relation("CommercialDocumentRenderRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([documentId, createdAt(sort: Desc)])
+  @@map("document_render_jobs")
 }

@@ -89,7 +89,20 @@ export default function QuotationCalculatorPage() {
   const [chosenProducts, setChosenProducts] = useState<Record<string, CalculatorProduct>>({});
   const [productPickerOpen, setProductPickerOpen] = useState(false);
   const [customers, setCustomers] = useState<
-    { id: string; phoneE164: string; displayName: string | null; countryCode: string | null }[]
+    {
+      id: string;
+      phoneE164: string;
+      displayName: string | null;
+      legalName: string | null;
+      contactName: string | null;
+      email: string | null;
+      taxId: string | null;
+      customerType: string;
+      preferredLanguage: string;
+      countryCode: string | null;
+      billingAddress: Record<string, unknown> | null;
+      defaultShippingAddress: Record<string, unknown> | null;
+    }[]
   >([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -114,6 +127,23 @@ export default function QuotationCalculatorPage() {
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [countryCode, setCountryCode] = useState('US');
+  const [customerType, setCustomerType] = useState<'COMPANY' | 'INDIVIDUAL'>('COMPANY');
+  const [legalCompanyName, setLegalCompanyName] = useState('');
+  const [taxId, setTaxId] = useState('');
+  const [preferredLanguage, setPreferredLanguage] = useState('en-US');
+  const [buyerReference, setBuyerReference] = useState('');
+  const [contractNo, setContractNo] = useState('');
+  const [billingSameAsShipping, setBillingSameAsShipping] = useState(true);
+  const [billingAddressLine, setBillingAddressLine] = useState('');
+  const [billingCity, setBillingCity] = useState('');
+  const [billingRegion, setBillingRegion] = useState('');
+  const [billingPostalCode, setBillingPostalCode] = useState('');
+  const [billingCountryCode, setBillingCountryCode] = useState('US');
+  const [shippingCompany, setShippingCompany] = useState('');
+  const [shippingPhone, setShippingPhone] = useState('');
+  const [incotermCode, setIncotermCode] = useState('');
+  const [namedPlace, setNamedPlace] = useState('');
+  const [paymentTerms, setPaymentTerms] = useState('');
   const [recipient, setRecipient] = useState('');
   const [city, setCity] = useState('');
   const [region, setRegion] = useState('');
@@ -219,14 +249,20 @@ export default function QuotationCalculatorPage() {
       ? { companyName: '', contactName: '', phoneE164: '' }
       : {
           companyName: companyName.trim(),
+          legalCompanyName: legalCompanyName.trim(),
           contactName: contactName.trim(),
           phoneE164: phone.trim(),
           countryCode,
+          customerType,
+          taxId: taxId.trim(),
+          preferredLanguage,
           ...(email.trim() ? { email: email.trim() } : {}),
           ...(recipient && city && addressLine
             ? {
                 shippingAddress: {
                   recipient: recipient.trim(),
+                  companyName: shippingCompany.trim(),
+                  phoneE164: shippingPhone.trim(),
                   countryCode,
                   region: region.trim(),
                   city: city.trim(),
@@ -236,7 +272,45 @@ export default function QuotationCalculatorPage() {
                 },
               }
             : {}),
+          ...(billingSameAsShipping
+            ? recipient && city && addressLine
+              ? {
+                  billingAddress: {
+                    recipient: recipient.trim(),
+                    companyName: legalCompanyName.trim() || companyName.trim(),
+                    phoneE164: phone.trim(),
+                    countryCode,
+                    region: region.trim(),
+                    city: city.trim(),
+                    postalCode: postalCode.trim(),
+                    line1: addressLine.trim(),
+                    line2: '',
+                  },
+                }
+              : {}
+            : billingAddressLine && billingCity
+              ? {
+                  billingAddress: {
+                    recipient: legalCompanyName.trim() || companyName.trim(),
+                    companyName: legalCompanyName.trim() || companyName.trim(),
+                    phoneE164: phone.trim(),
+                    countryCode: billingCountryCode,
+                    region: billingRegion.trim(),
+                    city: billingCity.trim(),
+                    postalCode: billingPostalCode.trim(),
+                    line1: billingAddressLine.trim(),
+                    line2: '',
+                  },
+                }
+              : {}),
         },
+    buyerReference: buyerReference.trim(),
+    contractNo: contractNo.trim(),
+    trade: {
+      incotermCode: incotermCode || null,
+      namedPlace: namedPlace.trim(),
+      paymentTerms: paymentTerms.trim(),
+    },
     orderDate: calculationOnly ? null : orderDate,
     currencyCode,
     exchangeRate: currencyCode === 'CNY' ? '1' : exchangeRate,
@@ -488,9 +562,38 @@ export default function QuotationCalculatorPage() {
                     setCustomerId(id);
                     const selected = customers.find((customer) => customer.id === id);
                     if (selected) {
+                      const billing = selected.billingAddress;
+                      const shipping = selected.defaultShippingAddress;
                       setCompanyName(selected.displayName ?? '');
+                      setLegalCompanyName(selected.legalName ?? selected.displayName ?? '');
+                      setContactName(selected.contactName ?? '');
+                      setEmail(selected.email ?? '');
+                      setTaxId(selected.taxId ?? '');
+                      setCustomerType(
+                        selected.customerType === 'INDIVIDUAL' ? 'INDIVIDUAL' : 'COMPANY',
+                      );
+                      setPreferredLanguage(
+                        selected.preferredLanguage === 'zh-CN' ? 'zh-CN' : 'en-US',
+                      );
                       setPhone(selected.phoneE164);
                       setCountryCode(selected.countryCode ?? countryCode);
+                      if (billing) {
+                        setBillingSameAsShipping(false);
+                        setBillingAddressLine(String(billing.line1 ?? ''));
+                        setBillingCity(String(billing.city ?? ''));
+                        setBillingRegion(String(billing.region ?? billing.state ?? ''));
+                        setBillingPostalCode(String(billing.postalCode ?? ''));
+                        setBillingCountryCode(String(billing.countryCode ?? countryCode));
+                      }
+                      if (shipping) {
+                        setRecipient(String(shipping.recipient ?? ''));
+                        setShippingCompany(String(shipping.companyName ?? ''));
+                        setShippingPhone(String(shipping.phoneE164 ?? ''));
+                        setCity(String(shipping.city ?? ''));
+                        setRegion(String(shipping.region ?? shipping.state ?? ''));
+                        setPostalCode(String(shipping.postalCode ?? ''));
+                        setAddressLine(String(shipping.line1 ?? ''));
+                      }
                     }
                   }}
                   placeholder={t('quotationCenter.newCustomer')}
@@ -554,7 +657,145 @@ export default function QuotationCalculatorPage() {
                   onChange={(event) => setOrderDate(event.target.value)}
                 />
               </SimpleField>
+              <SimpleField label={t('quotationCenter.customerType')}>
+                <Select
+                  value={customerType}
+                  onChange={(event) =>
+                    setCustomerType(event.target.value as 'COMPANY' | 'INDIVIDUAL')
+                  }
+                  options={[
+                    { value: 'COMPANY', label: t('quotationCenter.customerTypeCompany') },
+                    { value: 'INDIVIDUAL', label: t('quotationCenter.customerTypeIndividual') },
+                  ]}
+                />
+              </SimpleField>
+              <SimpleField label={t('quotationCenter.legalCompanyName')}>
+                <Input
+                  value={legalCompanyName}
+                  onChange={(event) => setLegalCompanyName(event.target.value)}
+                  maxLength={240}
+                />
+              </SimpleField>
+              <SimpleField label={t('quotationCenter.taxId')}>
+                <Input
+                  value={taxId}
+                  onChange={(event) => setTaxId(event.target.value)}
+                  maxLength={60}
+                />
+              </SimpleField>
+              <SimpleField label={t('quotationCenter.preferredLanguage')}>
+                <Select
+                  value={preferredLanguage}
+                  onChange={(event) => setPreferredLanguage(event.target.value)}
+                  options={[
+                    { value: 'en-US', label: 'English (en-US)' },
+                    { value: 'zh-CN', label: '中文 (zh-CN)' },
+                  ]}
+                />
+              </SimpleField>
+              <SimpleField label={t('quotationCenter.buyerReference')}>
+                <Input
+                  value={buyerReference}
+                  onChange={(event) => setBuyerReference(event.target.value)}
+                  maxLength={120}
+                />
+              </SimpleField>
+              <SimpleField label={t('quotationCenter.contractNo')}>
+                <Input
+                  value={contractNo}
+                  onChange={(event) => setContractNo(event.target.value)}
+                  maxLength={80}
+                />
+              </SimpleField>
             </div>
+            <h3>{t('quotationCenter.tradeTerms')}</h3>
+            <div className="form-grid">
+              <SimpleField label={t('quotationCenter.incoterm')}>
+                <Select
+                  value={incotermCode}
+                  onChange={(event) => setIncotermCode(event.target.value)}
+                  placeholder={t('common.none')}
+                  options={[
+                    'EXW',
+                    'FCA',
+                    'FAS',
+                    'FOB',
+                    'CFR',
+                    'CIF',
+                    'CPT',
+                    'CIP',
+                    'DAP',
+                    'DPU',
+                    'DDP',
+                  ].map((code) => ({ value: code, label: code }))}
+                />
+              </SimpleField>
+              <SimpleField label={t('quotationCenter.namedPlace')}>
+                <Input
+                  value={namedPlace}
+                  onChange={(event) => setNamedPlace(event.target.value)}
+                  maxLength={240}
+                />
+              </SimpleField>
+              <SimpleField label={t('quotationCenter.paymentTerms')}>
+                <Input
+                  value={paymentTerms}
+                  onChange={(event) => setPaymentTerms(event.target.value)}
+                  maxLength={500}
+                />
+              </SimpleField>
+            </div>
+            <h3>{t('quotationCenter.billingAddress')}</h3>
+            <label className="field-checkbox">
+              <input
+                type="checkbox"
+                checked={billingSameAsShipping}
+                onChange={(event) => setBillingSameAsShipping(event.target.checked)}
+              />
+              <span>{t('quotationCenter.billingSameAsShipping')}</span>
+            </label>
+            {billingSameAsShipping ? null : (
+              <div className="form-grid">
+                <SimpleField label={t('quotationCenter.addressLine')}>
+                  <Input
+                    value={billingAddressLine}
+                    onChange={(event) => setBillingAddressLine(event.target.value)}
+                    maxLength={240}
+                  />
+                </SimpleField>
+                <SimpleField label={t('quotationCenter.city')}>
+                  <Input
+                    value={billingCity}
+                    onChange={(event) => setBillingCity(event.target.value)}
+                    maxLength={120}
+                  />
+                </SimpleField>
+                <SimpleField label={t('quotationCenter.region')}>
+                  <Input
+                    value={billingRegion}
+                    onChange={(event) => setBillingRegion(event.target.value)}
+                    maxLength={120}
+                  />
+                </SimpleField>
+                <SimpleField label={t('quotationCenter.postalCode')}>
+                  <Input
+                    value={billingPostalCode}
+                    onChange={(event) => setBillingPostalCode(event.target.value)}
+                    maxLength={40}
+                  />
+                </SimpleField>
+                <SimpleField label={t('quotationCenter.countryCode')}>
+                  <Input
+                    value={billingCountryCode}
+                    onChange={(event) =>
+                      setBillingCountryCode(event.target.value.toUpperCase().slice(0, 2))
+                    }
+                    maxLength={2}
+                    placeholder={t('quotationCenter.countryCodePlaceholder')}
+                  />
+                </SimpleField>
+              </div>
+            )}
             <h3>{t('quotationCenter.shippingAddress')}</h3>
             <div className="form-grid">
               <SimpleField label={t('quotationCenter.recipient')}>
@@ -562,6 +803,20 @@ export default function QuotationCalculatorPage() {
                   value={recipient}
                   onChange={(event) => setRecipient(event.target.value)}
                   maxLength={160}
+                />
+              </SimpleField>
+              <SimpleField label={t('quotationCenter.shippingCompany')}>
+                <Input
+                  value={shippingCompany}
+                  onChange={(event) => setShippingCompany(event.target.value)}
+                  maxLength={240}
+                />
+              </SimpleField>
+              <SimpleField label={t('quotationCenter.shippingPhone')}>
+                <Input
+                  value={shippingPhone}
+                  onChange={(event) => setShippingPhone(event.target.value)}
+                  maxLength={24}
                 />
               </SimpleField>
               <SimpleField label={t('quotationCenter.city')}>

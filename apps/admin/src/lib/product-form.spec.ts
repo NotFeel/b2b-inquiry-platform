@@ -48,6 +48,11 @@ function detail(overrides: Partial<ProductAdminDetail> = {}): ProductAdminDetail
     cartonHeightCm: 120,
     cartonWeightKg: '52.500',
     cartonQuantity: 4,
+    hsCode: '73083000',
+    originCountryCode: 'CN',
+    customsDescription: 'Steel gate',
+    netWeightPerUnitKg: '45.000',
+    exportUnit: 'set',
     translations: {
       'en-US': {
         name: 'Steel gate',

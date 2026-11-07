@@ -34,9 +34,9 @@ function product(overrides: Record<string, unknown> = {}) {
     priceCny: new Decimal('3.6966991739'),
     lifecycleStatus: 'AVAILABLE',
     publishStatus: 'PUBLISHED',
-    cartonLengthCm: 40,
-    cartonWidthCm: 30,
-    cartonHeightCm: 30,
+    cartonLengthCm: new Decimal(40),
+    cartonWidthCm: new Decimal(30),
+    cartonHeightCm: new Decimal(30),
     cartonWeightKg: new Decimal('12.5'),
     cartonQuantity: 4,
     lengthMm: 100,
@@ -162,7 +162,7 @@ function setup(rows: ReturnType<typeof product> | ReturnType<typeof product>[] =
     publicUrl: vi.fn((key: string) => `/files/${key}`),
     adminProductImageUrl: vi.fn((id: string) => `/admin/files/${id}`),
   };
-  const logger = { info: vi.fn() };
+  const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   const service = new QuotationExportService(
     prisma as unknown as PrismaService,
     categories as unknown as CategoriesService,

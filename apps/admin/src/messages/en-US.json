@@ -159,7 +159,12 @@
       "sortOrder": "Sort order",
       "tags": "Tags",
       "images": "Images",
-      "appendRandomSlug": "Append 6-digit random number (recommended)"
+      "appendRandomSlug": "Append 6-digit random number (recommended)",
+      "hsCode": "HS code",
+      "originCountryCode": "Country of origin",
+      "customsDescription": "Customs description",
+      "netWeightPerUnitKg": "Net weight per unit (kg)",
+      "exportUnit": "Export unit"
     },
     "sections": {
       "basic": "Basic information",
@@ -169,7 +174,8 @@
       "tags": "Tags and merchandising",
       "cost": "Internal quote price",
       "images": "Image gallery",
-      "seo": "SEO"
+      "seo": "SEO",
+      "export": "Export & customs"
     },
     "actions": {
       "save": "Save and back to list",
@@ -342,7 +348,7 @@
     "moveUp": "Move {{name}} up",
     "moveDown": "Move {{name}} down",
     "deleteTitle": "Delete category",
-    "deleteConfirm": "Delete \"{{name}}\"?",
+    "deleteConfirm": "Delete this category? Categories with children or products cannot be deleted.",
     "deleteConfirmOk": "Delete \"{{name}}\"? This cannot be undone.",
     "deleteBlocked": "A category with subcategories or linked products cannot be deleted. Disable or hide it instead.",
     "deleteHasChildren": "This category still has {{count}} subcategories. Move or delete them first.",
@@ -434,7 +440,6 @@
     "enabled": "Enabled",
     "visible": "Visible in storefront",
     "productCount": "Products",
-    "deleteConfirm": "Delete this category? Categories with children or products cannot be deleted.",
     "moveHint": "A category cannot be moved under itself or its descendants."
   },
   "tags": {
@@ -1305,14 +1310,25 @@
       "update": "Edit quotation drafts",
       "delete": "Archive quotations",
       "convert_to_order": "Convert quotations to orders",
-      "cost": { "read": "Read quotation cost and margin", "update": "Override quotation cost" }
+      "cost": {
+        "read": "Read quotation cost and margin",
+        "update": "Override quotation cost"
+      }
     },
     "order": {
       "read": "View orders",
       "create": "Create orders",
       "update": "Update orders",
       "cancel": "Cancel orders",
-      "cost": { "read": "Read order cost and freight allocation" }
+      "cost": {
+        "read": "Read order cost and freight allocation"
+      },
+      "customer_snapshot": {
+        "update": "Correct order customer snapshots"
+      },
+      "customer_profile": {
+        "sync": "Sync order customer data to the customer profile"
+      }
     },
     "tag": {
       "read": "View tags",
@@ -1380,7 +1396,8 @@
     "customer": {
       "read": "View customers",
       "create": "Create customers",
-      "export": "Export customers"
+      "export": "Export customers",
+      "update": "Update customer master data"
     },
     "analytics": {
       "read": "View analytics"
@@ -1397,6 +1414,30 @@
       "download": "Download or preview PDFs",
       "retry": "Retry PDF conversion",
       "delete": "Delete PDF conversion records"
+    },
+    "commercial_document": {
+      "read": "View commercial documents",
+      "create": "Create commercial documents",
+      "update": "Edit draft commercial documents",
+      "preview": "Preview and render commercial documents",
+      "issue": "Issue commercial documents",
+      "revision": {
+        "create": "Create commercial document revisions"
+      },
+      "cancel": "Cancel commercial documents",
+      "download": "Download commercial document PDFs"
+    },
+    "document_template": {
+      "read": "View document templates",
+      "create": "Create document templates",
+      "update": "Edit document templates",
+      "publish": "Publish document template versions"
+    },
+    "company_profile": {
+      "manage": "Manage company profiles"
+    },
+    "bank_account": {
+      "manage": "Manage bank accounts"
     }
   },
   "permissionModules": {
@@ -1420,7 +1461,10 @@
     "analytics": "Analytics",
     "audit": "Audit log",
     "job": "Background jobs",
-    "excel-pdf": "Excel to PDF"
+    "excel-pdf": "Excel to PDF",
+    "commercial-document": "Commercial documents",
+    "document-template": "Document templates",
+    "company-profile": "Company profile"
   },
   "roles": {
     "title": "Roles & permissions",
@@ -1695,7 +1739,7 @@
     "errors": {
       "row": "Excel row",
       "sku": "SKU",
-      "field": "Field",
+      "field": "The field format, length or numeric range is invalid.",
       "code": "Error code",
       "message": "Issue and fix",
       "validate": "The workbook could not be validated. Check the file and retry.",
@@ -1716,7 +1760,6 @@
       "priceFormula": "Internal price only accepts numbers, parentheses and + - * /.",
       "price": "Internal price must be a valid non-negative Decimal.",
       "required": "A required field is empty.",
-      "field": "The field format, length or numeric range is invalid.",
       "duplicateSku": "The same SKU appears more than once.",
       "duplicateSlug": "The same slug appears more than once.",
       "skuExists": "The SKU already exists in the catalogue.",
@@ -1972,7 +2015,23 @@
     "ordersTitle": "Orders",
     "ordersDescription": "Confirmed order records and their saved totals.",
     "noOrders": "No orders have been created yet.",
-    "orderNo": "Order number"
+    "orderNo": "Order number",
+    "customerType": "Customer type",
+    "customerTypeCompany": "Company",
+    "customerTypeIndividual": "Individual",
+    "legalCompanyName": "Legal company name",
+    "taxId": "Tax ID / VAT",
+    "preferredLanguage": "Document language",
+    "buyerReference": "Buyer reference",
+    "contractNo": "Contract no.",
+    "tradeTerms": "Trade terms",
+    "incoterm": "Incoterm",
+    "namedPlace": "Named place",
+    "paymentTerms": "Payment terms",
+    "billingAddress": "Billing address",
+    "billingSameAsShipping": "Billing address is the same as the shipping address",
+    "shippingCompany": "Consignee company",
+    "shippingPhone": "Consignee phone"
   },
   "auditActions": {
     "auth_login_succeeded": "Login succeeded",
@@ -2034,5 +2093,563 @@
     "customer_create": "Customer created",
     "inquiry_activity_create": "Conversation registered",
     "maintenance_orphan_assets_removed": "Orphaned assets removed"
+  },
+  "commercialDocuments": {
+    "title": "Commercial documents",
+    "description": "Create PI and CI documents from confirmed orders, complete trade and shipping details, preview, issue and keep every revision.",
+    "filters": {
+      "search": "Order, document or buyer",
+      "type": "Document type",
+      "status": "Status",
+      "order": "Order",
+      "from": "From",
+      "to": "To",
+      "all": "All"
+    },
+    "types": {
+      "PI": "Pro forma invoice (PI)",
+      "CI": "Commercial invoice (CI)",
+      "all": "All types"
+    },
+    "locales": {
+      "en-US": "English (en-US)",
+      "zh-CN": "Simplified Chinese (zh-CN)"
+    },
+    "statuses": {
+      "DRAFT": "Draft",
+      "REVIEW": "In review",
+      "ISSUED": "Issued",
+      "SUPERSEDED": "Superseded",
+      "CANCELLED": "Cancelled",
+      "all": "All statuses"
+    },
+    "columns": {
+      "documentNo": "Document no.",
+      "type": "Document type",
+      "revision": "Revision",
+      "order": "Order no.",
+      "buyer": "Buyer",
+      "issueDate": "Issue date",
+      "template": "Template",
+      "render": "PDF status",
+      "orderNo": "Order no.",
+      "customer": "Customer",
+      "contact": "Contact",
+      "country": "Country",
+      "orderDate": "Order date",
+      "status": "Status",
+      "currency": "Currency",
+      "total": "Total",
+      "documents": "Documents",
+      "updatedAt": "Updated",
+      "actions": "Actions"
+    },
+    "renderStatus": {
+      "QUEUED": "Queued",
+      "PROCESSING": "Rendering",
+      "SUCCEEDED": "Ready",
+      "FAILED": "Failed",
+      "CANCELLED": "Cancelled",
+      "none": "Not rendered"
+    },
+    "actions": {
+      "open": "Open editor",
+      "download": "Download PDF",
+      "preview": "Preview",
+      "render": "Render PDF",
+      "retryRender": "Retry PDF",
+      "refresh": "Refresh",
+      "new": "New document"
+    },
+    "create": {
+      "title": "Create commercial document",
+      "type": "Document type",
+      "template": "Template",
+      "locale": "Language",
+      "create": "Create draft",
+      "missing": "Fields still required before issuing",
+      "missingItems": "Some item lines still need customs data.",
+      "orderMissing": "Select an order first."
+    },
+    "editor": {
+      "title": "Commercial document",
+      "back": "Back to documents",
+      "save": "Save draft",
+      "saved": "Draft saved.",
+      "preview": "Preview",
+      "issue": "Issue",
+      "issueConfirm": "Issuing freezes this revision and queues the final PDF. Later changes require a new revision.",
+      "issued": "Document issued.",
+      "render": "Render PDF",
+      "rendered": "PDF rendering was queued.",
+      "download": "Download PDF",
+      "revision": "Create revision",
+      "revised": "New revision created.",
+      "cancel": "Cancel document",
+      "cancelConfirm": "The document will be cancelled. Issued files remain in storage and stay auditable.",
+      "cancelled": "Document cancelled.",
+      "refresh": "Reload",
+      "unsaved": "You have unsaved changes.",
+      "frozen": "This document is frozen. Create a revision to change it.",
+      "issuedWarning": "This document is issued. Changes to the order will not change it.",
+      "missingTitle": "Complete these fields before issuing",
+      "missingItemLine": "Line {line}: missing {fields}",
+      "missingFields": {
+        "items": "At least one item line is required"
+      },
+      "previewUnavailable": "Save the draft before previewing it.",
+      "sections": {
+        "document": "Order and template",
+        "seller": "Seller / Exporter",
+        "buyer": "Buyer / Sold To",
+        "consignee": "Consignee / Ship To",
+        "notifyParty": "Notify party",
+        "invoice": "Invoice details",
+        "trade": "Trade terms",
+        "shipping": "Shipping and delivery",
+        "payment": "Payment information",
+        "declaration": "Declaration",
+        "signature": "Signature",
+        "items": "Goods",
+        "totals": "Totals and charges",
+        "notes": "Notes"
+      },
+      "fields": {
+        "companyName": "Company",
+        "contactName": "Contact",
+        "phone": "Phone",
+        "email": "Email",
+        "taxId": "Tax ID / VAT",
+        "addressLine1": "Address line 1",
+        "addressLine2": "Address line 2",
+        "city": "City",
+        "state": "State / region",
+        "postalCode": "Postal code",
+        "countryCode": "Country code",
+        "documentNo": "Document no.",
+        "issueDate": "Issue date",
+        "validUntil": "Valid until",
+        "revision": "Revision",
+        "currency": "Currency",
+        "locale": "Language",
+        "template": "Template",
+        "incoterm": "Incoterm",
+        "namedPlace": "Named place",
+        "paymentTerms": "Payment terms",
+        "exchangeRate": "Exchange rate",
+        "shippingMethod": "Shipping method",
+        "portOfLoading": "Port of loading",
+        "portOfDischarge": "Port of discharge",
+        "route": "Route / destination",
+        "transitTime": "Estimated transit time",
+        "cartonCount": "Cartons",
+        "netWeightKg": "Net weight (kg)",
+        "grossWeightKg": "Gross weight (kg)",
+        "cbm": "CBM",
+        "marks": "Shipping marks",
+        "accountHolder": "Account holder",
+        "bankName": "Bank name",
+        "bankAddress": "Bank address",
+        "accountNumber": "Account number",
+        "swift": "SWIFT / BIC",
+        "wireRouting": "Wire routing number",
+        "achRouting": "ACH routing number",
+        "originCountry": "Country of origin",
+        "declarationText": "Origin declaration",
+        "authenticity": "Authenticity statement",
+        "sellerName": "Seller signatory",
+        "sellerTitle": "Title",
+        "notes": "Notes",
+        "subtotal": "Subtotal",
+        "discount": "Discount",
+        "freight": "Freight",
+        "insurance": "Insurance",
+        "otherCharges": "Other charges",
+        "total": "Grand total"
+      },
+      "items": {
+        "add": "Add item",
+        "remove": "Remove",
+        "lineNo": "#",
+        "sku": "SKU",
+        "description": "Description",
+        "hsCode": "HS code",
+        "origin": "Origin",
+        "quantity": "Qty",
+        "unit": "Unit",
+        "unitPrice": "Unit price",
+        "discount": "Discount",
+        "amount": "Amount",
+        "cartons": "Cartons",
+        "netWeight": "Net weight (kg)",
+        "grossWeight": "Gross weight (kg)",
+        "cbm": "CBM",
+        "currencyMismatch": "Every line must use the document currency."
+      }
+    },
+    "orderEditor": {
+      "title": "Correct customer data",
+      "description": "This changes only this order snapshot. Prices, items, fees and totals are not changed.",
+      "syncLabel": "Also update the customer master record",
+      "syncHint": "Requires the customer update permission. It does not change any other order.",
+      "sync": "Sync to customer profile",
+      "syncConfirm": "Update the customer master record with these values? Other orders keep their own snapshots.",
+      "synced": "Customer profile updated.",
+      "issuedHint": "This order already has an issued document. Changing the order will not change that file; create a revision instead.",
+      "buyerSection": "Buyer",
+      "consigneeSection": "Consignee",
+      "notifySection": "Notify party",
+      "referenceSection": "References",
+      "save": "Save correction",
+      "saved": "Order customer data updated."
+    },
+    "orderDetail": {
+      "title": "Order detail",
+      "overview": "Overview",
+      "customer": "Customer data",
+      "items": "Items",
+      "charges": "Fees and exchange rate",
+      "documents": "Commercial documents",
+      "audit": "Activity log",
+      "orderNo": "Order no.",
+      "status": "Status",
+      "orderDate": "Order date",
+      "currency": "Currency",
+      "totalCny": "Total (CNY)",
+      "totalForeign": "Total (foreign currency)",
+      "version": "Version",
+      "buyer": "Buyer",
+      "consignee": "Consignee",
+      "notifyParty": "Notify party",
+      "billingAddress": "Billing address",
+      "shippingAddress": "Shipping address",
+      "buyerReference": "Buyer reference",
+      "contractNo": "Contract no.",
+      "trade": "Trade terms",
+      "incoterm": "Incoterm",
+      "namedPlace": "Named place",
+      "paymentTerms": "Payment terms",
+      "exchangeRate": "Exchange rate",
+      "fees": "Fees",
+      "noDocuments": "No PI or CI has been created for this order yet.",
+      "noAudit": "No activity has been recorded.",
+      "createPi": "Create PI",
+      "createCi": "Create CI",
+      "editCustomer": "Edit customer data"
+    },
+    "orders": {
+      "title": "Orders",
+      "description": "Search confirmed orders, inspect the full snapshot, correct customer data and create PI or CI documents.",
+      "search": "Order no., company, contact, phone or email",
+      "status": "Status",
+      "currency": "Currency",
+      "country": "Country",
+      "from": "From",
+      "to": "To",
+      "hasPi": "Has PI",
+      "hasCi": "Has CI",
+      "any": "Any",
+      "yes": "Yes",
+      "no": "No",
+      "refresh": "Refresh",
+      "loading": "Loading orders…",
+      "empty": "No orders match these filters.",
+      "documents": "{{pi}} PI / {{ci}} CI",
+      "view": "View",
+      "editCustomer": "Edit customer",
+      "createPi": "Create PI",
+      "createCi": "Create CI",
+      "exportExcel": "Export Excel",
+      "loadError": "Orders could not be loaded."
+    }
+  },
+  "documentTemplates": {
+    "title": "Document templates",
+    "description": "Versioned PI/CI templates. Published versions are immutable and stay attached to issued documents.",
+    "new": "New template",
+    "name": "Template name",
+    "descriptionField": "Description",
+    "type": "Document type",
+    "locale": "Language",
+    "paper": "Paper size",
+    "orientation": "Orientation",
+    "status": "Status",
+    "default": "Default",
+    "version": "Version",
+    "updatedAt": "Updated",
+    "actions": "Actions",
+    "open": "Edit",
+    "publish": "Publish version",
+    "publishConfirm": "Publish the current draft as a new immutable version? Existing documents keep their version.",
+    "published": "Template published.",
+    "validate": "Validate",
+    "preview": "Preview",
+    "previewHint": "Preview uses sample order data and the saved draft configuration.",
+    "save": "Save draft",
+    "saved": "Template saved.",
+    "create": "Create template",
+    "created": "Template created.",
+    "versions": "Version history",
+    "noVersions": "No published version yet.",
+    "warnings": {
+      "buyer.missing": "The buyer section is hidden.",
+      "totals.missing": "The totals section is hidden.",
+      "items.description.missing": "The item description column is hidden.",
+      "items.amount.missing": "The item amount column is hidden."
+    },
+    "statuses": {
+      "DRAFT": "Draft",
+      "ACTIVE": "Active",
+      "DISABLED": "Disabled",
+      "all": "All statuses"
+    },
+    "sections": {
+      "visible": "Show section",
+      "title": "Section title",
+      "fields": "Fields",
+      "required": "Required",
+      "field": "Field",
+      "label": "Label",
+      "show": "Show"
+    },
+    "columns": {
+      "column": "Item column",
+      "width": "Width %",
+      "show": "Show",
+      "label": "Header label"
+    },
+    "theme": {
+      "title": "Style and assets",
+      "primary": "Primary colour",
+      "accent": "Accent colour",
+      "font": "Font family",
+      "fontSize": "Base font size (pt)",
+      "headerTitle": "Header title",
+      "headerSubtitle": "Header subtitle",
+      "showLogo": "Show seller logo",
+      "showDocumentType": "Show document type",
+      "footer": "Footer text",
+      "pageNumbers": "Show page numbers",
+      "margins": "Page margins (mm)"
+    },
+    "terms": {
+      "title": "Terms and declarations",
+      "payment": "Payment notice",
+      "shipment": "Shipment notice",
+      "authenticity": "Authenticity declaration"
+    },
+    "previewTitle": "Template preview",
+    "loadError": "Templates could not be loaded.",
+    "enable": "Enable",
+    "disable": "Disable",
+    "documentTypes": {
+      "PI": "Pro forma invoice (PI)",
+      "CI": "Commercial invoice (CI)"
+    },
+    "locales": {
+      "en-US": "English (en-US)",
+      "zh-CN": "Simplified Chinese (zh-CN)"
+    },
+    "paperSizes": {
+      "A4": "A4",
+      "Letter": "US Letter"
+    },
+    "orientations": {
+      "portrait": "Portrait",
+      "landscape": "Landscape"
+    },
+    "marginSides": {
+      "top": "top",
+      "right": "right",
+      "bottom": "bottom",
+      "left": "left"
+    },
+    "sectionNames": {
+      "seller": "Seller",
+      "buyer": "Buyer",
+      "consignee": "Consignee",
+      "notifyParty": "Notify party",
+      "invoice": "Invoice details",
+      "trade": "Trade terms",
+      "shipping": "Shipping and delivery",
+      "payment": "Payment information",
+      "totals": "Totals",
+      "declaration": "Declaration",
+      "signature": "Signature"
+    },
+    "fieldNames": {
+      "seller": {
+        "companyName": "Seller / exporter",
+        "address": "Seller address",
+        "contact": "Seller contact",
+        "phone": "Seller phone",
+        "email": "Seller email",
+        "taxId": "Seller tax ID"
+      },
+      "buyer": {
+        "companyName": "Buyer",
+        "contact": "Buyer contact",
+        "phone": "Buyer phone",
+        "email": "Buyer email",
+        "taxId": "Buyer tax ID",
+        "address": "Billing address"
+      },
+      "consignee": {
+        "name": "Consignee",
+        "companyName": "Consignee company",
+        "phone": "Consignee phone",
+        "address": "Shipping address"
+      },
+      "notifyParty": {
+        "name": "Notify party",
+        "address": "Notify party address"
+      },
+      "document": {
+        "number": "Invoice number",
+        "issueDate": "Invoice date",
+        "revision": "Revision",
+        "validUntil": "Valid until"
+      },
+      "order": {
+        "number": "Order number",
+        "date": "Order date",
+        "contractNo": "Contract number",
+        "buyerReference": "Buyer reference"
+      },
+      "trade": {
+        "incoterm": "Trade term",
+        "namedPlace": "Named place",
+        "paymentTerms": "Payment terms",
+        "currency": "Currency",
+        "exchangeRate": "Exchange rate"
+      },
+      "shipping": {
+        "method": "Shipping method",
+        "portOfLoading": "Port of loading",
+        "portOfDischarge": "Port of discharge",
+        "route": "Route / destination",
+        "transitTime": "Estimated transit time",
+        "cartonCount": "Packages / cartons",
+        "netWeightKg": "Net weight (kg)",
+        "grossWeightKg": "Gross weight (kg)",
+        "cbm": "Volume (CBM)",
+        "marks": "Shipping marks"
+      },
+      "payment": {
+        "accountHolder": "Account holder",
+        "bankName": "Bank name",
+        "bankAddress": "Bank address",
+        "accountNumber": "Account number",
+        "swift": "SWIFT / BIC",
+        "wireRoutingNumber": "Wire routing number",
+        "achRoutingNumber": "ACH routing number"
+      },
+      "totals": {
+        "subtotal": "Subtotal",
+        "discount": "Discount",
+        "freight": "Freight",
+        "insurance": "Insurance",
+        "otherCharges": "Other charges",
+        "grandTotal": "Grand total",
+        "amountInWords": "Amount in words"
+      },
+      "declaration": {
+        "countryOfOrigin": "Country of origin",
+        "text": "Origin declaration",
+        "authenticity": "Authenticity statement"
+      },
+      "signature": {
+        "seller": "Seller signature / stamp",
+        "buyer": "Buyer signature"
+      }
+    },
+    "columnNames": {
+      "items": {
+        "lineNo": "Line number",
+        "sku": "SKU",
+        "description": "Description",
+        "hsCode": "HS code",
+        "originCountryCode": "Country of origin",
+        "quantity": "Quantity",
+        "unit": "Unit",
+        "unitPrice": "Unit price",
+        "cartons": "Cartons",
+        "netWeightKg": "Net weight (kg)",
+        "grossWeightKg": "Gross weight (kg)",
+        "cbm": "Volume (CBM)",
+        "amount": "Amount"
+      }
+    },
+    "accessibility": {
+      "moveSectionUp": "Move {name} section up",
+      "moveSectionDown": "Move {name} section down",
+      "fieldVisible": "Show {name}",
+      "fieldLabel": "Output label for {name}",
+      "fieldRequired": "Mark {name} as required",
+      "moveFieldUp": "Move {name} field up",
+      "moveFieldDown": "Move {name} field down",
+      "columnVisible": "Show {name} column",
+      "columnLabel": "Header label for {name}",
+      "columnWidth": "Width for {name}",
+      "moveColumnUp": "Move {name} column up",
+      "moveColumnDown": "Move {name} column down"
+    },
+    "validation": {
+      "duplicateSection": "Duplicate section: {name}.",
+      "duplicateField": "Duplicate field: {name}.",
+      "fieldInWrongSection": "Field {name} belongs in {expected}, not {actual}.",
+      "duplicateColumn": "Duplicate item column: {name}.",
+      "descriptionColumnRequired": "The description column is required.",
+      "amountColumnRequired": "The amount column is required.",
+      "invalidConfig": "The template configuration is invalid. Review the section, field, and item column settings."
+    }
+  },
+  "companyProfile": {
+    "title": "Company profile",
+    "description": "Seller details and bank accounts used to prefill PI/CI documents. Documents keep a snapshot, so edits never change issued files.",
+    "companyName": "Company name",
+    "code": "Code",
+    "contactName": "Contact",
+    "phone": "Phone",
+    "email": "Email",
+    "taxId": "Tax ID",
+    "website": "Website",
+    "addressLine1": "Address line 1",
+    "addressLine2": "Address line 2",
+    "city": "City",
+    "state": "State / region",
+    "postalCode": "Postal code",
+    "countryCode": "Country code",
+    "default": "Default profile",
+    "enabled": "Enabled",
+    "save": "Save profile",
+    "create": "Add company profile",
+    "created": "Company profile created.",
+    "saved": "Company profile saved.",
+    "delete": "Delete profile",
+    "deleteConfirm": "Delete this company profile? Remove its bank accounts first.",
+    "banks": "Bank accounts",
+    "bank": {
+      "label": "Label",
+      "accountHolder": "Account holder",
+      "bankName": "Bank name",
+      "bankAddress": "Bank address",
+      "accountNumber": "Account number",
+      "swiftCode": "SWIFT / BIC",
+      "wireRoutingNumber": "Wire routing number",
+      "achRoutingNumber": "ACH routing number",
+      "currencyCode": "Currency",
+      "default": "Default account",
+      "enabled": "Enabled",
+      "sortOrder": "Sort order",
+      "add": "Add bank account",
+      "save": "Save bank account",
+      "created": "Bank account created.",
+      "saved": "Bank account saved.",
+      "delete": "Delete",
+      "deleteConfirm": "Delete this bank account? Already issued documents keep their snapshot."
+    },
+    "loadError": "Company profiles could not be loaded.",
+    "saveError": "The company profile could not be saved."
   }
 }

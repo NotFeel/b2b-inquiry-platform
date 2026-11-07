@@ -6,7 +6,7 @@
 
 ## 1. 项目目标
 
-建设一个面向海外客户的响应式 B2B 产品展示网站。访客可以浏览、搜索、按多级品类筛选产品、查看产品和包装信息、批量选择产品，并通过 WhatsApp 发起询盘。**前台任何页面、接口、SEO 数据、结构化数据和前端资源都不得泄漏产品价格。** 后台负责品类、产品、广告、系统设置、商品报价单 Excel 导出、PI（Proforma Invoice，形式发票）、Excel 转 PDF、询盘客户记录与访问分析。
+建设一个面向海外客户的响应式 B2B 产品展示网站。访客可以浏览、搜索、按多级品类筛选产品、查看产品和包装信息、批量选择产品，并通过 WhatsApp 发起询盘。**前台任何页面、接口、SEO 数据、结构化数据和前端资源都不得泄漏产品价格。** 后台负责品类、产品、广告、系统设置、商品报价单 Excel 导出、订单客户资料修正、商业单据中心（PI 形式发票 / CI 商业发票）、可配置单据模板与 PDF、Excel 转 PDF、询盘客户记录与访问分析。
 
 ## 2. 推荐默认技术方案
 
@@ -52,6 +52,8 @@
 | `docs/30-remove-excel-to-pdf-keep-quote-excel.md` | Excel 转 PDF 的历史下线决策记录（后续重新引入方式见 `docs/38`） |
 | `docs/38-admin-excel-to-pdf-conversion-implementation.md` | Admin Excel 转 PDF：200 MiB 分块上传、安全校验、Worker 转换、RBAC、部署、测试与回滚 |
 | `docs/39-admin-quotation-calculator-and-order-center.md` | 客户报价计算与订单管理中心：商品级核算、订单级费用、海运分摊、CNY/外币舍入、字典、报价草稿/订单创建、数据库快照、菜单权限、测试与部署；Excel/PDF 模板、PI、物流 API 延后 |
+| `docs/41-commercial-invoice-order-documents.md` | 商业单据中心（PI/CI）需求基线：订单客户资料修正、单据快照、模板/字段映射、PDF 渲染、权限、迁移与验收 |
+| `docs/42-commercial-documents-implementation.md` | 商业单据中心实施记录：实际表结构、API、模板引擎、PDF Worker、权限/审计、假设、验证与回滚 |
 | `docs/31-lightweight-deployment-sqlite-redis-image-optimization.md` | 轻量化部署、SQLite/Redis 取舍、数据库任务表、图片优化与旧架构评估（补充文档） |
 | `docs/32-cloudflare-frontend-server-api-deployment.md` | Cloudflare 前后台、Next.js 兼容性、认证/缓存安全与迁移路线（专题文档） |
 | `docs/33-lightweight-cloudflare-neon-r2-implementation.md` | **当前目标架构实施基线**：Cloudflare Workers + Neon PostgreSQL + R2 + 单台 2C/1G NestJS、PG 任务队列替代 Redis、部署、测试、验收和回滚 |

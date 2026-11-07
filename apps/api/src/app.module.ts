@@ -10,6 +10,7 @@ import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CategoriesModule } from './modules/categories/categories.module';
+import { CommercialDocumentsModule } from './modules/commercial-documents/commercial-documents.module';
 import { ContentModule } from './modules/content/content.module';
 import { DictionaryModule } from './modules/dictionary/dictionary.module';
 import { ExcelPdfModule } from './modules/excel-pdf/excel-pdf.module';
@@ -45,6 +46,7 @@ import { UsersModule } from './modules/users/users.module';
     CategoriesModule,
     ProductsModule,
     QuotationExportModule,
+    CommercialDocumentsModule,
     ExcelPdfModule,
     TagsModule,
     FilesModule,

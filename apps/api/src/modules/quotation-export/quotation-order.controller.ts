@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, Param, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, Patch, Post, Query, Res } from '@nestjs/common';
 import {
   quotationCalculatorExcelExportSchema,
   quotationHistoryExcelExportSchema,
@@ -8,7 +8,11 @@ import {
   quotationPreviewSchema,
   quotationListQuerySchema,
   quotationProductSearchQuerySchema,
+  updateOrderCustomerSnapshotSchema,
+  syncOrderCustomerProfileSchema,
   type OrderListQuery,
+  type UpdateOrderCustomerSnapshotInput,
+  type SyncOrderCustomerProfileInput,
   type QuotationCalculatorExcelExportInput,
   type QuotationCalculationInput,
   type QuotationHistoryExcelExportInput,
@@ -213,6 +217,41 @@ export class QuotationOrderController {
   async orderDetail(@Param('id') id: string, @CurrentActor() actor: AuthenticatedActor) {
     const data = await this.service.orderDetail(idParamSchema.parse({ id }).id);
     return { data: this.canReadOrderCost(actor) ? data : this.withoutCost(data) };
+  }
+
+  @RequirePermissions(Permission.orderCustomerSnapshotUpdate)
+  @Patch('orders/:id/customer-snapshot')
+  async updateOrderCustomerSnapshot(
+    @Param('id') id: string,
+    @Body(zodPipe(updateOrderCustomerSnapshotSchema)) body: UpdateOrderCustomerSnapshotInput,
+    @CurrentActor() actor: AuthenticatedActor,
+    @RequestId() requestId: string,
+  ) {
+    const data = await this.service.updateOrderCustomerSnapshot(
+      idParamSchema.parse({ id }).id,
+      body,
+      actor.id,
+      requestId,
+    );
+    return { data: this.canReadOrderCost(actor) ? data : this.withoutCost(data) };
+  }
+
+  @RequirePermissions(Permission.orderCustomerProfileSync, Permission.customerUpdate)
+  @Post('orders/:id/sync-customer-profile')
+  async syncOrderCustomerProfile(
+    @Param('id') id: string,
+    @Body(zodPipe(syncOrderCustomerProfileSchema)) body: SyncOrderCustomerProfileInput,
+    @CurrentActor() actor: AuthenticatedActor,
+    @RequestId() requestId: string,
+  ) {
+    return {
+      data: await this.service.syncOrderCustomerProfile(
+        idParamSchema.parse({ id }).id,
+        body,
+        actor.id,
+        requestId,
+      ),
+    };
   }
 
   private canReadCost(actor: AuthenticatedActor) {
