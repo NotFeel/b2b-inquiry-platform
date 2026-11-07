@@ -700,3 +700,245 @@ Page 管理路由级状态、列表请求、分页和 Drawer 生命周期；展�
 - 仅回退本轮 Admin 页面/组件/文案和 API 列表查询扩展即可。
 - 无数据库迁移，无业务数据写入，无需数据回滚。
 - 历史订单、金额、商品/费用/包装快照和已签发单据均未被修改。
+
+## 11. 二次整改补充规范（DOC-43-R2，2026-11-07）
+
+> 本节是对 DOC-43 原要求的补充和优先级修订。原文继续有效；如与本节冲突，以本节为准。此次补充基于 main 当前代码、运行中的后台页面文本和用户提供的页面截图。它是 AI 可执行实施要求，不代表已完成代码修改。
+
+### 11.1 本轮复核发现与必须修正的问题
+
+| 页面/位置 | 当前可观察情况 | 整改要求 |
+|---|---|---|
+| 订单列表筛选 | 币种、国家是普通文本输入框，无法浏览合法选项，也容易输入无效代码 | 改为数据库驱动的可搜索选择器；支持完整选项、清空、键盘操作 |
+| 订单详情 Drawer | 当前约占屏幕右侧约三分之一；商品明细表格出现左侧列被遮挡/横向内容不可读 | 桌面默认加宽，允许拖动调整宽度和一键最大化；内容区独立滚动 |
+| 商品明细 | 截图表头出现字面量 `金额（{{currency}}）`；表格列过宽，用户无法同时查看关键字段 | 修复未插值模板字符串；表头使用稳定文案“金额 / Amount”，每行显示币种代码；窄屏表格内部横向滚动 |
+| 客户资料修正 | Buyer 与 Consignee 字段纵向重复较多；买方公司、邮编等空值在截图中不够醒目 | 分成买方主体、账单地址、收货人、收货地址、贸易与参考信息；缺失值有明确提示；避免把两个地址对象混为一套 |
+| 电话 | 同一订单的电话在详情与编辑界面格式不一致 | 存储/接口统一 E.164；展示格式化不得改变原始值，复制时提供 E.164 |
+| 报价计算器 | 国家代码是自由文本；币种为字典 Select；合同编号仍是可编辑 Input | 国家改为数据库国家选项；合同编号改为系统生成、只读展示，创建订单时由 API 最终生成 |
+| 报价计算器布局 | 客户、贸易、地址字段集中在长表单中，必填条件和“报价草稿/正式订单”区别不够明显 | 增加分区导航/锚点或清晰分组、必填标记、创建订单校验摘要；不得为了缩短页面隐藏关键必填项 |
+
+**重要：** 截图中看不到的功能不能直接判断为不存在。实施前应复核实际组件和接口；但上述截图中明确可见的问题必须逐项关闭。
+
+### 11.2 国家与币种：统一数据库选项组件
+
+#### 目标行为
+
+1. 订单列表“币种”筛选：单选、可搜索、可清空，选项覆盖数据库中所有启用币种。
+2. 订单列表“国家”筛选：单选、可搜索、可清空，选项覆盖数据库中所有启用国家/地区。
+3. 报价计算器“币种”：继续使用现有 `quotation-calculator/config` 的 `currencies`，不另造前端币种常量。
+4. 报价计算器国家、账单国家、收货国家：使用同一国家数据源和同一 CountrySelect/Combobox 交互。
+5. 订单客户资料编辑的 Buyer、Consignee 国家字段也必须复用同一组件。
+6. 所有选项都显示本地化名称和 ISO 代码，例如“United States (US)”/“美国 (US)”；提交和筛选参数使用标准代码。
+7. 支持输入代码或名称搜索；支持键盘上下选择、Enter 确认、Escape 关闭、Backspace 清空；移动端可正常触控。
+8. 初始加载、加载失败、无匹配项均有明确状态；加载失败不能悄悄退化为任意文本输入。
+
+#### 数据源实施规则
+
+- 币种优先复用 `DICTIONARY_TYPES.currency` 与 `dictionaryItem`，该数据已由 `QuotationOrderService.config(locale)` 查询启用项并返回 `currencies`。
+- 国家必须来自后端可维护的数据库参考数据。先检查 `database/prisma/schema.prisma`、`database/prisma/seed.ts`、`apps/api/src/common/services/geo.service.ts` 及现有国家/地区字典；若已有国家表/字典，直接复用。
+- 若仓库当前没有完整、可维护的国家数据表/字典，新增受版本控制的国家参考数据（建议沿用现有 DictionaryType/DictionaryItem 架构，类型代码统一为 `country`，数据按 ISO-3166-1 alpha-2，必要时支持地区扩展）。通过 reference-only seed 同步，不允许前端硬编码国家数组。
+- 新增只读配置接口建议：`GET /admin/reference-data/countries?locale=zh-CN`；如果已有等价接口则复用，不重复创建。响应至少包含 `code`、`name`、`label`、`enabled`，默认仅返回 enabled 项，完整返回所有启用项，不分页截断。
+- 币种若订单模块需要独立接口，可新增 `GET /admin/reference-data/currencies?locale=...`，但必须复用同一数据库字典；优先考虑合并为 reference-data 配置接口，避免多个页面各自请求。
+- 选项 API 必须经过现有认证与权限体系；读取选项所需权限应与可进入对应业务页面的权限一致，禁止匿名暴露后台字典管理数据。
+- 国家/币种筛选必须校验服务端代码是否存在且启用；无效代码返回 400 字段错误，不可把任意输入静默当作合法筛选。
+- 不要将“所有国家”错误地理解为所有历史订单中出现过的国家；选择器数据应为完整启用参考数据，订单查询结果仍只返回匹配订单。
+- 对历史订单中已停用但曾使用的国家/币种，详情仍按快照原值显示；筛选选项是否包含停用项由产品规则决定，默认不把停用项作为新筛选条件，但不得破坏历史数据读取。
+
+#### 建议复用/新增文件
+
+| 路径 | 动作 |
+|---|---|
+| `apps/admin/src/lib/quotation-order-api.ts` | 复用现有币种配置类型；避免复制币种数组 |
+| `apps/admin/src/lib/commercial-documents-api.ts` | 按现有 API Client 约定增加/复用参考数据方法 |
+| `apps/admin/src/components/` 下现有 Select/Combobox | 先查找并复用 |
+| `apps/admin/src/components/reference-data/country-select.tsx` | 若无可复用组件，新增统一国家选择器 |
+| `apps/api/src/reference-data-startup.ts`、`database/prisma/seed.ts` | 复用启动时 reference-only seed 同步机制 |
+| `packages/contracts` 或现有 dictionary 常量文件 | 复用/定义 country 类型代码，避免魔法字符串散落 |
+
+### 11.3 订单详情 Drawer：可拖动、加宽、最大化
+
+#### 桌面端规格
+
+- 默认宽度建议为视口宽度的 68%（目标 900–1100px）；最小 680px，最大 92vw。若视口不足以满足最小宽度，自动使用 94vw。
+- Drawer 顶部标题栏、Tab 导航和底部主要操作区固定；中间详情内容单独滚动。
+- 提供可见拖动把手/分隔线，拖动时实时调整宽度；鼠标和触控均支持。
+- 提供“最大化/恢复”按钮。最大化宽度为 96vw，不遮挡浏览器可视区域；保留关闭按钮。
+- 支持键盘调整：焦点落在拖动分隔线上时，Left/Right 每次调整 24px，Shift+方向键每次 64px；Home 恢复默认宽度，End 最大化。设置正确的 `role="separator"`、`aria-orientation="vertical"`、`aria-valuenow/min/max` 和可访问名称。
+- 拖动期间禁止文本误选；鼠标/触控结束、组件卸载时清理监听。
+- 默认宽度只在当前 Drawer 会话生效即可；如持久化，使用项目已有偏好机制，不引入 localStorage 之外的新状态服务。未经必要不保存用户行为数据。
+
+#### 移动端
+
+- 768px 以下直接使用全屏 Drawer/详情页，不显示拖动把手。
+- 关闭按钮固定可见，Tab 可横向滚动且当前 Tab 自动可见。
+- 底部操作按钮换行或采用固定操作栏，不允许按钮被视口裁切。
+
+#### 内容排版
+
+- Drawer 不允许自身出现“内容被裁掉但无法横向滚动”的情况。
+- 商品明细、费用明细等宽表格使用 `overflow-x:auto` 的局部容器；首列可选 sticky，但不能遮挡其他列。
+- 客户地址使用换行文本，长邮箱/编号允许断行；金额右对齐并始终显示币种。
+- 修复截图中金额表头字面量 `{{currency}}`：不要把每行货币动态拼进表头；使用“金额 / Amount”，行单元格展示如 `69.12 USD`。
+- Tab 数量徽标只显示真实数据；空值不显示虚假数量。
+- 详情请求切换订单时必须防止旧请求覆盖新订单（AbortController 或请求序号）；切换时清理前一个订单的活动 Tab 状态和表单状态。
+
+#### 组件实施约束
+
+- 当前页面使用 `@b2b/ui` 的 `Drawer`，先检查 Drawer 是否支持 `width`、`size`、`className`、`style` 或自定义 header/content slot。
+- 如果 Drawer 不支持受控宽度，优先扩展 `packages/ui` 的 Drawer API，而不是在业务页面复制一套 Drawer。
+- 拖动逻辑封装为通用、可访问的 ResizableDrawer/ResizablePanel；不在 `orders/page.tsx` 内堆叠大量 pointer event。
+- 不引入大型拖拽库；原生 Pointer Events 足够。拖动分隔线不能覆盖关闭按钮或 Tab 点击区域。
+
+### 11.4 客户资料修正：按业务语义拆分
+
+#### 表单结构
+
+1. 买方主体（Buyer）：公司、联系人、电话、邮箱、税号、国家。
+2. 账单地址（Billing Address）：收件人/公司、地址 1/2、城市、州/省、邮编、国家。
+3. 收货人（Consignee）：公司、联系人、电话、邮箱、税号、国家。
+4. 收货地址（Shipping Address）：收件人/公司、地址 1/2、城市、州/省、邮编、国家。
+5. 贸易与参考信息：买方参考号、系统合同编号（只读）、贸易术语、指定地点、付款条件。
+6. Notify Party 只有在现有 DTO/schema 支持时显示；没有则不显示空白假区块。
+
+#### 交互与数据约束
+
+- 买方与收货人可以通过“收货信息同买方”快捷操作复制字段，但复制后两份表单独立编辑；取消关联不应清空已有内容。
+- 账单地址同收货地址是独立选项；勾选后复制当前值，之后的编辑行为要明确（实时同步或解除同步），不得出现 UI 勾选但 payload 不同步。
+- 空值统一显示“未填写”，并可定位编辑；不要把空字符串伪装成已有资料。
+- 保存前展示字段变更摘要（字段名 + 脱敏前后值；电话、邮箱、税号、完整地址不得写入审计 metadata）。
+- 继续使用 `PATCH /admin/orders/:id/customer-snapshot`、当前 Order.version 乐观锁；不新建重复 API。
+- 保存后服务端返回最新 OrderDetail，刷新 Drawer 和列表客户摘要；409 保留表单输入并提供“重新加载并对比”，不得直接覆盖用户输入。
+- “同时更新客户主档”保持默认关闭；客户主档同步必须在快照保存成功后单独调用现有同步 API，失败时明确提示“订单修正已保存，客户主档同步失败”，并允许单独重试。
+- 电话存储仍使用 E.164；UI 可格式化展示，编辑控件保留国家区号和完整号码，不因展示格式变化而改写原始值。
+
+### 11.5 报价计算器：合同编号后端自动生成
+
+#### 产品规则
+
+- 合同编号是系统内部生成的业务编号，不再由管理员手工输入。
+- 默认格式：`WX-YYYYMMDD-XXXXXX`，例如 `WX-20261107-A3F91C`。前缀通过环境配置 `ORDER_CONTRACT_NO_PREFIX` 管理，默认 `WX`；日期使用配置的业务时区（默认 `Asia/Shanghai`）；随机段为密码学安全随机字符，建议 6–8 位大写 Base32/Hex。
+- 编号由后端生成，前端不得生成、拼接、覆盖或将空字符串当作最终编号。
+- 生成时机：正式创建订单时生成；从报价草稿转换为订单时生成。仅保存报价草稿不占用合同编号，草稿界面显示“创建正式订单时自动生成”。
+- 创建成功响应必须返回 `contractNo`，成功提示/订单详情展示实际编号。前端只读展示；正式创建订单前可以显示“系统自动生成”，不能预测展示一个尚未持久化的编号。
+- 已存在的历史订单合同编号不得批量重写；历史空值保持空值，除非另行执行有审计的补号任务。
+
+#### 后端实现要求
+
+- 复核 `apps/api/src/modules/quotation-export/quotation-order.service.ts` 中 `createOrder`、`convertQuotation`、`customerSnapshot`、`tradeSnapshot` 和 `orderDto`。当前计算器 `CalculatorInput.contractNo` 与页面 `contractNo` 状态仍可编辑，创建订单路径将输入值写入 Order；必须统一改造两个正式订单创建入口。
+- 新增独立 `generateContractNo(orderDate?)` 服务方法，使用 Node `crypto` 的安全随机源；不得复用前端 Math.random，也不得使用可预测的时间戳尾数。
+- 在订单事务内将生成值写入 `Order.contractNo`、`tradeSnapshot.contractNo`、`customerSnapshot.contractNo`（如该快照仍承载此字段），并保证 PI/CI prefill 和导出读取同一个 Order.contractNo。不能只改前端 label。
+- `convertQuotation` 必须从持久化报价快照读取客户和贸易信息，但忽略其中旧的/人工填写 contractNo，重新生成正式合同编号。
+- 幂等请求重试必须返回第一次创建的相同编号；现有 Idempotency-Key 逻辑不可破坏。
+- 防碰撞：为 `Order.contractNo` 建立非空唯一约束/唯一索引。迁移前检查历史重复值；采用 PostgreSQL partial unique index（仅对非 NULL）或等效 Prisma 可表达方案。冲突时重新生成并有限重试；不要吞掉非唯一约束错误。
+- 合同编号生成和订单写入必须在同一事务语义内，避免生成后失败留下“已占用但无订单”的业务记录。
+- 订单客户快照修正接口不能允许修改系统合同编号；其输入 schema、Service 更新逻辑需将 contractNo 从可编辑字段中移除或忽略客户端传入值。若商业单据需要修正合同号，必须另立明确的审计操作，不属于本次。
+- 报价草稿可以保存合同编号字段的历史兼容值，但不得把它作为正式订单编号；创建/转换正式订单时由服务端覆盖。
+- API DTO 和类型增加/确认 `contractNo: string | null`；正式新订单必须非空。错误码、国际化提示同步完善。
+
+#### 前端实现要求
+
+- `apps/admin/src/app/[locale]/(admin)/quotation-calculator/page.tsx`：删除可编辑的 contractNo state/Input；改成只读说明行，显示“系统自动生成（创建订单时分配）”。
+- `apps/admin/src/lib/quotation-order-api.ts`：正式创建订单响应类型增加 `contractNo`；报价草稿响应不要求合同编号。
+- `apps/admin/src/app/[locale]/(admin)/orders/page.tsx`：客户资料编辑表单移除 contractNo 输入；详情中只读显示订单正式合同编号。
+- `apps/admin/src/components/orders/order-list-view.tsx`：不把合同编号加到列表列中，避免列表过宽；详情和 PI/CI 才展示。
+- 中英文文案 `apps/admin/src/messages/zh-CN.json`、`en-US.json` 同步更新。
+- 如果用户需要客户自己的 PO/Reference，继续使用独立的 Buyer Reference 字段；不得把 Buyer Reference 与系统合同编号混用。
+
+### 11.6 报价计算器表单体验调整
+
+- 将页面分为：客户与单据基本信息、贸易条款、账单地址、收货地址、商品明细、运费计算、其他费用、计算结果/操作。
+- 页面顶部提供分区目录或锚点，滚动时可定位；不得强制做成多步向导，以免破坏当前一次性核算流程。
+- “创建正式订单”与“保存报价草稿”必须在视觉和文案上区分；创建正式订单前展示必填字段检查结果，并说明创建后会产生订单号、合同编号。
+- 货币选择器继续从 `config.currencies` 获取完整启用币种；币种变化时根据当前业务规则校验汇率，CNY 汇率固定为 1。
+- 国家选择统一用 CountrySelect，客户国家、账单国家、收货国家不能只让用户输入两个字母代码。
+- 日期控件显示格式跟随 locale；提交统一 ISO `YYYY-MM-DD`，不受浏览器语言影响。
+- 主要操作区在长页面底部保持可见（sticky action bar），但不得遮挡最后一行费用/商品；小屏自动换行。
+- 商品行较多时，商品明细区局部滚动或折叠；总金额与关键运费结果保持可见。
+- 表单错误优先定位到字段并滚动到对应分区；保留用户已输入内容，不因单个字段校验失败重置整张表单。
+- 页面不得将示例默认国家、汇率、日期误当成真实业务配置；默认值必须标识来源，特别是汇率需有录入人/日期或现有配置来源。
+
+### 11.7 必须核查的真实仓库文件（R2）
+
+以下为已确认存在的路径；编码前仍需查看文件当前内容，按需增量修改，不得整体重建：
+
+| 文件 | 本轮动作 |
+|---|---|
+| `apps/admin/src/app/[locale]/(admin)/orders/page.tsx` | Drawer、客户资料编辑、详情状态和合同编号只读展示 |
+| `apps/admin/src/components/orders/order-list-view.tsx` | 币种/国家筛选控件 props 与布局 |
+| `apps/admin/src/lib/order-list.ts`、`order-list.spec.ts` | 筛选 query 序列化/校验及测试 |
+| `apps/admin/src/lib/commercial-documents-api.ts` | OrderDetail、OrderListRow、Country/Reference API 类型 |
+| `apps/admin/src/app/[locale]/(admin)/quotation-calculator/page.tsx` | 国家选择、合同编号只读、表单分区和操作区 |
+| `apps/admin/src/lib/quotation-order-api.ts` | 复用币种 config，创建订单返回值类型 |
+| `apps/admin/src/messages/zh-CN.json`、`en-US.json` | 双语文案 |
+| `apps/api/src/modules/quotation-export/quotation-order.controller.ts` | 参考数据接口（仅当没有现成接口时） |
+| `apps/api/src/modules/quotation-export/quotation-order.service.ts` | 国家选项查询、合同编号生成、创建/转换订单写入 |
+| `packages/validation/src/quotation-order-schemas.spec.ts` | 合同编号输入移除/兼容策略、国家代码验证 |
+| `database/prisma/schema.prisma` | Order.contractNo 约束及参考数据模型（仅按需） |
+| `database/prisma/seed.ts`、reference-data seed | 国家参考数据同步 |
+| `database/prisma/migrations/` | 非空合同编号唯一索引（迁移前检查重复） |
+| `apps/api/src/modules/quotation-export/quotation-order.service.spec.ts` | 编号生成、幂等、并发碰撞、转换订单测试 |
+| `apps/admin/src/lib/order-list.spec.ts` 及订单组件测试 | 选择器和筛选行为测试 |
+
+### 11.8 组件复用清单与禁止重复建设
+
+- 订单筛选、报价计算器、订单客户编辑统一复用项目 Select/Combobox、Field、Input、Button、Tabs、Drawer、Modal、Toast、Pagination。
+- 货币选项复用 `QuotationOrderService.config()` 返回的字典，不新增第二套货币配置。
+- 国家选项复用/补齐数据库参考数据；不得硬编码在页面组件、i18n JSON 或多个 API Client 中。
+- 订单列表继续复用 `OrderListView`、`order-list.ts` 和现有查询参数，不新建第二套订单列表。
+- 订单详情继续复用 `OrderDetail` DTO 与六个既有 Tab 的业务数据，不另造 Order 模型或重复 API。
+- PI/CI 创建继续复用 `commercialDocumentsApi` 的 prefill/createFromOrder 工作流。
+- 计算器继续复用 `quotationOrderApi.config/products/preview/saveDraft/createOrder`。
+- 禁止因 Drawer 加宽而重写整个订单详情；只调整 Drawer 容器和内部表格布局。
+- 禁止把数据库国家/币种选择改成远程第三方 API 依赖；后台选项应由本系统数据库提供。
+
+### 11.9 实施顺序与验收门槛（R2）
+
+**R2-0：基线核对**
+- 确认 Doc43、Doc39–42、当前 main HEAD、订单列表和计算器代码。
+- 盘点国家字典/参考数据是否完整，检查币种字典启用项数量。
+- 检查 Drawer 组件 API、CSS 结构、详情 Tab、客户快照 schema 和所有合同编号写入路径。
+- 输出“现状/改动/复用/不做”四列文件清单。
+
+**R2-1：参考数据选择器**
+- 币种/国家选择器覆盖所有启用数据；列表筛选、计算器、客户编辑使用同一组件。
+- 选择、清空、搜索、键盘、移动端全部通过测试。
+- 服务端筛选验证合法代码。
+
+**R2-2：Drawer**
+- 默认加宽、可拖动、最大化、键盘可访问。
+- 六个 Tab 内容可完整查看；商品/费用表格只在内部横向滚动。
+- 截图中的 `{{currency}}` 原样输出问题修复。
+
+**R2-3：客户资料**
+- 表单分组、空值提示、E.164 电话处理、快照与客户主档边界正确。
+- 409 不丢输入；主档同步仍需单独确认。
+
+**R2-4：合同编号**
+- 正式订单 createOrder 与 convertQuotation 两条路径均后端生成唯一编号。
+- 重试返回同一个编号；并发不重复；历史订单不被改写。
+- 订单快照、PI/CI prefill、导出均读取相同合同编号。
+- 计算器无可编辑合同编号控件。
+
+**R2-5：计算器整体体验**
+- 分组、锚点、必填提示、错误定位、sticky action bar。
+- 国家、币种数据源统一。
+- 中英文、桌面/平板/手机完成回归。
+
+**最终验收**
+- 1440px/1600px 桌面下 Drawer 默认能完整显示商品表格主要列；最大化后可查看所有字段。
+- 768px 平板及 360px 手机不出现整页横向滚动。
+- 订单列表筛选国家/币种只能选择有效数据库选项。
+- 正式订单的 contractNo 必须由后端生成且唯一。
+- 所有原有 PI/CI、订单快照、金额、导出、权限和幂等测试通过。
+- 跑 lint、typecheck、相关单测、Admin/API build；未执行项不得宣称通过。
+- 不部署、不运行生产迁移；如需要迁移，只提交 migration 和回滚说明，等待单独审批。
+
+### 11.10 AI 执行指令（可直接交给 VS Code AI）
+
+1. 先按 11.7 的文件清单逐个读取当前 main 文件，确认真实实现；不允许仅根据本 MD 猜测。
+2. 按 R2-0 至 R2-5 顺序实施，先写测试再改业务代码。
+3. 先复用现有组件、API、字典和数据模型；只有确认缺口后才新增。
+4. 任何 schema 变更必须包含迁移、seed、回滚策略和历史数据兼容分析。
+5. 不改订单金额算法、商品/费用快照、PI/CI 生命周期语义，不重建订单系统。
+6. 每个阶段完成后报告改动文件、行为变化、测试命令和真实结果。
+7. 不修改或部署生产环境；本任务仅修改本地开发代码并提交可审查的变更。
