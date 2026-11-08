@@ -262,6 +262,7 @@ export type DocumentTemplateConfig = {
     title: string;
     subtitle?: string;
     showLogo: boolean;
+    showStamp: boolean;
     showDocumentType: boolean;
   };
   sections: Array<{
@@ -271,8 +272,16 @@ export type DocumentTemplateConfig = {
     fields: Array<{ key: string; visible: boolean; required: boolean; label?: string }>;
   }>;
   itemColumns: Array<{ key: string; visible: boolean; label?: string; width?: number }>;
-  footer: { text?: string; showPageNumbers: boolean };
-  terms: { paymentNotice?: string; shipmentNotice?: string; authenticityDeclaration?: string };
+  footer: { text?: string; showText: boolean; showPageNumbers: boolean };
+  terms: {
+    paymentNotice?: string;
+    shipmentNotice?: string;
+    authenticityDeclaration?: string;
+    showPaymentNotice: boolean;
+    showShipmentNotice: boolean;
+    showAuthenticityDeclaration: boolean;
+  };
+  notes: { visible: boolean; title?: string };
 };
 
 export type CommercialDocumentDetail = {
@@ -585,19 +594,23 @@ export const commercialDocumentsApi = {
         payload,
       )
     ).data,
-  validateTemplate: async (id: string) =>
+  validateTemplate: async (id: string, payload: Record<string, unknown> = {}) =>
     (
       await adminApi.post<{ data: TemplateValidation }>(
         `/admin/document-templates/${id}/validate`,
-        {},
+        payload,
       )
     ).data,
   previewTemplate: async (id: string, payload: Record<string, unknown>) =>
     (
-      await adminApi.post<{ data: { html: string } }>(
-        `/admin/document-templates/${id}/preview`,
-        payload,
-      )
+      await adminApi.post<{
+        data: {
+          html: string;
+          sample: boolean;
+          documentType: 'PI' | 'CI';
+          locale: string;
+        };
+      }>(`/admin/document-templates/${id}/preview`, payload)
     ).data,
   publishTemplate: async (id: string) =>
     (
@@ -606,6 +619,8 @@ export const commercialDocumentsApi = {
         {},
       )
     ).data,
+  deleteTemplate: async (id: string) =>
+    (await adminApi.delete<{ data: { deleted: true } }>(`/admin/document-templates/${id}`)).data,
 
   companyProfiles: async () =>
     (await adminApi.get<{ data: CompanyProfile[] }>('/admin/company-profiles')).data,

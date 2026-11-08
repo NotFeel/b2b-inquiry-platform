@@ -21,6 +21,7 @@ const baseDocument: CommercialDocumentRenderData = {
     contactName: 'Alice',
     phone: '+8613800000000',
     email: 'sales@example.com',
+    taxId: '91310000TEST',
     address: {
       line1: '88 Industrial Road',
       city: 'Shanghai',
@@ -69,6 +70,16 @@ const baseDocument: CommercialDocumentRenderData = {
     accountNumber: '1234567890',
     swiftCode: 'BKCHCNBJ',
   },
+  declaration: {
+    countryOfOrigin: 'CN',
+    text: 'The goods are of Chinese origin.',
+    authenticityText: 'The exporter confirms these details are authentic.',
+  },
+  signature: {
+    sellerName: 'Alice Seller',
+    sellerTitle: 'Export Manager',
+  },
+  notes: 'Inspection is welcome before shipment.',
   items: [
     {
       lineNo: 1,
@@ -177,6 +188,94 @@ describe('renderCommercialDocumentHtml', () => {
     expect(html).not.toContain('T/T 30% deposit');
     expect(html).not.toContain('73181590');
   });
+
+  it('routes header metadata through the shared field visibility settings', () => {
+    const config = createDefaultTemplateConfig('CI');
+    for (const [section, field] of [
+      ['invoice', 'document.number'],
+      ['invoice', 'document.revision'],
+      ['trade', 'trade.currency'],
+    ] as const) {
+      const configField = config.sections
+        .find((candidate) => candidate.key === section)
+        ?.fields.find((candidate) => candidate.key === field);
+      if (configField) configField.visible = false;
+    }
+    const html = renderCommercialDocumentHtml(config, baseDocument);
+    expect(html).not.toContain('CI-20261106-0001');
+    expect(html).not.toContain('Revision');
+    expect(html).not.toContain('>R1<');
+    expect(html).not.toContain('Currency');
+  });
+
+  it('omits empty regions and every hidden special block', () => {
+    const config = createDefaultTemplateConfig('CI');
+    const buyer = config.sections.find((section) => section.key === 'buyer');
+    buyer?.fields.forEach((field) => {
+      field.visible = false;
+    });
+    const sellerTaxId = config.sections
+      .find((section) => section.key === 'seller')
+      ?.fields.find((field) => field.key === 'seller.taxId');
+    if (sellerTaxId) sellerTaxId.visible = false;
+    config.sections.find((section) => section.key === 'totals')!.visible = false;
+    config.notes.visible = false;
+    config.terms.showPaymentNotice = false;
+    config.terms.showShipmentNotice = false;
+    config.terms.showAuthenticityDeclaration = false;
+    config.terms.paymentNotice = 'Payment notice must stay hidden';
+    config.terms.shipmentNotice = 'Shipment notice must stay hidden';
+    config.terms.authenticityDeclaration = 'Authenticity must stay hidden';
+    config.sections
+      .find((section) => section.key === 'declaration')
+      ?.fields.forEach((field) => {
+        field.visible = false;
+      });
+
+    const html = renderCommercialDocumentHtml(config, baseDocument);
+    expect(html).not.toContain('91310000TEST');
+    expect(html).not.toContain('bob@example.com');
+    expect(html).not.toContain('Buyer email');
+    expect(html).not.toContain('Inspection is welcome before shipment.');
+    expect(html).not.toContain('Payment notice must stay hidden');
+    expect(html).not.toContain('Shipment notice must stay hidden');
+    expect(html).not.toContain('Authenticity must stay hidden');
+    expect(html).not.toContain('class="block declaration"');
+    expect(html).not.toContain('table class="totals"');
+  });
+
+  it('renders signature cells independently and shows the stamp independently of the logo', () => {
+    const config = createDefaultTemplateConfig('CI');
+    const signature = config.sections.find((section) => section.key === 'signature')!;
+    signature.fields.forEach((field) => {
+      if (field.key === 'signature.seller') field.visible = true;
+      if (field.key === 'signature.buyer') field.visible = false;
+    });
+    config.header.showLogo = false;
+    config.header.showStamp = true;
+    const html = renderCommercialDocumentHtml(config, baseDocument, {
+      logoDataUri: 'data:image/png;base64,LOGO',
+      stampDataUri: 'data:image/png;base64,STAMP',
+    });
+    expect(html).not.toContain('LOGO');
+    expect(html).toContain('STAMP');
+    expect(html).toContain('Seller signature / stamp');
+    expect(html).not.toContain('Buyer signature');
+  });
+
+  it('does not output a signature or item table without visible cells', () => {
+    const config = createDefaultTemplateConfig('CI');
+    const signature = config.sections.find((section) => section.key === 'signature')!;
+    signature.fields.forEach((field) => {
+      field.visible = false;
+    });
+    config.itemColumns.forEach((column) => {
+      column.visible = false;
+    });
+    const html = renderCommercialDocumentHtml(config, baseDocument);
+    expect(html).not.toContain('<section class="signature">');
+    expect(html).not.toContain('<table class="items">');
+  });
 });
 
 describe('findMissingDocumentFields', () => {
@@ -214,11 +313,33 @@ describe('parseTemplateConfig', () => {
     expect(() =>
       parseTemplateConfig({
         ...config,
-        sections: [{ key: 'seller', visible: true, fields: [{ key: 'evil<script>', visible: true }] }],
+        sections: [
+          { key: 'seller', visible: true, fields: [{ key: 'evil<script>', visible: true }] },
+        ],
       }),
     ).toThrow();
     const duplicate = createDefaultTemplateConfig('CI');
     duplicate.itemColumns.push({ ...duplicate.itemColumns[0]! });
     expect(() => parseTemplateConfig(duplicate)).toThrow();
+  });
+
+  it('normalizes legacy configurations without changing their expected rendering', () => {
+    const legacy = createDefaultTemplateConfig('CI') as unknown as Record<string, unknown>;
+    const header = legacy.header as Record<string, unknown>;
+    const footer = legacy.footer as Record<string, unknown>;
+    const terms = legacy.terms as Record<string, unknown>;
+    delete header.showStamp;
+    delete footer.showText;
+    delete terms.showPaymentNotice;
+    delete terms.showShipmentNotice;
+    delete terms.showAuthenticityDeclaration;
+    delete legacy.notes;
+
+    const parsed = parseTemplateConfig(legacy);
+    expect(parsed.header.showStamp).toBe(parsed.header.showLogo);
+    expect(parsed.notes.visible).toBe(true);
+    expect(parsed.terms.showPaymentNotice).toBe(true);
+    expect(parsed.terms.showShipmentNotice).toBe(true);
+    expect(parsed.terms.showAuthenticityDeclaration).toBe(true);
   });
 });

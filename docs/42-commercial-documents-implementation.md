@@ -99,7 +99,7 @@
 
 - `order.customer_snapshot.update`、`order.customer_profile.sync`、`customer.update`
 - `commercial_document.{read,create,update,preview,issue,revision.create,cancel,download}`
-- `document_template.{read,create,update,publish}`
+- `document_template.{read,create,update,delete,publish}`
 - `company_profile.manage`、`bank_account.manage`
 
 审计事件：订单客户快照修正/客户主档同步、单据创建/修改/预览渲染请求/签发/revision/取消/下载、模板创建/修改/发布、公司资料/银行账户变更。审计 metadata 只保存单据号、类型、版本、金额汇总和字段名；不保存银行账号、SWIFT、税号、电话、邮箱或地址原文。
@@ -158,3 +158,38 @@
 5. 在 staging 以多行商品、长地址、不同币种、中英文模板生成 PDF 并人工核对。
 6. 生产开放签发前，抽查订单快照、单据快照、PDF 私有下载和审计记录。
 7. 回滚只回退应用；不自动删除新表、历史快照或已签发 PDF。
+
+## 9. DOC-45 单据模板页面与渲染配置修复记录
+
+实施状态：已完成，日期 2026-11-07。
+
+本次按 `docs/45-document-template-page-optimization.md` 完成以下变更：
+
+1. 渲染器以模板配置为唯一显示来源。页眉的单据编号、Revision、Currency 改由 `document.number`、`document.revision`、`trade.currency` 控制，不再绕过字段开关；详情区不会重复输出这三项。
+2. Notes、Payment/Shipment notice、Authenticity declaration、Seller/Buyer signature、Stamp、Footer text 和商品表均增加明确可见性判断。区域隐藏或区域内没有可输出字段时不生成空容器；签章单元格与印章分别控制。
+3. 模板配置增加可选的 Notes、Stamp、Terms 和 Footer 显示开关。`parseTemplateConfig()` 会为历史模板补齐兼容默认值，不重写已发布版本 JSON。
+4. `preview` 与 `validate` 使用编辑器当前临时配置，不再先保存草稿；只有“保存草稿”和“发布新版本”执行持久化。
+5. 新增 `document_template.delete` 权限和 `DELETE /admin/document-templates/:id`。删除仅允许无版本、无 PI/CI 引用的 `DRAFT`，在事务中二次检查，记录脱敏审计 `document_template.deleted`，由 Restrict 外键兜底。
+6. 模板列表接入关键词、PI/CI、状态、语言筛选和真实分页；编辑区按基本信息、样式、字段、商品列、条款、预览发布分组，支持未保存提示、离开确认、样例预览切换及 360px 响应式字段卡片。
+7. 默认模板范围统一为“单据类型 + locale”；新建模板保持 DRAFT 且不能直接成为默认，发布为 ACTIVE 后通过编辑器设置。停用默认模板会在同一更新中取消默认标记。
+
+数据库：无 Prisma schema migration。`document_template.delete` 属于 reference data，需要通过已有幂等 reference seed 同步；已发布版本、历史单据和 PDF 不改写。
+
+验证结果：
+
+- `pnpm lint`：通过。
+- `pnpm typecheck`：全仓通过。
+- `pnpm --filter @b2b/api build`：通过。
+- `ADMIN_API_PROXY_TARGET=http://127.0.0.1:3000 pnpm --filter @b2b/admin build`：通过，`/[locale]/document-templates` 构建成功。
+- `ADMIN_API_PROXY_TARGET=http://127.0.0.1:3000 pnpm build`：全仓通过。
+- `pnpm --filter @b2b/commercial-documents test`：16 项通过。
+- 模板 API/权限定向测试：46 项通过。
+- `pnpm --filter @b2b/validation exec vitest run src/commercial-documents.spec.ts`：10 项通过。
+- `pnpm --filter @b2b/admin test`：202 项通过。
+- Worker typecheck：通过；Worker 与 API 预览继续共用 `renderCommercialDocumentHtml()`。
+- 全量 API 测试 459/462 通过；仍保留 3 项既有失败：`quote-template-preview.spec.ts` 1 项与 `quote.service.spec.ts` 2 项，均由真实 `B2B_Quotation_Template.xlsx` 夹具表头/解析预期与当前资产不一致导致，与 DOC-45 变更无关。
+
+未覆盖风险：
+
+- 未在本机执行真实对象存储、LibreOffice PDF 金样本和浏览器 360/768/1024/1440 截图回归；需在 staging 使用同一模板配置完成 HTML/PDF/历史单据对照。
+- 部署顺序仍应先同步 reference seed，再发布 API/Admin/Worker 兼容镜像；回滚应用版本不需要删除新增权限记录。

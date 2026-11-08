@@ -85,7 +85,7 @@ const itemColumnSchema = z.object({
   width: z.number().int().min(4).max(40).optional(),
 });
 
-export const documentTemplateConfigSchema = z
+const documentTemplateConfigBaseSchema = z
   .object({
     schemaVersion: z.literal(1),
     page: z.object({
@@ -110,6 +110,8 @@ export const documentTemplateConfigSchema = z
       subtitle: z.string().trim().max(160).optional(),
       subtitles: localizedTextSchema(160),
       showLogo: z.boolean().default(true),
+      /** Optional for legacy configurations; defaults to the legacy logo flag. */
+      showStamp: z.boolean().optional(),
       showDocumentType: z.boolean().default(true),
     }),
     sections: z.array(sectionSchema).max(DOCUMENT_SECTION_KEYS.length),
@@ -117,13 +119,26 @@ export const documentTemplateConfigSchema = z
     footer: z.object({
       text: z.string().trim().max(500).optional(),
       texts: localizedTextSchema(500),
+      /** Optional for legacy configurations; defaults to whether text was set. */
+      showText: z.boolean().optional(),
       showPageNumbers: z.boolean().default(true),
     }),
     terms: z.object({
       paymentNotice: z.string().trim().max(1000).optional(),
       shipmentNotice: z.string().trim().max(1000).optional(),
       authenticityDeclaration: z.string().trim().max(1000).optional(),
+      /** Optional flags are normalized to true for historical templates. */
+      showPaymentNotice: z.boolean().optional(),
+      showShipmentNotice: z.boolean().optional(),
+      showAuthenticityDeclaration: z.boolean().optional(),
     }),
+    notes: z
+      .object({
+        visible: z.boolean().default(true),
+        title: z.string().trim().max(120).optional(),
+        titles: localizedTextSchema(120),
+      })
+      .optional(),
   })
   .superRefine((config, context) => {
     const sectionKeys = new Set<string>();
@@ -183,8 +198,35 @@ export const documentTemplateConfigSchema = z
     }
   });
 
+/**
+ * Normalizes optional settings introduced after schema version 1 without
+ * rewriting historical published JSON. The defaults deliberately preserve the
+ * rendering of older templates.
+ */
+export const documentTemplateConfigSchema = documentTemplateConfigBaseSchema.transform(
+  (config) => ({
+    ...config,
+    header: {
+      ...config.header,
+      showStamp: config.header.showStamp ?? config.header.showLogo,
+    },
+    footer: {
+      ...config.footer,
+      showText: config.footer.showText ?? Boolean(config.footer.text),
+    },
+    terms: {
+      ...config.terms,
+      showPaymentNotice: config.terms.showPaymentNotice ?? true,
+      showShipmentNotice: config.terms.showShipmentNotice ?? true,
+      showAuthenticityDeclaration: config.terms.showAuthenticityDeclaration ?? true,
+    },
+    notes: config.notes ?? { visible: true },
+  }),
+);
+
 export type DocumentTemplateConfig = z.infer<typeof documentTemplateConfigSchema>;
-export type DocumentTemplateFieldConfig = DocumentTemplateConfig['sections'][number]['fields'][number];
+export type DocumentTemplateFieldConfig =
+  DocumentTemplateConfig['sections'][number]['fields'][number];
 export type DocumentTemplateItemColumn = DocumentTemplateConfig['itemColumns'][number];
 
 export function createDefaultTemplateConfig(
@@ -241,6 +283,7 @@ export function createDefaultTemplateConfig(
       title: documentType === 'CI' ? 'COMMERCIAL INVOICE' : 'PROFORMA INVOICE',
       subtitle: undefined,
       showLogo: true,
+      showStamp: true,
       showDocumentType: true,
     },
     sections,
@@ -254,12 +297,20 @@ export function createDefaultTemplateConfig(
       text: zh
         ? '本文件由系统生成，金额以本页数字金额为准。'
         : 'This document is system generated. The numeric total on this page prevails.',
+      showText: true,
       showPageNumbers: true,
     },
     terms: {
       paymentNotice: undefined,
       shipmentNotice: undefined,
       authenticityDeclaration: undefined,
+      showPaymentNotice: true,
+      showShipmentNotice: true,
+      showAuthenticityDeclaration: true,
+    },
+    notes: {
+      visible: true,
+      title: zh ? '备注' : 'Notes',
     },
   };
 }
@@ -272,7 +323,9 @@ export function parseTemplateConfig(value: unknown): DocumentTemplateConfig {
 export function templateConfigChecksum(config: DocumentTemplateConfig): string {
   // Stable key order is built explicitly so the checksum does not depend on the
   // caller's JSON property order.
-  return createHash('sha256').update(JSON.stringify(sortKeys(config))).digest('hex');
+  return createHash('sha256')
+    .update(JSON.stringify(sortKeys(config)))
+    .digest('hex');
 }
 
 function sortKeys(value: unknown): unknown {
@@ -296,7 +349,7 @@ export function visibleSections(
   fields: Array<{ key: string; label: string; required: boolean }>;
 }> {
   return config.sections
-    .filter((section) => section.visible)
+    .filter((section) => isSectionVisible(config, section.key))
     .map((section) => ({
       key: section.key,
       title:
@@ -305,11 +358,50 @@ export function visibleSections(
           ? DOCUMENT_SECTION_LABELS[section.key]['zh-CN']
           : DOCUMENT_SECTION_LABELS[section.key]['en-US']),
       fields: section.fields
-        .filter((field) => field.visible)
+        .filter((field) => isFieldVisible(config, section.key, field.key))
         .map((field) => ({
           key: field.key,
           label: field.label || defaultFieldLabel(field.key, locale),
           required: field.required,
         })),
     }));
+}
+
+export function isSectionVisible(
+  config: DocumentTemplateConfig,
+  sectionKey: DocumentSectionKey,
+): boolean {
+  return config.sections.find((section) => section.key === sectionKey)?.visible === true;
+}
+
+/**
+ * An absent field is hidden. This prevents legacy or malformed configurations
+ * from accidentally exposing a field that the editor did not explicitly enable.
+ */
+export function isFieldVisible(
+  config: DocumentTemplateConfig,
+  sectionKey: DocumentSectionKey,
+  fieldKey: string,
+): boolean {
+  const section = config.sections.find((candidate) => candidate.key === sectionKey);
+  if (!section?.visible) return false;
+  return section.fields.find((field) => field.key === fieldKey)?.visible === true;
+}
+
+export function hasVisibleFields(
+  config: DocumentTemplateConfig,
+  sectionKey: DocumentSectionKey,
+): boolean {
+  const section = config.sections.find((candidate) => candidate.key === sectionKey);
+  return Boolean(section?.visible && section.fields.some((field) => field.visible));
+}
+
+export function templateSectionField(
+  config: DocumentTemplateConfig,
+  sectionKey: DocumentSectionKey,
+  fieldKey: string,
+) {
+  return config.sections
+    .find((section) => section.key === sectionKey)
+    ?.fields.find((field) => field.key === fieldKey);
 }

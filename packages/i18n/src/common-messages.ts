@@ -164,8 +164,7 @@ export const commonMessages: Record<'en-US' | 'zh-CN', Messages> = {
       COMMERCIAL_DOCUMENT_CURRENCY_MISMATCH:
         'The document currency must match the order currency and all item prices.',
       COMMERCIAL_DOCUMENT_TEMPLATE_INVALID: 'The document template configuration is invalid.',
-      COMMERCIAL_DOCUMENT_TEMPLATE_REQUIRED:
-        'Select a published document template before issuing.',
+      COMMERCIAL_DOCUMENT_TEMPLATE_REQUIRED: 'Select a published document template before issuing.',
       COMMERCIAL_DOCUMENT_TEMPLATE_IN_USE:
         'This template version is referenced by an issued document and cannot be changed.',
       COMMERCIAL_DOCUMENT_PDF_UNAVAILABLE:
@@ -176,23 +175,33 @@ export const commonMessages: Record<'en-US' | 'zh-CN', Messages> = {
         'The document status changed. Reload it before trying again.',
       COMMERCIAL_DOCUMENT_CONCURRENT_UPDATE:
         'This document was changed by another session. Reload and retry.',
-      COMMERCIAL_DOCUMENT_ORDER_MISMATCH:
-        'The document does not belong to the selected order.',
+      COMMERCIAL_DOCUMENT_ORDER_MISMATCH: 'The document does not belong to the selected order.',
       DOCUMENT_TEMPLATE_NOT_PUBLISHED: 'Only a published template version can be used.',
       DOCUMENT_TEMPLATE_TYPE_MISMATCH:
         'This template belongs to a different document type (PI or CI).',
+      DOCUMENT_TEMPLATE_NOT_FOUND: 'The document template was not found.',
+      DOCUMENT_TEMPLATE_NOT_DELETABLE:
+        'Only an unpublished draft without version history can be deleted.',
+      DOCUMENT_TEMPLATE_IN_USE:
+        'This template is referenced by a PI/CI document and cannot be deleted.',
       COMPANY_PROFILE_NOT_FOUND: 'The company profile was not found.',
       BANK_ACCOUNT_NOT_FOUND: 'The bank account was not found.',
       BANK_ACCOUNT_IN_USE: 'This bank account is still used by a company profile.',
       BANK_ACCOUNT_CURRENCY_INVALID: 'The selected bank currency does not exist or is disabled.',
       BANK_ACCOUNT_COUNTRY_INVALID: 'The selected bank country does not exist or is disabled.',
-      BANK_ACCOUNT_CURRENCY_REQUIRED: 'A bank account must have a currency before it can be enabled or set as default.',
-      BANK_ACCOUNT_CURRENCY_IN_USE: 'This account has been used by a commercial document and its currency cannot be changed. Create a new account instead.',
-      BANK_ACCOUNT_CURRENCY_MISMATCH: 'The selected bank account currency does not match the document currency.',
+      BANK_ACCOUNT_CURRENCY_REQUIRED:
+        'A bank account must have a currency before it can be enabled or set as default.',
+      BANK_ACCOUNT_CURRENCY_IN_USE:
+        'This account has been used by a commercial document and its currency cannot be changed. Create a new account instead.',
+      BANK_ACCOUNT_CURRENCY_MISMATCH:
+        'The selected bank account currency does not match the document currency.',
       BANK_ACCOUNT_DISABLED: 'The selected bank account is disabled.',
-      BANK_ACCOUNT_DEFAULT_CONFLICT: 'The default account state is invalid or another session changed it. Refresh and choose a valid default.',
-      BANK_ACCOUNT_DEFAULT_REQUIRED: 'Select a bank account in the document currency before creating this document.',
-      BANK_ACCOUNT_MISSING: 'No active bank account is configured for the selected document currency. Configure one in Company Profile.',
+      BANK_ACCOUNT_DEFAULT_CONFLICT:
+        'The default account state is invalid or another session changed it. Refresh and choose a valid default.',
+      BANK_ACCOUNT_DEFAULT_REQUIRED:
+        'Select a bank account in the document currency before creating this document.',
+      BANK_ACCOUNT_MISSING:
+        'No active bank account is configured for the selected document currency. Configure one in Company Profile.',
       SETTINGS_SECRET_NOT_READABLE: 'Secret values can be replaced but never read back.',
       LAST_SUPER_ADMIN_PROTECTED:
         'The last active super administrator cannot be demoted, disabled or deleted.',
@@ -468,7 +477,8 @@ export const commonMessages: Record<'en-US' | 'zh-CN', Messages> = {
       QUOTATION_EXPORT_VALIDATION_FAILED: '一个或多个所选商品不满足报价条件，未生成任何文件。',
       QUOTATION_EXPORT_PRICING_INVALID: '加价率、币种或汇率无效，未生成任何文件。',
       QUOTATION_EXPORT_IMAGE_UNAVAILABLE: '无法安全读取商品主图，未生成任何文件。',
-      QUOTATION_EXPORT_IMAGE_SET_TOO_LARGE: '所选商品图片总量超过单次安全处理上限，请减少商品后重试。',
+      QUOTATION_EXPORT_IMAGE_SET_TOO_LARGE:
+        '所选商品图片总量超过单次安全处理上限，请减少商品后重试。',
       QUOTATION_EXPORT_SNAPSHOT_MISSING:
         '该历史报价或订单缺少导出所需的商品图片、末端品类或运费快照。',
       QUOTE_TEMPLATE_IN_USE: '该模板版本已被历史导出引用。',
@@ -491,6 +501,9 @@ export const commonMessages: Record<'en-US' | 'zh-CN', Messages> = {
       COMMERCIAL_DOCUMENT_ORDER_MISMATCH: '该单据不属于所选订单。',
       DOCUMENT_TEMPLATE_NOT_PUBLISHED: '只能使用已发布的模板版本。',
       DOCUMENT_TEMPLATE_TYPE_MISMATCH: '该模板属于其他单据类型（PI 或 CI）。',
+      DOCUMENT_TEMPLATE_NOT_FOUND: '未找到该单据模板。',
+      DOCUMENT_TEMPLATE_NOT_DELETABLE: '只有没有版本历史的未发布草稿可以删除。',
+      DOCUMENT_TEMPLATE_IN_USE: '该模板已被 PI/CI 单据引用，不能删除。',
       COMPANY_PROFILE_NOT_FOUND: '未找到公司资料。',
       BANK_ACCOUNT_NOT_FOUND: '未找到银行账户。',
       BANK_ACCOUNT_IN_USE: '该银行账户仍被公司资料引用。',
@@ -500,7 +513,8 @@ export const commonMessages: Record<'en-US' | 'zh-CN', Messages> = {
       BANK_ACCOUNT_CURRENCY_IN_USE: '该账户已被商业单据使用，不能直接修改币种；请新建账户替代。',
       BANK_ACCOUNT_CURRENCY_MISMATCH: '所选银行账户币种与单据币种不一致。',
       BANK_ACCOUNT_DISABLED: '所选银行账户已停用。',
-      BANK_ACCOUNT_DEFAULT_CONFLICT: '默认账户状态无效或已被其他会话修改，请刷新后重新选择默认账户。',
+      BANK_ACCOUNT_DEFAULT_CONFLICT:
+        '默认账户状态无效或已被其他会话修改，请刷新后重新选择默认账户。',
       BANK_ACCOUNT_DEFAULT_REQUIRED: '创建单据前请选择该单据币种下的银行账户。',
       BANK_ACCOUNT_MISSING: '当前单据币种没有可用银行账户，请先在公司资料中配置。',
       SETTINGS_SECRET_NOT_READABLE: '密钥类配置只能覆盖，不能读取原值。',

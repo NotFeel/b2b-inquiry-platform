@@ -7,6 +7,7 @@ import {
   builtinTemplateName,
   calculateDocumentTotals,
   createDefaultTemplateConfig,
+  isFieldVisible,
   parseTemplateConfig,
   renderCommercialDocumentHtml,
   templateConfigChecksum,
@@ -17,6 +18,7 @@ import type {
   CreateDocumentTemplateInput,
   DocumentTemplateListQuery,
   DocumentTemplatePreviewInput,
+  DocumentTemplateValidateInput,
   UpdateDocumentTemplateInput,
 } from '@b2b/validation';
 import { Prisma, type DocumentTemplate, type DocumentTemplateVersion } from '@b2b/database';
@@ -42,6 +44,7 @@ export class DocumentTemplatesService {
     const where: Prisma.DocumentTemplateWhereInput = {
       ...(query.type === 'all' ? {} : { documentType: query.type }),
       ...(query.status === 'all' ? {} : { status: query.status }),
+      ...(query.locale ? { locale: query.locale } : {}),
       ...(query.q
         ? {
             OR: [
@@ -55,7 +58,7 @@ export class DocumentTemplatesService {
       this.prisma.documentTemplate.count({ where }),
       this.prisma.documentTemplate.findMany({
         where,
-        orderBy: [{ documentType: 'asc' }, { updatedAt: 'desc' }],
+        orderBy: [{ documentType: 'asc' }, { updatedAt: 'desc' }, { id: 'asc' }],
         skip: (query.page - 1) * query.pageSize,
         take: query.pageSize,
         include: { versions: { orderBy: { version: 'desc' }, take: 20 } },
@@ -80,7 +83,9 @@ export class DocumentTemplatesService {
         ...(type ? { documentType: type } : {}),
       },
       orderBy: [{ isDefault: 'desc' }, { updatedAt: 'desc' }],
-      include: { versions: { where: { status: 'PUBLISHED' }, orderBy: { version: 'desc' }, take: 1 } },
+      include: {
+        versions: { where: { status: 'PUBLISHED' }, orderBy: { version: 'desc' }, take: 1 },
+      },
     });
     return rows
       .filter((row) => row.versions.length > 0)
@@ -123,16 +128,15 @@ export class DocumentTemplatesService {
   }
 
   async create(input: CreateDocumentTemplateInput, actorId: string, requestId: string) {
+    if (input.isDefault) {
+      throw ApiError.validation(
+        'Publish the template first, then set it as the default for its document type and language.',
+      );
+    }
     const config = this.buildConfig(input, actorId);
     const code = `${input.documentType.toLowerCase()}-${randomUUID().slice(0, 12)}`;
-    const template = await this.prisma.$transaction(async (transaction) => {
-      if (input.isDefault) {
-        await transaction.documentTemplate.updateMany({
-          where: { documentType: input.documentType, isDefault: true },
-          data: { isDefault: false },
-        });
-      }
-      return transaction.documentTemplate.create({
+    const template = await this.prisma.$transaction(async (transaction) =>
+      transaction.documentTemplate.create({
         data: {
           code,
           name: input.name,
@@ -147,8 +151,8 @@ export class DocumentTemplatesService {
           createdById: actorId,
           updatedById: actorId,
         },
-      });
-    });
+      }),
+    );
     await this.audit.record({
       actorId,
       action: 'document_template.created',
@@ -171,6 +175,12 @@ export class DocumentTemplatesService {
       );
     }
     const currentConfig = parseTemplateConfig(existing.draftConfig);
+    const targetStatus = input.status ?? existing.status;
+    if (input.isDefault === true && targetStatus !== 'ACTIVE') {
+      throw ApiError.validation(
+        'Only an active template can be set as the default for its document type and language.',
+      );
+    }
     const config = input.config
       ? parseTemplateConfig({
           ...input.config,
@@ -191,7 +201,12 @@ export class DocumentTemplatesService {
     const updated = await this.prisma.$transaction(async (transaction) => {
       if (input.isDefault === true) {
         await transaction.documentTemplate.updateMany({
-          where: { documentType: existing.documentType, isDefault: true, id: { not: id } },
+          where: {
+            documentType: existing.documentType,
+            locale: input.locale ?? existing.locale,
+            isDefault: true,
+            id: { not: id },
+          },
           data: { isDefault: false },
         });
       }
@@ -201,7 +216,11 @@ export class DocumentTemplatesService {
           ...(input.name !== undefined ? { name: input.name } : {}),
           ...(input.locale !== undefined ? { locale: input.locale } : {}),
           ...(input.description !== undefined ? { description: input.description } : {}),
-          ...(input.isDefault !== undefined ? { isDefault: input.isDefault } : {}),
+          ...(targetStatus !== 'ACTIVE'
+            ? { isDefault: false }
+            : input.isDefault !== undefined
+              ? { isDefault: input.isDefault }
+              : {}),
           ...(input.status !== undefined ? { status: input.status } : {}),
           paperSize: config.page.size,
           orientation: config.page.orientation,
@@ -221,10 +240,95 @@ export class DocumentTemplatesService {
     return this.detail(updated.id);
   }
 
-  async validateTemplate(id: string) {
+  /**
+   * Permanently removes a mistaken draft only. Published history and issued
+   * documents are protected by both this transaction and RESTRICT foreign keys.
+   */
+  async remove(id: string, actorId: string, requestId: string) {
+    let deleted: {
+      id: string;
+      code: string;
+      name: string;
+      documentType: CommercialDocumentType;
+      locale: string;
+    };
+    try {
+      deleted = await this.prisma.$transaction(async (transaction) => {
+        const template = await transaction.documentTemplate.findUnique({
+          where: { id },
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            documentType: true,
+            locale: true,
+            status: true,
+            _count: { select: { versions: true, documents: true } },
+          },
+        });
+        if (!template) {
+          throw new ApiError(ERROR_CODES.documentTemplateNotFound, 'Document template not found.');
+        }
+        if (template.status !== 'DRAFT' || template._count.versions > 0) {
+          throw new ApiError(
+            ERROR_CODES.documentTemplateNotDeletable,
+            'Only an unpublished draft without version history can be deleted.',
+          );
+        }
+        if (template._count.documents > 0) {
+          throw new ApiError(
+            ERROR_CODES.documentTemplateInUse,
+            'This template is referenced by a PI/CI document and cannot be deleted.',
+          );
+        }
+        await transaction.documentTemplate.delete({ where: { id } });
+        return template;
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError) {
+        if (error.code === 'P2003' || error.code === 'P2014') {
+          throw new ApiError(
+            ERROR_CODES.documentTemplateInUse,
+            'This template is referenced by another record and cannot be deleted.',
+          );
+        }
+        if (error.code === 'P2025') {
+          throw new ApiError(ERROR_CODES.documentTemplateNotFound, 'Document template not found.');
+        }
+      }
+      throw error;
+    }
+
+    await this.audit.record({
+      actorId,
+      action: 'document_template.deleted',
+      entityType: 'DocumentTemplate',
+      entityId: deleted.id,
+      requestId,
+      metadata: {
+        templateId: deleted.id,
+        code: deleted.code,
+        name: deleted.name,
+        documentType: deleted.documentType,
+        locale: deleted.locale,
+      },
+    });
+    return { deleted: true as const };
+  }
+
+  async validateTemplate(id: string, input: DocumentTemplateValidateInput = {}) {
     const template = await this.prisma.documentTemplate.findUnique({ where: { id } });
     if (!template) throw ApiError.notFound('Document template not found.');
-    return { data: this.validationReport(template) };
+    const config = input.config
+      ? parseTemplateConfig(input.config)
+      : parseTemplateConfig(template.draftConfig);
+    return {
+      data: this.validationReport(
+        config,
+        input.documentType ?? template.documentType,
+        input.locale ?? template.locale,
+      ),
+    };
   }
 
   async preview(id: string, input: DocumentTemplatePreviewInput) {
@@ -257,6 +361,17 @@ export class DocumentTemplatesService {
     const nextVersion = (template.versions[0]?.version ?? 0) + 1;
     const checksum = templateConfigChecksum(config);
     const published = await this.prisma.$transaction(async (transaction) => {
+      if (template.isDefault) {
+        await transaction.documentTemplate.updateMany({
+          where: {
+            documentType: template.documentType,
+            locale: template.locale,
+            isDefault: true,
+            id: { not: template.id },
+          },
+          data: { isDefault: false },
+        });
+      }
       const version = await transaction.documentTemplateVersion.create({
         data: {
           templateId: template.id,
@@ -348,7 +463,9 @@ export class DocumentTemplatesService {
     const template = await this.prisma.documentTemplate.findFirst({
       where: { documentType, locale, status: 'ACTIVE', currentVersionId: { not: null } },
       orderBy: [{ isDefault: 'desc' }, { updatedAt: 'desc' }],
-      include: { versions: { where: { status: 'PUBLISHED' }, orderBy: { version: 'desc' }, take: 1 } },
+      include: {
+        versions: { where: { status: 'PUBLISHED' }, orderBy: { version: 'desc' }, take: 1 },
+      },
     });
     const version = template?.versions[0];
     if (!template || !version) return null;
@@ -374,7 +491,7 @@ export class DocumentTemplatesService {
     if (!template) {
       try {
         const anyDefault = await this.prisma.documentTemplate.findFirst({
-          where: { documentType, isDefault: true },
+          where: { documentType, locale: templateLocale, isDefault: true },
           select: { id: true },
         });
         template = await this.prisma.documentTemplate.create({
@@ -420,7 +537,9 @@ export class DocumentTemplatesService {
     });
     await this.audit.record({
       actorId,
-      action: existingVersion ? 'document_template.builtin_reused' : 'document_template.builtin_created',
+      action: existingVersion
+        ? 'document_template.builtin_reused'
+        : 'document_template.builtin_created',
       entityType: 'DocumentTemplate',
       entityId: updated.id,
       requestId: requestId ?? null,
@@ -454,17 +573,11 @@ export class DocumentTemplatesService {
     return config;
   }
 
-  private validationReport(template: DocumentTemplate) {
-    let config: DocumentTemplateConfig;
-    try {
-      config = parseTemplateConfig(template.draftConfig);
-    } catch (error) {
-      return {
-        valid: false,
-        errors: [error instanceof Error ? error.message : 'Invalid template configuration.'],
-        warnings: [],
-      };
-    }
+  private validationReport(
+    config: DocumentTemplateConfig,
+    documentType: CommercialDocumentType,
+    locale: string,
+  ) {
     const visibleFields = config.sections
       .filter((section) => section.visible)
       .flatMap((section) => section.fields.filter((field) => field.visible));
@@ -475,18 +588,26 @@ export class DocumentTemplatesService {
     if (!visibleFields.some((field) => field.key.startsWith('totals.'))) {
       warnings.push('totals.missing');
     }
-    if (!config.itemColumns.some((column) => column.key === 'items.description' && column.visible)) {
+    if (
+      !config.itemColumns.some((column) => column.key === 'items.description' && column.visible)
+    ) {
       warnings.push('items.description.missing');
     }
     if (!config.itemColumns.some((column) => column.key === 'items.amount' && column.visible)) {
       warnings.push('items.amount.missing');
     }
+    if (!isFieldVisible(config, 'signature', 'signature.seller')) {
+      warnings.push('signature.seller.missing');
+    }
+    if (!isFieldVisible(config, 'signature', 'signature.buyer')) {
+      warnings.push('signature.buyer.missing');
+    }
     return {
       valid: true,
       errors: [],
       warnings,
-      documentType: template.documentType,
-      locale: template.locale,
+      documentType,
+      locale,
       fieldCount: visibleFields.length,
       columnCount: config.itemColumns.filter((column) => column.visible).length,
     };
@@ -619,7 +740,7 @@ export class DocumentTemplatesService {
       orientation: template.orientation,
       status: template.status,
       isDefault: template.isDefault,
-      draftConfig: template.draftConfig,
+      draftConfig: parseTemplateConfig(template.draftConfig),
       currentVersion: current
         ? {
             id: current.id,

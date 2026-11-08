@@ -265,6 +265,7 @@ export type IssueCommercialDocumentInput = z.infer<typeof issueCommercialDocumen
 export const documentTemplateListQuerySchema = paginationQuerySchema.extend({
   type: z.union([z.literal('all'), z.enum(COMMERCIAL_DOCUMENT_TYPES)]).default('all'),
   status: z.union([z.literal('all'), z.enum(DOCUMENT_TEMPLATE_STATUSES)]).default('all'),
+  locale: localeSchema.optional(),
   q: z.string().trim().max(120).optional(),
 });
 export type DocumentTemplateListQuery = z.infer<typeof documentTemplateListQuerySchema>;
@@ -305,6 +306,10 @@ export const documentTemplatePreviewSchema = z.object({
   locale: localeSchema.optional(),
 });
 export type DocumentTemplatePreviewInput = z.infer<typeof documentTemplatePreviewSchema>;
+
+/** Validate the editor's temporary configuration without persisting a draft. */
+export const documentTemplateValidateSchema = documentTemplatePreviewSchema;
+export type DocumentTemplateValidateInput = z.infer<typeof documentTemplateValidateSchema>;
 
 // ------------------------------------------------------ company / banks
 

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   createCommercialDocumentSchema,
+  documentTemplateListQuerySchema,
+  documentTemplateValidateSchema,
   updateCommercialDocumentSchema,
   updateOrderCustomerSnapshotSchema,
 } from './commercial-documents';
@@ -100,6 +102,23 @@ describe('documentTemplateConfigSchema', () => {
     const seller = config.sections.find((section) => section.key === 'seller');
     seller?.fields.push({ key: 'buyer.companyName', visible: true, required: false });
     expect(documentTemplateConfigSchema.safeParse(config).success).toBe(false);
+  });
+
+  it('accepts locale filtering and an unsaved validation payload', () => {
+    expect(
+      documentTemplateListQuerySchema.parse({
+        page: '1',
+        pageSize: '20',
+        locale: 'zh-CN',
+      }).locale,
+    ).toBe('zh-CN');
+    expect(
+      documentTemplateValidateSchema.safeParse({
+        documentType: 'CI',
+        locale: 'en-US',
+        config: createDefaultTemplateConfig('CI'),
+      }).success,
+    ).toBe(true);
   });
 });
 

@@ -102,6 +102,7 @@ export const REFERENCE_PERMISSIONS: { code: string; module: string; nameKey: str
   ['document_template.read', 'document-template'],
   ['document_template.create', 'document-template'],
   ['document_template.update', 'document-template'],
+  ['document_template.delete', 'document-template'],
   ['document_template.publish', 'document-template'],
   ['company_profile.manage', 'company-profile'],
   ['bank_account.manage', 'company-profile'],

@@ -1,7 +1,16 @@
 import { amountInWords as generateAmountInWords } from './amount-in-words';
 import { documentCurrencyScale, formatDocumentAmount } from './totals';
-import { DOCUMENT_ITEM_COLUMN_LABELS, defaultFieldLabel } from './field-catalog';
-import { visibleSections, type DocumentTemplateConfig } from './template-config';
+import {
+  DOCUMENT_ITEM_COLUMN_LABELS,
+  defaultFieldLabel,
+  type DocumentSectionKey,
+} from './field-catalog';
+import {
+  isFieldVisible,
+  templateSectionField,
+  visibleSections,
+  type DocumentTemplateConfig,
+} from './template-config';
 
 export interface DocumentAddressSnapshot {
   recipient?: string | null;
@@ -154,9 +163,7 @@ function text(value: unknown): string {
   return String(value).trim();
 }
 
-export function formatDocumentAddress(
-  address: DocumentAddressSnapshot | null | undefined,
-): string {
+export function formatDocumentAddress(address: DocumentAddressSnapshot | null | undefined): string {
   if (!address) return '';
   const lines = [
     text(address.companyName),
@@ -169,9 +176,7 @@ export function formatDocumentAddress(
   return lines.join('\n');
 }
 
-export function documentFieldValueMap(
-  data: CommercialDocumentRenderData,
-): Record<string, string> {
+export function documentFieldValueMap(data: CommercialDocumentRenderData): Record<string, string> {
   const buyerAddress = formatDocumentAddress(data.buyer.billingAddress ?? data.buyer.address);
   const consigneeAddress = formatDocumentAddress(
     data.consignee?.shippingAddress ?? data.consignee?.address,
@@ -289,6 +294,17 @@ function amountCell(value: string, currency: string): string {
   return `<span class="amount">${escapeHtml(formatted)}</span>`;
 }
 
+function configuredFieldLabel(
+  config: DocumentTemplateConfig,
+  sectionKey: DocumentSectionKey,
+  fieldKey: string,
+  locale: string,
+): string {
+  return (
+    templateSectionField(config, sectionKey, fieldKey)?.label || defaultFieldLabel(fieldKey, locale)
+  );
+}
+
 /**
  * Renders the complete standalone HTML used for preview and PDF conversion.
  *
@@ -310,11 +326,13 @@ export function renderCommercialDocumentHtml(
   const margins = `${page.marginMm.top}mm ${page.marginMm.right}mm ${page.marginMm.bottom}mm ${page.marginMm.left}mm`;
   const currencySymbol = CURRENCY_SYMBOLS[data.currency] ?? '';
   const documentTitle =
-    config.header.title ||
-    (data.documentType === 'CI' ? 'COMMERCIAL INVOICE' : 'PROFORMA INVOICE');
+    config.header.title || (data.documentType === 'CI' ? 'COMMERCIAL INVOICE' : 'PROFORMA INVOICE');
+  const documentNumberVisible = isFieldVisible(config, 'invoice', 'document.number');
+  const currencyFieldVisible = isFieldVisible(config, 'trade', 'trade.currency');
 
   const partySections = new Set(['buyer', 'consignee', 'notifyParty']);
   const detailSections = new Set(['invoice', 'trade', 'shipping', 'payment']);
+  const headerMetaKeys = new Set(['document.number', 'document.revision', 'trade.currency']);
 
   const sellerSection = sections.find((section) => section.key === 'seller');
   const sellerFields = sellerSection
@@ -346,6 +364,7 @@ export function renderCommercialDocumentHtml(
     .filter((section) => detailSections.has(section.key))
     .map((section) => {
       const fields = section.fields
+        .filter((field) => !headerMetaKeys.has(field.key))
         .map((field) => {
           const value = values[field.key];
           if (!value) return '';
@@ -381,116 +400,153 @@ export function renderCommercialDocumentHtml(
     })
     .join('');
 
-  const totalsSectionConfig = config.sections.find((section) => section.key === 'totals');
-  const totalsVisible = totalsSectionConfig ? totalsSectionConfig.visible : true;
   const totalsFieldVisible = (key: string): boolean => {
-    if (!totalsSectionConfig) return true;
-    const field = totalsSectionConfig.fields.find((candidate) => candidate.key === key);
-    return field ? field.visible : true;
+    return isFieldVisible(config, 'totals', key);
   };
   const totalsLabel = (key: string, fallback: string): string => {
-    const field = totalsSectionConfig?.fields.find((candidate) => candidate.key === key);
+    const field = templateSectionField(config, 'totals', key);
     return field?.label || fallback;
   };
   const words = generateAmountInWords(data.totals.totalAmount, data.currency, locale);
   const totalsRows: string[] = [];
-  if (totalsVisible) {
-    if (totalsFieldVisible('totals.subtotal')) {
-      totalsRows.push(
-        `<tr><td>${escapeHtml(totalsLabel('totals.subtotal', zh ? '商品金额合计' : 'Subtotal'))}</td><td class="numeric">${amountCell(data.totals.subtotal, data.currency)}</td></tr>`,
-      );
-    }
-    if (totalsFieldVisible('totals.discount') && Number(data.totals.discountAmount) > 0) {
-      totalsRows.push(
-        `<tr><td>${escapeHtml(totalsLabel('totals.discount', zh ? '折扣' : 'Discount'))}</td><td class="numeric">- ${amountCell(data.totals.discountAmount, data.currency)}</td></tr>`,
-      );
-    }
-    if (totalsFieldVisible('totals.freight') && Number(data.totals.freightAmount) > 0) {
-      totalsRows.push(
-        `<tr><td>${escapeHtml(totalsLabel('totals.freight', zh ? '运费' : 'Freight'))}</td><td class="numeric">${amountCell(data.totals.freightAmount, data.currency)}</td></tr>`,
-      );
-    }
-    if (totalsFieldVisible('totals.insurance') && Number(data.totals.insuranceAmount) > 0) {
-      totalsRows.push(
-        `<tr><td>${escapeHtml(totalsLabel('totals.insurance', zh ? '保险' : 'Insurance'))}</td><td class="numeric">${amountCell(data.totals.insuranceAmount, data.currency)}</td></tr>`,
-      );
-    }
-    if (totalsFieldVisible('totals.otherCharges') && Number(data.totals.otherCharges) > 0) {
-      totalsRows.push(
-        `<tr><td>${escapeHtml(totalsLabel('totals.otherCharges', zh ? '其他费用' : 'Other charges'))}</td><td class="numeric">${amountCell(data.totals.otherCharges, data.currency)}</td></tr>`,
-      );
-    }
-    if (totalsFieldVisible('totals.grandTotal')) {
-      totalsRows.push(
-        `<tr class="grand-total"><td>${escapeHtml(totalsLabel('totals.grandTotal', zh ? '合计' : 'Grand Total'))} ${escapeHtml(currencySymbol)} ${escapeHtml(data.currency)}</td><td class="numeric">${amountCell(data.totals.totalAmount, data.currency)}</td></tr>`,
-      );
-    }
-    if (totalsFieldVisible('totals.amountInWords')) {
-      totalsRows.push(
-        `<tr><td colspan="2" class="amount-words"><span class="label">${escapeHtml(totalsLabel('totals.amountInWords', zh ? '金额大写' : 'Amount in words'))}:</span> ${escapeHtml(words)}</td></tr>`,
-      );
-    }
+  if (isFieldVisible(config, 'totals', 'totals.subtotal')) {
+    totalsRows.push(
+      `<tr><td>${escapeHtml(totalsLabel('totals.subtotal', zh ? '商品金额合计' : 'Subtotal'))}</td><td class="numeric">${amountCell(data.totals.subtotal, data.currency)}</td></tr>`,
+    );
+  }
+  if (totalsFieldVisible('totals.discount') && Number(data.totals.discountAmount) > 0) {
+    totalsRows.push(
+      `<tr><td>${escapeHtml(totalsLabel('totals.discount', zh ? '折扣' : 'Discount'))}</td><td class="numeric">- ${amountCell(data.totals.discountAmount, data.currency)}</td></tr>`,
+    );
+  }
+  if (totalsFieldVisible('totals.freight') && Number(data.totals.freightAmount) > 0) {
+    totalsRows.push(
+      `<tr><td>${escapeHtml(totalsLabel('totals.freight', zh ? '运费' : 'Freight'))}</td><td class="numeric">${amountCell(data.totals.freightAmount, data.currency)}</td></tr>`,
+    );
+  }
+  if (totalsFieldVisible('totals.insurance') && Number(data.totals.insuranceAmount) > 0) {
+    totalsRows.push(
+      `<tr><td>${escapeHtml(totalsLabel('totals.insurance', zh ? '保险' : 'Insurance'))}</td><td class="numeric">${amountCell(data.totals.insuranceAmount, data.currency)}</td></tr>`,
+    );
+  }
+  if (totalsFieldVisible('totals.otherCharges') && Number(data.totals.otherCharges) > 0) {
+    totalsRows.push(
+      `<tr><td>${escapeHtml(totalsLabel('totals.otherCharges', zh ? '其他费用' : 'Other charges'))}</td><td class="numeric">${amountCell(data.totals.otherCharges, data.currency)}</td></tr>`,
+    );
+  }
+  if (totalsFieldVisible('totals.grandTotal')) {
+    totalsRows.push(
+      `<tr class="grand-total"><td>${escapeHtml(totalsLabel('totals.grandTotal', zh ? '合计' : 'Grand Total'))}${
+        currencyFieldVisible ? ` ${escapeHtml(currencySymbol)} ${escapeHtml(data.currency)}` : ''
+      }</td><td class="numeric">${amountCell(data.totals.totalAmount, data.currency)}</td></tr>`,
+    );
+  }
+  if (totalsFieldVisible('totals.amountInWords')) {
+    totalsRows.push(
+      `<tr><td colspan="2" class="amount-words"><span class="label">${escapeHtml(totalsLabel('totals.amountInWords', zh ? '金额大写' : 'Amount in words'))}:</span> ${escapeHtml(words)}</td></tr>`,
+    );
   }
 
-  const notesSection = data.notes
-    ? `<section class="block notes"><h3>${zh ? '备注' : 'Notes'}</h3><div class="pre">${escapeHtml(data.notes)}</div></section>`
-    : '';
-  const paymentNotice = config.terms.paymentNotice
-    ? `<div class="notice"><strong>${zh ? '付款说明' : 'Payment notice'}:</strong> ${escapeHtml(config.terms.paymentNotice)}</div>`
-    : '';
-  const shipmentNotice = config.terms.shipmentNotice
-    ? `<div class="notice"><strong>${zh ? '运输说明' : 'Shipment notice'}:</strong> ${escapeHtml(config.terms.shipmentNotice)}</div>`
-    : '';
+  const notes = text(data.notes);
+  const notesTitle =
+    config.notes.title ||
+    config.notes.titles?.[locale as keyof typeof config.notes.titles] ||
+    (zh ? '备注' : 'Notes');
+  const notesSection =
+    config.notes.visible && notes
+      ? `<section class="block notes"><h3>${escapeHtml(notesTitle)}</h3><div class="pre">${escapeHtml(notes)}</div></section>`
+      : '';
+  const paymentNotice =
+    config.terms.showPaymentNotice && config.terms.paymentNotice
+      ? `<div class="notice"><strong>${zh ? '付款说明' : 'Payment notice'}:</strong> ${escapeHtml(config.terms.paymentNotice)}</div>`
+      : '';
+  const shipmentNotice =
+    config.terms.showShipmentNotice && config.terms.shipmentNotice
+      ? `<div class="notice"><strong>${zh ? '运输说明' : 'Shipment notice'}:</strong> ${escapeHtml(config.terms.shipmentNotice)}</div>`
+      : '';
   const declarationSection = sections.find((section) => section.key === 'declaration');
   const declarationFields =
     declarationSection?.fields
+      .filter((field) => field.key !== 'declaration.authenticity')
       .map((field) => {
         const value = values[field.key];
         if (!value) return '';
         return `<div class="notice"><strong>${escapeHtml(field.label)}:</strong> <span class="pre">${escapeHtml(value)}</span></div>`;
       })
       .join('') ?? '';
-  const authenticity = config.terms.authenticityDeclaration
-    ? `<div class="notice">${escapeHtml(config.terms.authenticityDeclaration)}</div>`
-    : '';
-  const signatureSection = sections.find((section) => section.key === 'signature');
+  const authenticityText =
+    config.terms.authenticityDeclaration || values['declaration.authenticity'] || '';
+  const authenticity =
+    config.terms.showAuthenticityDeclaration &&
+    isFieldVisible(config, 'declaration', 'declaration.authenticity') &&
+    authenticityText
+      ? `<div class="notice">${escapeHtml(authenticityText)}</div>`
+      : '';
   const stamp =
-    signatureSection && config.header.showLogo && assets.stampDataUri
+    isFieldVisible(config, 'signature', 'signature.seller') &&
+    config.header.showStamp &&
+    assets.stampDataUri
       ? `<img class="stamp" src="${escapeHtml(assets.stampDataUri)}" alt="" />`
       : '';
   const logo =
     config.header.showLogo && assets.logoDataUri
       ? `<img class="logo" src="${escapeHtml(assets.logoDataUri)}" alt="" />`
       : '';
-  const signatureBlock = signatureSection
-    ? `<section class="signature">
-        <div class="signature-cell">
+  const sellerSignature = isFieldVisible(config, 'signature', 'signature.seller')
+    ? `<div class="signature-cell">
           <div class="signature-line">${escapeHtml(
-            signatureSection.fields.find((field) => field.key === 'signature.seller')?.label ??
-              (zh ? '卖方签字 / 盖章' : 'Seller signature / stamp'),
+            configuredFieldLabel(config, 'signature', 'signature.seller', locale),
           )}</div>
           ${stamp}
           <div class="signature-name">${escapeHtml(values['signature.seller'] ?? '')}</div>
-        </div>
-        <div class="signature-cell">
+        </div>`
+    : '';
+  const buyerSignature = isFieldVisible(config, 'signature', 'signature.buyer')
+    ? `<div class="signature-cell">
           <div class="signature-line">${escapeHtml(
-            signatureSection.fields.find((field) => field.key === 'signature.buyer')?.label ??
-              (zh ? '买方签字' : 'Buyer signature'),
+            configuredFieldLabel(config, 'signature', 'signature.buyer', locale),
           )}</div>
           <div class="signature-name">${escapeHtml(values['buyer.companyName'] ?? '')}</div>
-        </div>
+        </div>`
+    : '';
+  const signatureBlock =
+    sellerSignature || buyerSignature
+      ? `<section class="signature">
+        ${sellerSignature}
+        ${buyerSignature}
       </section>`
-    : '';
+      : '';
 
-  const footerText = config.footer.text
-    ? `<div class="footer-text">${escapeHtml(config.footer.text)}</div>`
-    : '';
+  const footerText =
+    config.footer.showText && config.footer.text
+      ? `<div class="footer-text">${escapeHtml(config.footer.text)}</div>`
+      : '';
+  const headerMeta = [
+    ['invoice', 'document.number'],
+    ['invoice', 'document.revision'],
+    ['trade', 'trade.currency'],
+  ]
+    .filter(([section, key]) => isFieldVisible(config, section as DocumentSectionKey, key!))
+    .map(
+      ([section, key]) =>
+        `<div><span class="label">${escapeHtml(
+          configuredFieldLabel(config, section as DocumentSectionKey, key!, locale),
+        )}:</span> ${escapeHtml(values[key!] ?? '')}</div>`,
+    )
+    .join('');
+  const itemTable =
+    columns.length > 0 && data.items.length > 0
+      ? `<table class="items">
+    <thead><tr>${headerCells}</tr></thead>
+    <tbody>${itemRows}</tbody>
+  </table>`
+      : '';
 
   return `<!doctype html>
 <html lang="${escapeHtml(locale)}">
 <head>
 <meta charset="utf-8" />
-<title>${escapeHtml(documentTitle)} ${escapeHtml(data.documentNo)}</title>
+<title>${escapeHtml(documentTitle)}${documentNumberVisible ? ` ${escapeHtml(data.documentNo)}` : ''}</title>
 <style>
   @page { size: ${pageSize}; margin: ${margins}; }
   * { box-sizing: border-box; }
@@ -552,25 +608,20 @@ export function renderCommercialDocumentHtml(
       ${config.header.showDocumentType ? `<div class="doctype">${escapeHtml(data.documentType)}</div>` : ''}
       <h1>${escapeHtml(documentTitle)}</h1>
       ${config.header.subtitle ? `<div class="pre">${escapeHtml(config.header.subtitle)}</div>` : ''}
-      <div><span class="label">${zh ? '单据编号' : 'Document No.'}:</span> ${escapeHtml(data.documentNo)}</div>
-      <div><span class="label">${zh ? '版本' : 'Revision'}:</span> R${data.revisionNo}</div>
-      <div><span class="label">${zh ? '币种' : 'Currency'}:</span> ${escapeHtml(data.currency)}</div>
+      ${headerMeta}
     </div>
   </header>
 
   ${partyBlocks ? `<section class="parties">${partyBlocks}</section>` : ''}
   ${detailBlocks ? `<section class="details">${detailBlocks}</section>` : ''}
 
-  <table class="items">
-    <thead><tr>${headerCells}</tr></thead>
-    <tbody>${itemRows}</tbody>
-  </table>
+  ${itemTable}
 
   ${totalsRows.length > 0 ? `<table class="totals">${totalsRows.join('')}</table>` : ''}
 
   ${notesSection}
   ${paymentNotice || shipmentNotice ? `<section class="block">${paymentNotice}${shipmentNotice}</section>` : ''}
-  ${(declarationFields || authenticity || config.terms.authenticityDeclaration) ? `<section class="block declaration">${declarationFields}${authenticity}</section>` : ''}
+  ${declarationFields || authenticity ? `<section class="block declaration">${declarationFields}${authenticity}</section>` : ''}
   ${signatureBlock}
   ${footerText}
   <div class="confidential">${zh ? '商业单据 — 未经授权不得传播。' : 'Commercial document — confidential.'}</div>

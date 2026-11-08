@@ -36,6 +36,7 @@ describe('commercial document endpoint authorization metadata', () => {
     ['validate', Permission.documentTemplateRead],
     ['preview', Permission.documentTemplateRead],
     ['publish', Permission.documentTemplatePublish],
+    ['remove', Permission.documentTemplateDelete],
     ['versions', Permission.documentTemplateRead],
   ])('template %s is protected by %s', (method, permission) => {
     expect(permissions(DocumentTemplatesController.prototype, method)).toEqual([permission]);
@@ -58,8 +59,9 @@ describe('commercial document endpoint authorization metadata', () => {
   });
 
   it('combined company creation requires both company and bank permissions', () => {
-    expect(
-      permissions(CompanyProfilesController.prototype, 'createWithBankAccounts'),
-    ).toEqual([Permission.companyProfileManage, Permission.bankAccountManage]);
+    expect(permissions(CompanyProfilesController.prototype, 'createWithBankAccounts')).toEqual([
+      Permission.companyProfileManage,
+      Permission.bankAccountManage,
+    ]);
   });
 });

@@ -1,13 +1,15 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import {
   createDocumentTemplateSchema,
   documentTemplateListQuerySchema,
   documentTemplatePreviewSchema,
+  documentTemplateValidateSchema,
   idParamSchema,
   updateDocumentTemplateSchema,
   type CreateDocumentTemplateInput,
   type DocumentTemplateListQuery,
   type DocumentTemplatePreviewInput,
+  type DocumentTemplateValidateInput,
   type UpdateDocumentTemplateInput,
 } from '@b2b/validation';
 import { CurrentActor, Permission, RequestId, RequirePermissions } from '../../common/decorators';
@@ -56,19 +58,17 @@ export class DocumentTemplatesController {
     @RequestId() requestId: string,
   ) {
     return {
-      data: await this.templates.update(
-        idParamSchema.parse({ id }).id,
-        body,
-        actor.id,
-        requestId,
-      ),
+      data: await this.templates.update(idParamSchema.parse({ id }).id, body, actor.id, requestId),
     };
   }
 
   @RequirePermissions(Permission.documentTemplateRead)
   @Post(':id/validate')
-  async validate(@Param('id') id: string) {
-    return this.templates.validateTemplate(idParamSchema.parse({ id }).id);
+  async validate(
+    @Param('id') id: string,
+    @Body(zodPipe(documentTemplateValidateSchema)) body: DocumentTemplateValidateInput,
+  ) {
+    return this.templates.validateTemplate(idParamSchema.parse({ id }).id, body);
   }
 
   @RequirePermissions(Permission.documentTemplateRead)
@@ -88,11 +88,19 @@ export class DocumentTemplatesController {
     @RequestId() requestId: string,
   ) {
     return {
-      data: await this.templates.publish(
-        idParamSchema.parse({ id }).id,
-        actor.id,
-        requestId,
-      ),
+      data: await this.templates.publish(idParamSchema.parse({ id }).id, actor.id, requestId),
+    };
+  }
+
+  @RequirePermissions(Permission.documentTemplateDelete)
+  @Delete(':id')
+  async remove(
+    @Param('id') id: string,
+    @CurrentActor() actor: AuthenticatedActor,
+    @RequestId() requestId: string,
+  ) {
+    return {
+      data: await this.templates.remove(idParamSchema.parse({ id }).id, actor.id, requestId),
     };
   }
 

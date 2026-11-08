@@ -289,6 +289,219 @@
   gap: var(--space-3);
 }
 
+.template-filters {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.5fr) repeat(3, minmax(140px, 0.75fr)) auto;
+  gap: var(--space-3);
+  align-items: end;
+}
+
+.template-filter-clear {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+}
+
+.template-editor {
+  overflow: hidden;
+}
+
+.template-editor-heading,
+.template-list-footer,
+.template-preview-meta,
+.template-danger-zone {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.template-primary-actions {
+  justify-content: flex-end;
+}
+
+.template-workspace-switch {
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.template-field-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: var(--space-3);
+}
+
+.template-field-card {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.template-field-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.template-field-card-head .mono {
+  overflow-wrap: anywhere;
+}
+
+.template-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
+}
+
+.template-field-card .checkbox-row,
+.template-toggle-grid .checkbox-row,
+.template-editor .checkbox-row {
+  min-height: 44px;
+}
+
+.template-name-cell {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 180px;
+}
+
+.template-list-footer {
+  margin-top: var(--space-4);
+}
+
+.template-list-footer .pagination {
+  flex: 1 1 540px;
+}
+
+.template-publish-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.template-publish-grid h4,
+.template-editor h4 {
+  margin: 0;
+}
+
+.template-danger-zone {
+  padding: var(--space-4);
+  border: 1px solid var(--color-danger, #b42318);
+  border-radius: var(--radius-md);
+  background: var(--color-danger-soft, #fef3f2);
+}
+
+.template-preview-workspace {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.template-preview-meta {
+  align-items: flex-start;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
+}
+
+.template-preview-meta p {
+  margin: var(--space-1) 0 0;
+}
+
+.template-preview-large {
+  min-height: 76dvh;
+}
+
+.template-preview-empty {
+  display: grid;
+  min-height: 360px;
+  place-items: center;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
+}
+
+.template-confirm-details {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.template-confirm-details > div {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: var(--space-2);
+}
+
+.template-confirm-details dt {
+  color: var(--color-text-muted);
+}
+
+.template-confirm-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.compact-form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 1099px) {
+  .template-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 767px) {
+  .template-filters,
+  .template-publish-grid,
+  .compact-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .template-filter-clear {
+    min-height: 0;
+  }
+
+  .template-editor-heading,
+  .template-primary-actions,
+  .template-danger-zone,
+  .template-preview-meta,
+  .template-list-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .template-primary-actions .btn,
+  .template-danger-zone .btn,
+  .template-row-actions .btn {
+    min-height: 44px;
+  }
+
+  .template-workspace-switch {
+    overflow-x: auto;
+  }
+
+  .template-field-card {
+    padding: var(--space-2);
+  }
+
+  .template-preview-large {
+    min-height: 70dvh;
+  }
+}
+
 .document-items-table input {
   min-width: 72px;
 }
