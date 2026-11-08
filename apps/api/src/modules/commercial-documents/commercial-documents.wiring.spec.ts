@@ -47,10 +47,19 @@ describe('commercial document endpoint authorization metadata', () => {
     ['create', Permission.companyProfileManage],
     ['update', Permission.companyProfileManage],
     ['remove', Permission.companyProfileManage],
+    ['removeAsset', Permission.companyProfileManage],
+    ['removeUploadedAsset', Permission.companyProfileManage],
     ['createBankAccount', Permission.bankAccountManage],
+    ['getBankAccount', Permission.bankAccountManage],
     ['updateBankAccount', Permission.bankAccountManage],
     ['removeBankAccount', Permission.bankAccountManage],
   ])('profile %s is protected by %s', (method, permission) => {
     expect(permissions(CompanyProfilesController.prototype, method)).toEqual([permission]);
+  });
+
+  it('combined company creation requires both company and bank permissions', () => {
+    expect(
+      permissions(CompanyProfilesController.prototype, 'createWithBankAccounts'),
+    ).toEqual([Permission.companyProfileManage, Permission.bankAccountManage]);
   });
 });

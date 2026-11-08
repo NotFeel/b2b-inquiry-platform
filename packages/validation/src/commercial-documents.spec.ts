@@ -67,9 +67,9 @@ describe('createCommercialDocumentSchema', () => {
       currency: 'usd',
     });
     expect(parsed.currency).toBe('USD');
-    expect(
-      createCommercialDocumentSchema.safeParse({ documentType: 'INVOICE' }).success,
-    ).toBe(false);
+    expect(createCommercialDocumentSchema.safeParse({ documentType: 'INVOICE' }).success).toBe(
+      false,
+    );
   });
 });
 
@@ -100,5 +100,71 @@ describe('documentTemplateConfigSchema', () => {
     const seller = config.sections.find((section) => section.key === 'seller');
     seller?.fields.push({ key: 'buyer.companyName', visible: true, required: false });
     expect(documentTemplateConfigSchema.safeParse(config).success).toBe(false);
+  });
+});
+
+describe('bank account schemas', () => {
+  const account = {
+    label: 'USD Main',
+    accountHolder: 'Example Co',
+    bankName: 'Bank of China',
+    bankAddress: '',
+    bankCountryCode: 'CN',
+    accountNumber: '1234567890',
+    swiftCode: 'BKCHCNBJ',
+    wireRoutingNumber: '',
+    achRoutingNumber: '',
+    currencyCode: 'USD',
+    isDefault: true,
+    enabled: true,
+    sortOrder: 0,
+  };
+
+  it('requires currency and bank country for a new account', async () => {
+    const { createBankAccountWithoutCompanyIdSchema } = await import('./commercial-documents');
+    expect(createBankAccountWithoutCompanyIdSchema.safeParse(account).success).toBe(true);
+    expect(
+      createBankAccountWithoutCompanyIdSchema.safeParse({ ...account, currencyCode: undefined })
+        .success,
+    ).toBe(false);
+    expect(
+      createBankAccountWithoutCompanyIdSchema.safeParse({ ...account, bankCountryCode: undefined })
+        .success,
+    ).toBe(false);
+  });
+
+  it('rejects a disabled default account', async () => {
+    const { createBankAccountWithoutCompanyIdSchema } = await import('./commercial-documents');
+    const result = createBankAccountWithoutCompanyIdSchema.safeParse({
+      ...account,
+      enabled: false,
+      isDefault: true,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('allows one default per currency in combined company creation', async () => {
+    const { createCompanyProfileWithBankAccountsSchema } = await import('./commercial-documents');
+    const base = {
+      company: {
+        code: 'example',
+        companyName: 'Example Co',
+        address,
+        isDefault: false,
+        enabled: true,
+      },
+    };
+    expect(
+      createCompanyProfileWithBankAccountsSchema.safeParse({
+        ...base,
+        bankAccounts: [account, { ...account, currencyCode: 'EUR', isDefault: true }],
+      }).success,
+    ).toBe(true);
+    expect(
+      createCompanyProfileWithBankAccountsSchema.safeParse({
+        ...base,
+        bankAccounts: [account, { ...account, label: 'USD Backup' }],
+      }).success,
+    ).toBe(false);
   });
 });

@@ -72,9 +72,7 @@ describe('CommercialDocumentsService download authorization', () => {
   });
 
   it('refuses an issued document whose PDF is still rendering', async () => {
-    findUnique.mockResolvedValue(
-      issuedDocument({ pdfFileKey: null, pdfSizeBytes: null }),
-    );
+    findUnique.mockResolvedValue(issuedDocument({ pdfFileKey: null, pdfSizeBytes: null }));
     await expect(service.download(DOC_ID, 'actor-1', 'request-1')).rejects.toMatchObject({
       code: ERROR_CODES.commercialDocumentPdfUnavailable,
     });
@@ -93,26 +91,102 @@ describe('CommercialDocumentsService state guards', () => {
   it('rejects editing an issued document', async () => {
     findUnique.mockResolvedValue({ ...issuedDocument(), items: [] });
     await expect(
-      service.update(
-        DOC_ID,
-        { version: 1 },
-        'actor-1',
-        'request-1',
-      ),
+      service.update(DOC_ID, { version: 1 }, 'actor-1', 'request-1'),
     ).rejects.toBeInstanceOf(ApiError);
   });
 
   it('rejects a revision when the source is still a draft', async () => {
     findUnique.mockResolvedValue({ ...issuedDocument({ status: 'DRAFT' }), items: [] });
-    await expect(
-      service.createRevision(DOC_ID, 'actor-1', 'request-1'),
-    ).rejects.toMatchObject({ code: ERROR_CODES.commercialDocumentStateConflict });
+    await expect(service.createRevision(DOC_ID, 'actor-1', 'request-1')).rejects.toMatchObject({
+      code: ERROR_CODES.commercialDocumentStateConflict,
+    });
   });
 
   it('rejects cancelling a superseded revision', async () => {
     findUnique.mockResolvedValue(issuedDocument({ status: 'SUPERSEDED' }));
-    await expect(
-      service.cancel(DOC_ID, {}, 'actor-1', 'request-1'),
-    ).rejects.toMatchObject({ code: ERROR_CODES.commercialDocumentStateConflict });
+    await expect(service.cancel(DOC_ID, {}, 'actor-1', 'request-1')).rejects.toMatchObject({
+      code: ERROR_CODES.commercialDocumentStateConflict,
+    });
+  });
+});
+
+describe('CommercialDocumentsService bank account currency matching', () => {
+  const bankFindFirst = vi.fn();
+  const bankFindUnique = vi.fn();
+  const bankCount = vi.fn();
+  let service: CommercialDocumentsService;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    service = makeService({
+      bankAccountProfile: {
+        findFirst: bankFindFirst,
+        findUnique: bankFindUnique,
+        count: bankCount,
+      },
+    });
+    resolve = (
+      service as unknown as {
+        resolveBankAccount: (
+          companyProfileId: string | null,
+          bankAccountId: string | null,
+          currencyCode: string,
+        ) => Promise<unknown>;
+      }
+    ).resolveBankAccount.bind(service);
+  });
+
+  let resolve: (
+    companyProfileId: string | null,
+    bankAccountId: string | null,
+    currencyCode: string,
+  ) => Promise<unknown>;
+
+  it('auto-selects only an enabled default account in the document currency', async () => {
+    bankFindFirst.mockResolvedValue({ id: 'bank-usd', currencyCode: 'USD' });
+    const result = await resolve('company-1', null, 'USD');
+    expect(result).toMatchObject({ id: 'bank-usd' });
+    expect(bankFindFirst).toHaveBeenCalledWith({
+      where: {
+        companyProfileId: 'company-1',
+        currencyCode: 'USD',
+        enabled: true,
+        isDefault: true,
+      },
+    });
+  });
+
+  it('rejects a manually selected account in another currency', async () => {
+    bankFindUnique.mockResolvedValue({
+      id: 'bank-eur',
+      companyProfileId: 'company-1',
+      enabled: true,
+      currencyCode: 'EUR',
+    });
+    await expect(resolve('company-1', 'bank-eur', 'USD')).rejects.toMatchObject({
+      code: ERROR_CODES.bankAccountCurrencyMismatch,
+    });
+  });
+
+  it('rejects a disabled account even when the currency matches', async () => {
+    bankFindUnique.mockResolvedValue({
+      id: 'bank-usd',
+      companyProfileId: 'company-1',
+      enabled: false,
+      currencyCode: 'USD',
+    });
+    await expect(resolve('company-1', 'bank-usd', 'USD')).rejects.toMatchObject({
+      code: ERROR_CODES.bankAccountDisabled,
+    });
+  });
+
+  it('returns null instead of substituting another currency when no default exists', async () => {
+    bankFindFirst.mockResolvedValue(null);
+    await expect(resolve('company-1', null, 'USD')).resolves.toBeNull();
+    expect(bankFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ currencyCode: 'USD', isDefault: true }),
+      }),
+    );
   });
 });

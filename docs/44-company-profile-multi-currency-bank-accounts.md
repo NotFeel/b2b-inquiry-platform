@@ -8,7 +8,7 @@
 > 适用模块：Admin、API、Prisma、Dictionary、Commercial Documents  
 > 业务规则：已确认  
 > 技术细节：已确认  
-> 实施状态：尚未开始  
+> 实施状态：已实施（本地开发；生产迁移与部署待单独审批）
 > 文档提交状态：本次单文件提交
 
 ---
@@ -430,7 +430,7 @@ Company Profile
 
 地址 countryCode 使用 country 字典。
 
-Logo 和 Stamp 继续使用现有 Upload 与素材管理机制。
+Logo 和 Stamp 继续使用现有 Upload 与素材管理机制；页面展示预览，删除时登记物理删除任务（见 §22）。
 
 不重新实现对象存储。
 
@@ -1480,3 +1480,146 @@ DOC-44 不建设新的公司资料系统，而是在现有 CompanyProfile、Bank
 银行账户删除统一采用停用策略，避免历史商业单据资料丢失。
 
 本文件是已批准的正式实施规范，不代表代码已经修改或部署。
+
+---
+
+# 21. 实施记录（本地开发）
+
+## 21.1 数据库
+
+新增 migration：
+
+`database/prisma/migrations/20261107190000_company_bank_country_and_currency_defaults/migration.sql`
+
+- `bank_account_profiles.bankCountryCode VARCHAR(2) NULL`，兼容历史数据。
+- 历史空币种账户的 `isDefault` 自动清除（不猜测币种）。
+- 迁移前检测同一公司、同一币种重复默认账户；存在重复时阻止迁移。
+- 创建部分唯一索引：
+
+```sql
+CREATE UNIQUE INDEX uq_bank_account_default_per_currency
+ON bank_account_profiles ("companyProfileId", "currencyCode")
+WHERE "isDefault" = true AND "currencyCode" IS NOT NULL;
+```
+
+- 新增 `(companyProfileId, currencyCode, enabled)` 查询索引。
+- 本地数据验证：迁移前 2 个账户、0 个空币种默认账户、0 个重复默认；迁移后数量不变。
+- 回滚 SQL 已写入 migration 注释；生产回滚需单独审核。
+
+## 21.2 后端接口
+
+- `POST /admin/company-profiles/with-bank-accounts`：公司 + 初始银行账户同一事务；要求同时具备 `company_profile.manage` 与 `bank_account.manage`。
+- `GET /admin/bank-accounts/:id`：仅 `bank_account.manage` 返回完整账号资料。
+- `GET /admin/company-profiles`：银行账户仅返回安全摘要（脱敏账号、SWIFT 是否配置）。
+- `GET /admin/company-profiles/options`：PI/CI 仅使用安全账户摘要。
+- `POST /admin/bank-accounts`：新账户必须通过 `currency`、`country` 字典校验。
+- `PATCH /admin/bank-accounts/:id`：按币种维护默认账户；停用时强制 `isDefault=false`；改变已被单据使用账户的币种返回 `BANK_ACCOUNT_CURRENCY_IN_USE`。
+- `DELETE /admin/bank-accounts/:id`：改为停用，返回 `{ disabled: true }`，不执行物理删除。
+- 默认账户唯一冲突返回 HTTP 409 `BANK_ACCOUNT_DEFAULT_CONFLICT`。
+
+## 21.3 PI/CI
+
+- `resolveBankAccount(companyProfileId, bankAccountId, currencyCode)`：
+  - 自动匹配必须同时满足公司、币种、启用、默认。
+  - 手动选择必须校验公司归属、启用状态、币种一致；不跨币种替代。
+- `prefill()` 返回匹配账户、可选同币种账户列表及 `MATCHED / SELECT_REQUIRED / MISSING` 状态。
+- `createFromOrder()` 无默认账户时要求手动选择；没有同币种账户时抛出 `BANK_ACCOUNT_MISSING`。
+- 商业单据 `calculationSnapshot` 保存 `companyProfileId` / `bankAccountId` 元数据，详情 DTO 返回；
+- 草稿更新可提交 `bankAccountId`，后端重新读取完整账户并生成 `paymentSnapshot`；不再信任浏览器提交的 `payment` 数据。
+- 已签发单据的 seller/payment 快照不受公司或账户修改影响。
+
+## 21.4 Admin
+
+- 公司资料页改为主从布局：搜索/启停筛选、国家、账户数量、默认公司、启用状态。
+- 公司信息、地址、Logo/印章、银行账户分组；国家/币种使用统一选择器。
+- 新增公司可同时添加多个初始账户，编辑/删除未保存账户，一次提交。
+- 银行账户按币种分组；展示脱敏账号、开户国家、SWIFT 配置、默认/启用状态。
+- 支持设置默认（事务内替换同币种默认）、停用、恢复；不提供物理删除。
+- 敏感账号编辑通过受权限保护的详情接口加载；列表/选项不返回完整账号。
+- PI/CI 编辑页增加卖方公司、单据币种、银行账户选择；账户按公司 + 币种过滤，保存时只提交 `bankAccountId`。
+
+## 21.5 验证
+
+- `pnpm run lint`：通过。
+- `pnpm run typecheck`：通过。
+- `pnpm --filter @b2b/validation run test`：29 项通过。
+- `pnpm --filter @b2b/database run test`：4 项通过。
+- `pnpm --filter @b2b/admin run test`：199 项通过。
+- `pnpm --filter @b2b/api run test`：439/442 通过；3 项失败仍为既有 `B2B_Quotation_Template.xlsx` 夹具解析测试，与 DOC-44 无关。
+- 定向 `commercial-documents`：52 项通过（公司服务、单据服务、模板、权限 wiring）。
+- `pnpm --filter @b2b/admin run build`：通过（需设置 `ADMIN_API_PROXY_TARGET`）。
+- `pnpm --filter @b2b/api run build`：通过。
+- 本地 migration 已应用；部分唯一索引存在；历史账户数量保持 2 个。
+- 未执行：登录后 1440/768/360 实机截图回归；建议在 staging 验证公司组合创建、默认账户并发、PI/CI 币种缺失提示。
+
+## 21.6 已知边界
+
+- 历史账户的 `currencyCode` / `bankCountryCode` 仍允许为 NULL；启用或用于 PI/CI 前需补录币种，国家可保留 NULL 但列表会显示未填写。
+- 历史草稿没有 `bankAccountId` 元数据时，继续保留原 `paymentSnapshot`，直到用户主动选择银行账户。
+- 银行账户历史引用判断采用保守策略：只要 `paymentSnapshot.accountNumber` 或 `calculationSnapshot.bankAccountId` 命中，即禁止改币种。
+- 生产迁移需先执行文档 §4.4 的异常数据检查，并按 §18 备份、staging 验证后单独审批。
+
+## 22. Logo/印章预览与物理删除
+
+### 22.1 问题与目标
+
+原公司资料页只显示 `logoAssetId` / `stampAssetId`，不显示图片，也没有删除入口；替换素材后旧对象会失去引用并长期留在对象存储中。本次修复：
+
+- 公司列表和选项 DTO 增加只读 `logoUrl` / `stampUrl`。
+- 页面直接展示 Logo 与印章图片，删除按钮放在图片之后。
+- 删除必须同时移除公司资料引用，并登记可重试的物理删除任务；不执行仅清空字段的“假删除”。
+
+### 22.2 后端接口
+
+- `GET /admin/company-profiles`
+  - 新增 `logoUrl`、`stampUrl`。
+  - 仅当素材存在、`status=ready` 且 `isPublic=true` 时返回公开 URL；否则返回 `null`。
+- `GET /admin/company-profiles/options`
+  - 同步返回 `logoUrl`、`stampUrl`，供 PI/CI 页面复用。
+- `DELETE /admin/company-profiles/:id/assets/:kind`
+  - `kind` 仅允许 `logo` 或 `stamp`。
+  - 权限：`company_profile.manage`。
+  - 同一事务内清空对应字段、创建 `file_deletion_jobs` 记录并删除 `file_assets` 元数据。
+  - 返回更新后的公司资料（含银行账户与最新 URL）、`assetId`、`removed`、`deletionJobId`。
+- `DELETE /admin/company-profile-assets/:assetId`
+  - 删除尚未保存到公司的新上传素材。
+  - 仅允许上传者本人操作，且素材 `purpose` 必须为 `logo`。
+  - 权限：`company_profile.manage`。
+
+### 22.3 引用保护
+
+删除前检查以下引用：
+
+- 其他公司资料的 `logoAssetId` / `stampAssetId`。
+- 商业单据 `sellerSnapshot.logoAssetId`、`sellerSnapshot.stampAssetId`、`signatureSnapshot.stampAssetId`。
+- 全局设置 `site.logoFileAssetId`。
+
+存在任何引用时返回 HTTP 409 `ASSET_IN_USE`，不会删除对象或公司字段。这样已保存的 PI/CI 快照仍可重新渲染。
+
+通用文件删除接口 `DELETE /admin/files/:id` 也增加相同检查，避免绕过公司资料页破坏单据素材。
+
+### 22.4 物理删除流程
+
+1. API 事务写入 `FileDeletionJob`（`entityType=file_asset`、`storageKey`、幂等键 `file-asset:<assetId>`）。
+2. 同一事务删除 `FileAsset` 元数据并清空公司字段。
+3. Worker 通过既有 `processFileDeletion` 删除对象存储文件；对象已不存在视为成功。
+4. 存储失败时保留任务、错误码和重试状态，不返回虚假成功。
+
+本地开发环境需要 Worker 运行才会真正清理对象；仅启动 API 时任务会保持 `QUEUED`。
+
+### 22.5 Admin 页面
+
+- Logo 与印章各自显示预览框，使用 `alt`、`loading=lazy`、`decoding=async`。
+- 删除按钮紧跟在预览之后，使用危险按钮与确认弹窗，文案明确“物理删除、不可恢复”。
+- 无图片时显示空状态；素材存在但无法生成公开 URL 时显示“暂无预览”，仍允许删除。
+- 删除成功后只更新当前图片字段与预览，不覆盖表单中的其他未保存修改。
+- 若当前显示的是尚未保存的替换图，删除会清理新素材并恢复已保存图片；不会误删公司当前已保存的 Logo/印章。
+- 被引用的图片返回 409 时使用统一 `ASSET_IN_USE` 文案提示。
+
+### 22.6 验证与边界
+
+- API 单元测试覆盖：预览 URL、公司字段解绑、物理删除任务、单据引用阻止、未保存素材清理、上传者归属校验。
+- 权限 wiring 测试覆盖两个新端点。
+- 未新增数据库迁移；复用 `file_assets`、`file_deletion_jobs`。
+- 已签发单据与草稿快照引用素材时禁止删除，因此不存在“删除后历史单据重新渲染丢失 Logo/印章”的情况。
+- 公开图片可能被 CDN/浏览器缓存，对象删除后缓存过期前仍可能返回旧图；本项目未单独实现素材 CDN 主动刷新。

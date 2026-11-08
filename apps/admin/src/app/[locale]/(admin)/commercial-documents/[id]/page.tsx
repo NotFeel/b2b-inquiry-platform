@@ -40,6 +40,8 @@ interface PartyState {
   state: string;
   postalCode: string;
   countryCode: string;
+  logoAssetId?: string;
+  stampAssetId?: string;
 }
 
 interface ItemState {
@@ -122,10 +124,17 @@ const emptyParty: PartyState = {
   state: '',
   postalCode: '',
   countryCode: '',
+  logoAssetId: '',
+  stampAssetId: '',
 };
 
 function text(value: unknown): string {
   return value === null || value === undefined ? '' : String(value);
+}
+
+function maskBankAccount(value: string | null | undefined): string {
+  const normalized = text(value).replace(/\s+/g, '');
+  return normalized ? `****${normalized.slice(-4)}` : '—';
 }
 
 function partyFromSnapshot(
@@ -149,6 +158,8 @@ function partyFromSnapshot(
     state: text(address?.state),
     postalCode: text(address?.postalCode),
     countryCode: text(address?.countryCode ?? snapshot.countryCode),
+    logoAssetId: text(snapshot.logoAssetId),
+    stampAssetId: text(snapshot.stampAssetId),
   };
 }
 
@@ -313,6 +324,8 @@ export default function CommercialDocumentEditorPage() {
     Awaited<ReturnType<typeof commercialDocumentsApi.companyProfileOptions>>
   >([]);
   const [bankSelection, setBankSelection] = useState('');
+  const [bankSelectionDirty, setBankSelectionDirty] = useState(false);
+  const [companyProfileId, setCompanyProfileId] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -336,6 +349,9 @@ export default function CommercialDocumentEditorPage() {
     setForm(buildForm(next));
     setItems(next.items.map(itemFromDoc));
     setTemplateVersionId(next.template.versionId ?? '');
+    setCompanyProfileId(next.companyProfileId ?? '');
+    setBankSelection(next.bankAccountId ?? '');
+    setBankSelectionDirty(false);
     setDirty(false);
   }, []);
 
@@ -351,6 +367,17 @@ export default function CommercialDocumentEditorPage() {
       applyDetail(document);
       setTemplateOptions(options);
       setProfiles(companyProfiles);
+      const profile =
+        companyProfiles.find((candidate) => candidate.id === document.companyProfileId) ??
+        companyProfiles.find((candidate) => candidate.isDefault) ??
+        companyProfiles[0] ??
+        null;
+      const availableBanks =
+        profile?.bankAccounts.filter((account) => account.currencyCode === document.currency) ?? [];
+      const initialBank = availableBanks.find((account) => account.id === document.bankAccountId);
+      setCompanyProfileId(profile?.id ?? '');
+      setBankSelection(initialBank?.id ?? '');
+      setBankSelectionDirty(false);
     } catch (cause) {
       setError(
         cause instanceof AdminApiError
@@ -389,8 +416,8 @@ export default function CommercialDocumentEditorPage() {
       templateVersionId: templateVersionId || null,
       seller: {
         ...partySnapshot(form.seller, 'address', form.seller.countryCode),
-        logoAssetId: (detail.seller as Record<string, unknown>).logoAssetId ?? null,
-        stampAssetId: (detail.seller as Record<string, unknown>).stampAssetId ?? null,
+        logoAssetId: form.seller.logoAssetId || null,
+        stampAssetId: form.seller.stampAssetId || null,
       },
       buyer: partySnapshot(form.buyer, 'billingAddress', form.buyer.countryCode),
       consignee:
@@ -420,14 +447,19 @@ export default function CommercialDocumentEditorPage() {
         cbm: form.shipping.cbm || null,
         marks: form.shipping.marks,
       },
-      payment: { ...form.payment },
-      declaration: { ...form.declaration, countryOfOrigin: form.declaration.countryOfOrigin || null },
+      companyProfileId: companyProfileId || null,
+      ...(bankSelectionDirty ? { bankAccountId: bankSelection || null } : {}),
+      declaration: {
+        ...form.declaration,
+        countryOfOrigin: form.declaration.countryOfOrigin || null,
+      },
       signature: {
         sellerName: form.signature.sellerName,
         sellerTitle: form.signature.sellerTitle,
         stampAssetId:
-          (detail.signature as Record<string, unknown> | null)?.stampAssetId ??
-          (detail.seller as Record<string, unknown>).stampAssetId ??
+          form.seller.stampAssetId ||
+          (detail.signature as Record<string, unknown> | null)?.stampAssetId ||
+          (detail.seller as Record<string, unknown>).stampAssetId ||
           null,
       },
       notes: form.notes || null,
@@ -454,7 +486,7 @@ export default function CommercialDocumentEditorPage() {
         cbm: item.cbm || null,
       })),
     };
-  }, [detail, form, items, templateVersionId]);
+  }, [bankSelection, bankSelectionDirty, companyProfileId, detail, form, items, templateVersionId]);
 
   const persist = async (): Promise<CommercialDocumentDetail | null> => {
     if (!detail || !payload || !editable) return detail;
@@ -600,17 +632,10 @@ export default function CommercialDocumentEditorPage() {
     }
   };
 
-  const missingLabels = useMemo(
-    () => (detail ? detail.missingFieldLabels : []),
-    [detail],
-  );
-  const missingItemLines = useMemo(
-    () => (detail ? detail.missingItemLines : []),
-    [detail],
-  );
+  const missingLabels = useMemo(() => (detail ? detail.missingFieldLabels : []), [detail]);
+  const missingItemLines = useMemo(() => (detail ? detail.missingItemLines : []), [detail]);
 
   const config: DocumentTemplateConfig | null = detail?.config ?? null;
-
   if (loading) {
     return (
       <div className="stack">
@@ -633,6 +658,41 @@ export default function CommercialDocumentEditorPage() {
   }
 
   if (!detail || !form) return null;
+
+  const selectedCompany = profiles.find((profile) => profile.id === companyProfileId) ?? null;
+  const availableBankAccounts =
+    selectedCompany?.bankAccounts.filter((account) => account.currencyCode === detail.currency) ??
+    [];
+  const selectedBankAccount =
+    availableBankAccounts.find((account) => account.id === bankSelection) ?? null;
+  const existingPayment = detail.payment ?? null;
+
+  const changeSellerCompany = (nextId: string) => {
+    const profile = profiles.find((candidate) => candidate.id === nextId) ?? null;
+    setCompanyProfileId(nextId);
+    setBankSelection('');
+    setBankSelectionDirty(true);
+    if (!profile) return;
+    updateForm((current) => ({
+      ...current,
+      seller: {
+        ...current.seller,
+        companyName: profile.companyName,
+        contactName: profile.contactName ?? '',
+        phone: profile.phone ?? '',
+        email: profile.email ?? '',
+        taxId: profile.taxId ?? '',
+        line1: String(profile.address?.line1 ?? ''),
+        line2: String(profile.address?.line2 ?? ''),
+        city: String(profile.address?.city ?? ''),
+        state: String(profile.address?.state ?? ''),
+        postalCode: String(profile.address?.postalCode ?? ''),
+        countryCode: String(profile.address?.countryCode ?? ''),
+        logoAssetId: profile.logoAssetId ?? '',
+        stampAssetId: profile.stampAssetId ?? '',
+      },
+    }));
+  };
 
   return (
     <div className="stack">
@@ -680,7 +740,9 @@ export default function CommercialDocumentEditorPage() {
               <li key={`line-${line.lineNo}`}>
                 {t('commercialDocuments.editor.missingItemLine', {
                   line: line.lineNo,
-                  fields: line.fields.map((field) => commercialDocumentFieldLabel(field, t)).join(', '),
+                  fields: line.fields
+                    .map((field) => commercialDocumentFieldLabel(field, t))
+                    .join(', '),
                 })}
               </li>
             ))}
@@ -700,7 +762,9 @@ export default function CommercialDocumentEditorPage() {
           </Button>
         ) : null}
         {editable && canIssue ? (
-          <Button onClick={() => setConfirmAction('issue')}>{t('commercialDocuments.editor.issue')}</Button>
+          <Button onClick={() => setConfirmAction('issue')}>
+            {t('commercialDocuments.editor.issue')}
+          </Button>
         ) : null}
         {canPreview ? (
           <Button variant="secondary" loading={busy} onClick={() => void doRender()}>
@@ -708,7 +772,11 @@ export default function CommercialDocumentEditorPage() {
           </Button>
         ) : null}
         {canDownload ? (
-          <Button variant="secondary" disabled={!detail.pdf.available} onClick={() => void doDownload()}>
+          <Button
+            variant="secondary"
+            disabled={!detail.pdf.available}
+            onClick={() => void doDownload()}
+          >
             {t('commercialDocuments.editor.download')}
           </Button>
         ) : null}
@@ -857,35 +925,62 @@ export default function CommercialDocumentEditorPage() {
                 label={t('commercialDocuments.editor.fields.incoterm')}
                 value={form.trade.incotermCode}
                 disabled={!editable}
-                onChange={(value) => updateForm((current) => ({ ...current, trade: { ...current.trade, incotermCode: value } }))}
+                onChange={(value) =>
+                  updateForm((current) => ({
+                    ...current,
+                    trade: { ...current.trade, incotermCode: value },
+                  }))
+                }
               />
               <TextField
                 label={t('commercialDocuments.editor.fields.namedPlace')}
                 value={form.trade.namedPlace}
                 disabled={!editable}
-                onChange={(value) => updateForm((current) => ({ ...current, trade: { ...current.trade, namedPlace: value } }))}
+                onChange={(value) =>
+                  updateForm((current) => ({
+                    ...current,
+                    trade: { ...current.trade, namedPlace: value },
+                  }))
+                }
               />
               <TextField
                 label={t('commercialDocuments.editor.fields.paymentTerms')}
                 value={form.trade.paymentTerms}
                 disabled={!editable}
-                onChange={(value) => updateForm((current) => ({ ...current, trade: { ...current.trade, paymentTerms: value } }))}
+                onChange={(value) =>
+                  updateForm((current) => ({
+                    ...current,
+                    trade: { ...current.trade, paymentTerms: value },
+                  }))
+                }
               />
               <TextField
                 label={t('commercialDocuments.orderDetail.buyerReference')}
                 value={form.trade.buyerReference}
                 disabled={!editable}
-                onChange={(value) => updateForm((current) => ({ ...current, trade: { ...current.trade, buyerReference: value } }))}
+                onChange={(value) =>
+                  updateForm((current) => ({
+                    ...current,
+                    trade: { ...current.trade, buyerReference: value },
+                  }))
+                }
               />
               <TextField
                 label={t('commercialDocuments.orderDetail.contractNo')}
                 value={form.trade.contractNo}
                 disabled={!editable}
-                onChange={(value) => updateForm((current) => ({ ...current, trade: { ...current.trade, contractNo: value } }))}
+                onChange={(value) =>
+                  updateForm((current) => ({
+                    ...current,
+                    trade: { ...current.trade, contractNo: value },
+                  }))
+                }
               />
               <TextField
                 label={t('commercialDocuments.editor.fields.exchangeRate')}
-                value={String((detail.trade as Record<string, unknown> | null)?.exchangeRateText ?? '—')}
+                value={String(
+                  (detail.trade as Record<string, unknown> | null)?.exchangeRateText ?? '—',
+                )}
                 disabled
                 onChange={() => undefined}
               />
@@ -927,67 +1022,121 @@ export default function CommercialDocumentEditorPage() {
 
           <section className="panel stack-sm document-section">
             <h2>{t('commercialDocuments.editor.sections.payment')}</h2>
-            {profiles.length > 0 ? (
-              <Select
-                value={bankSelection}
-                disabled={!editable}
-                placeholder={t('companyProfile.banks')}
-                aria-label={t('companyProfile.banks')}
-                options={profiles.flatMap((profile) =>
-                  profile.bankAccounts.map((account) => ({
-                    value: account.id,
-                    label: `${profile.companyName} · ${account.label}${
-                      account.currencyCode ? ` (${account.currencyCode})` : ''
-                    }`,
-                  })),
-                )}
-                onChange={(event) => {
-                  const selectedBank = profiles
-                    .flatMap((profile) => profile.bankAccounts)
-                    .find((account) => account.id === event.target.value);
-                  setBankSelection(event.target.value);
-                  if (!selectedBank) return;
-                  updateForm((current) => ({
-                    ...current,
-                    payment: {
-                      accountHolder: selectedBank.accountHolder,
-                      bankName: selectedBank.bankName,
-                      bankAddress: selectedBank.bankAddress ?? '',
-                      accountNumber: selectedBank.accountNumber,
-                      swiftCode: selectedBank.swiftCode ?? '',
-                      wireRoutingNumber: selectedBank.wireRoutingNumber ?? '',
-                      achRoutingNumber: selectedBank.achRoutingNumber ?? '',
-                    },
-                  }));
-                }}
-              />
-            ) : null}
             <div className="form-grid">
-              {(
-                [
-                  ['accountHolder', 'accountHolder'],
-                  ['bankName', 'bankName'],
-                  ['bankAddress', 'bankAddress'],
-                  ['accountNumber', 'accountNumber'],
-                  ['swiftCode', 'swift'],
-                  ['wireRoutingNumber', 'wireRouting'],
-                  ['achRoutingNumber', 'achRouting'],
-                ] as const
-              ).map(([field, label]) => (
-                <TextField
-                  key={field}
-                  label={t(`commercialDocuments.editor.fields.${label}`)}
-                  value={form.payment[field]}
-                  disabled={!editable}
-                  onChange={(value) =>
-                    updateForm((current) => ({
-                      ...current,
-                      payment: { ...current.payment, [field]: value },
-                    }))
-                  }
-                />
-              ))}
+              <Field label={t('commercialDocuments.editor.sellerCompany')}>
+                {({ inputId, describedBy }) => (
+                  <Select
+                    inputId={inputId}
+                    describedBy={describedBy}
+                    value={companyProfileId}
+                    disabled={!editable || profiles.length === 0}
+                    placeholder={t('commercialDocuments.editor.selectCompany')}
+                    options={profiles.map((profile) => ({
+                      value: profile.id,
+                      label: `${profile.companyName}${profile.isDefault ? ' · ' + t('companyProfile.default') : ''}`,
+                    }))}
+                    onChange={(event) => changeSellerCompany(event.target.value)}
+                  />
+                )}
+              </Field>
+              <Field label={t('commercialDocuments.editor.documentCurrency')}>
+                {({ inputId, describedBy }) => (
+                  <Input
+                    inputId={inputId}
+                    describedBy={describedBy}
+                    value={detail.currency}
+                    readOnly
+                    disabled
+                  />
+                )}
+              </Field>
+              <Field
+                label={t('commercialDocuments.editor.bankAccount')}
+                help={
+                  availableBankAccounts.length === 0
+                    ? t('commercialDocuments.editor.noBankAccountForCurrency', {
+                        currency: detail.currency,
+                      })
+                    : !bankSelection
+                      ? t('commercialDocuments.editor.selectBankAccountHint')
+                      : undefined
+                }
+              >
+                {({ inputId, describedBy }) => (
+                  <Select
+                    inputId={inputId}
+                    describedBy={describedBy}
+                    value={bankSelection}
+                    disabled={!editable || availableBankAccounts.length === 0}
+                    placeholder={t('commercialDocuments.editor.selectBankAccount')}
+                    options={availableBankAccounts.map((account) => ({
+                      value: account.id,
+                      label: `${account.label} · ${account.bankName}${account.isDefault ? ' · ' + t('companyProfile.bank.default') : ''}`,
+                    }))}
+                    onChange={(event) => {
+                      setBankSelection(event.target.value);
+                      setBankSelectionDirty(true);
+                    }}
+                  />
+                )}
+              </Field>
             </div>
+
+            {availableBankAccounts.length === 0 ? (
+              <div className="alert alert-warning" role="alert">
+                {t('commercialDocuments.editor.noBankAccountForCurrency', {
+                  currency: detail.currency,
+                })}
+              </div>
+            ) : !bankSelection ? (
+              <div className="alert alert-warning" role="status">
+                {t('commercialDocuments.editor.selectBankAccountHint')}
+              </div>
+            ) : null}
+
+            <h3>{t('commercialDocuments.editor.paymentDetails')}</h3>
+            {selectedBankAccount ? (
+              <div className="payment-summary">
+                <dl className="definition-list">
+                  <dt>{t('companyProfile.bank.label')}</dt>
+                  <dd>{selectedBankAccount.label}</dd>
+                  <dt>{t('companyProfile.bank.bankName')}</dt>
+                  <dd>{selectedBankAccount.bankName}</dd>
+                  <dt>{t('companyProfile.bank.currencyCode')}</dt>
+                  <dd>{selectedBankAccount.currencyCode}</dd>
+                  <dt>{t('companyProfile.bank.bankCountryCode')}</dt>
+                  <dd>{selectedBankAccount.bankCountryCode || t('companyProfile.notProvided')}</dd>
+                  <dt>{t('companyProfile.bank.accountNumber')}</dt>
+                  <dd className="mono">{selectedBankAccount.maskedAccountNumber}</dd>
+                  <dt>{t('companyProfile.bank.swiftCode')}</dt>
+                  <dd>
+                    {selectedBankAccount.hasSwift
+                      ? t('companyProfile.bank.swiftConfigured')
+                      : t('companyProfile.bank.swiftNotConfigured')}
+                  </dd>
+                </dl>
+                {selectedBankAccount.isDefault ? (
+                  <Badge tone="success">{t('companyProfile.bank.default')}</Badge>
+                ) : null}
+              </div>
+            ) : existingPayment ? (
+              <div className="payment-summary">
+                <p className="muted">{t('commercialDocuments.editor.legacyPayment')}</p>
+                <dl className="definition-list">
+                  <dt>{t('commercialDocuments.editor.fields.accountHolder')}</dt>
+                  <dd>{existingPayment.accountHolder || t('companyProfile.notProvided')}</dd>
+                  <dt>{t('commercialDocuments.editor.fields.bankName')}</dt>
+                  <dd>{existingPayment.bankName || t('companyProfile.notProvided')}</dd>
+                  <dt>{t('commercialDocuments.editor.fields.accountNumber')}</dt>
+                  <dd className="mono">{maskBankAccount(existingPayment.accountNumber)}</dd>
+                  <dt>{t('companyProfile.bank.bankCountryCode')}</dt>
+                  <dd>{existingPayment.bankCountryCode || t('companyProfile.notProvided')}</dd>
+                </dl>
+              </div>
+            ) : (
+              <p className="muted">{t('companyProfile.bank.empty')}</p>
+            )}
+            <p className="field-help">{t('commercialDocuments.editor.paymentServerHint')}</p>
           </section>
 
           <section className="panel stack-sm document-section">
@@ -1017,7 +1166,19 @@ export default function CommercialDocumentEditorPage() {
                     <tr key={`${item.lineNo}-${index}`}>
                       <td>{index + 1}</td>
                       {(
-                        ['sku', 'description', 'hsCode', 'originCountryCode', 'quantity', 'unit', 'unitPrice', 'discountAmount', 'cartons', 'grossWeightKg', 'cbm'] as const
+                        [
+                          'sku',
+                          'description',
+                          'hsCode',
+                          'originCountryCode',
+                          'quantity',
+                          'unit',
+                          'unitPrice',
+                          'discountAmount',
+                          'cartons',
+                          'grossWeightKg',
+                          'cbm',
+                        ] as const
                       ).map((field) => (
                         <td key={field}>
                           <Input
@@ -1046,7 +1207,9 @@ export default function CommercialDocumentEditorPage() {
                           variant="ghost"
                           disabled={!editable || items.length <= 1}
                           onClick={() => {
-                            setItems((current) => current.filter((_, itemIndex) => itemIndex !== index));
+                            setItems((current) =>
+                              current.filter((_, itemIndex) => itemIndex !== index),
+                            );
                             setDirty(true);
                           }}
                         >
@@ -1078,19 +1241,25 @@ export default function CommercialDocumentEditorPage() {
                 label={t('commercialDocuments.editor.fields.discount')}
                 value={form.discountAmount}
                 disabled={!editable}
-                onChange={(value) => updateForm((current) => ({ ...current, discountAmount: value }))}
+                onChange={(value) =>
+                  updateForm((current) => ({ ...current, discountAmount: value }))
+                }
               />
               <TextField
                 label={t('commercialDocuments.editor.fields.freight')}
                 value={form.freightAmount}
                 disabled={!editable}
-                onChange={(value) => updateForm((current) => ({ ...current, freightAmount: value }))}
+                onChange={(value) =>
+                  updateForm((current) => ({ ...current, freightAmount: value }))
+                }
               />
               <TextField
                 label={t('commercialDocuments.editor.fields.insurance')}
                 value={form.insuranceAmount}
                 disabled={!editable}
-                onChange={(value) => updateForm((current) => ({ ...current, insuranceAmount: value }))}
+                onChange={(value) =>
+                  updateForm((current) => ({ ...current, insuranceAmount: value }))
+                }
               />
               <TextField
                 label={t('commercialDocuments.editor.fields.otherCharges')}
@@ -1119,7 +1288,10 @@ export default function CommercialDocumentEditorPage() {
                 onChange={(value) =>
                   updateForm((current) => ({
                     ...current,
-                    declaration: { ...current.declaration, countryOfOrigin: value.toUpperCase().slice(0, 2) },
+                    declaration: {
+                      ...current.declaration,
+                      countryOfOrigin: value.toUpperCase().slice(0, 2),
+                    },
                   }))
                 }
               />
@@ -1380,20 +1552,69 @@ function PartyEditor({
   disabled?: boolean;
   t: (key: string) => string;
 }) {
-  const update = (key: keyof PartyState) => (value: string) =>
-    onChange({ ...form, [key]: value });
+  const update = (key: keyof PartyState) => (value: string) => onChange({ ...form, [key]: value });
   return (
     <div className="form-grid">
-      <TextField label={t('commercialDocuments.editor.fields.companyName')} value={form.companyName} onChange={update('companyName')} disabled={disabled} />
-      <TextField label={t('commercialDocuments.editor.fields.contactName')} value={form.contactName} onChange={update('contactName')} disabled={disabled} />
-      <TextField label={t('commercialDocuments.editor.fields.phone')} value={form.phone} onChange={update('phone')} disabled={disabled} />
-      <TextField label={t('commercialDocuments.editor.fields.email')} value={form.email} onChange={update('email')} disabled={disabled} />
-      <TextField label={t('commercialDocuments.editor.fields.taxId')} value={form.taxId} onChange={update('taxId')} disabled={disabled} />
-      <TextField label={t('commercialDocuments.editor.fields.addressLine1')} value={form.line1} onChange={update('line1')} disabled={disabled} />
-      <TextField label={t('commercialDocuments.editor.fields.addressLine2')} value={form.line2} onChange={update('line2')} disabled={disabled} />
-      <TextField label={t('commercialDocuments.editor.fields.city')} value={form.city} onChange={update('city')} disabled={disabled} />
-      <TextField label={t('commercialDocuments.editor.fields.state')} value={form.state} onChange={update('state')} disabled={disabled} />
-      <TextField label={t('commercialDocuments.editor.fields.postalCode')} value={form.postalCode} onChange={update('postalCode')} disabled={disabled} />
+      <TextField
+        label={t('commercialDocuments.editor.fields.companyName')}
+        value={form.companyName}
+        onChange={update('companyName')}
+        disabled={disabled}
+      />
+      <TextField
+        label={t('commercialDocuments.editor.fields.contactName')}
+        value={form.contactName}
+        onChange={update('contactName')}
+        disabled={disabled}
+      />
+      <TextField
+        label={t('commercialDocuments.editor.fields.phone')}
+        value={form.phone}
+        onChange={update('phone')}
+        disabled={disabled}
+      />
+      <TextField
+        label={t('commercialDocuments.editor.fields.email')}
+        value={form.email}
+        onChange={update('email')}
+        disabled={disabled}
+      />
+      <TextField
+        label={t('commercialDocuments.editor.fields.taxId')}
+        value={form.taxId}
+        onChange={update('taxId')}
+        disabled={disabled}
+      />
+      <TextField
+        label={t('commercialDocuments.editor.fields.addressLine1')}
+        value={form.line1}
+        onChange={update('line1')}
+        disabled={disabled}
+      />
+      <TextField
+        label={t('commercialDocuments.editor.fields.addressLine2')}
+        value={form.line2}
+        onChange={update('line2')}
+        disabled={disabled}
+      />
+      <TextField
+        label={t('commercialDocuments.editor.fields.city')}
+        value={form.city}
+        onChange={update('city')}
+        disabled={disabled}
+      />
+      <TextField
+        label={t('commercialDocuments.editor.fields.state')}
+        value={form.state}
+        onChange={update('state')}
+        disabled={disabled}
+      />
+      <TextField
+        label={t('commercialDocuments.editor.fields.postalCode')}
+        value={form.postalCode}
+        onChange={update('postalCode')}
+        disabled={disabled}
+      />
       <TextField
         label={t('commercialDocuments.editor.fields.countryCode')}
         value={form.countryCode}

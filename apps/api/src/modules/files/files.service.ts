@@ -621,19 +621,59 @@ export class FilesService {
         'Quote templates and quotation history images must be removed through their owning workflows.',
       );
     }
-    const [productImageCount, categoryCount, adCount] = await this.prisma.$transaction([
+    const [
+      productImageCount,
+      categoryCount,
+      adCount,
+      companyProfileCount,
+      commercialDocumentCount,
+      siteLogoSettingCount,
+    ] = await this.prisma.$transaction([
       this.prisma.productImage.count({ where: { fileAssetId: id } }),
       this.prisma.category.count({ where: { coverFileAssetId: id } }),
       this.prisma.ad.count({
         where: { OR: [{ desktopAssetId: id }, { mobileAssetId: id }] },
       }),
+      // Company logos/stamps and issued PI/CI snapshots reference the asset id
+      // without a foreign key, so the generic file manager must check them too.
+      this.prisma.companyProfile.count({
+        where: { OR: [{ logoAssetId: id }, { stampAssetId: id }] },
+      }),
+      this.prisma.commercialDocument.count({
+        where: {
+          OR: [
+            { sellerSnapshot: { path: ['logoAssetId'], equals: id } },
+            { sellerSnapshot: { path: ['stampAssetId'], equals: id } },
+            { signatureSnapshot: { path: ['stampAssetId'], equals: id } },
+          ],
+        },
+      }),
+      this.prisma.globalSetting.count({
+        where: { key: 'site.logoFileAssetId', value: { equals: id } },
+      }),
     ]);
-    const references = productImageCount + categoryCount + adCount;
+    const references =
+      productImageCount +
+      categoryCount +
+      adCount +
+      companyProfileCount +
+      commercialDocumentCount +
+      siteLogoSettingCount;
     if (references > 0) {
       throw new ApiError(
-        ERROR_CODES.conflict,
-        'This image is still referenced. Detach it from products, categories or ads first.',
-        { details: { productImageCount, categoryCount, adCount } },
+        ERROR_CODES.assetInUse,
+        'This file is still referenced. Detach it from its owner before deleting it.',
+        {
+          status: 409,
+          details: {
+            productImageCount,
+            categoryCount,
+            adCount,
+            companyProfileCount,
+            commercialDocumentCount,
+            siteLogoSettingCount,
+          },
+        },
       );
     }
 

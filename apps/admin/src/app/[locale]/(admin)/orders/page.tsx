@@ -209,6 +209,7 @@ export default function OrdersPage() {
   const [prefillLoading, setPrefillLoading] = useState(false);
   const [createTemplateVersionId, setCreateTemplateVersionId] = useState('');
   const [createLocale, setCreateLocale] = useState('en-US');
+  const [createBankAccountId, setCreateBankAccountId] = useState('');
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -562,12 +563,14 @@ export default function OrdersPage() {
     setCreateOrderId(orderId);
     setCreateError(null);
     setPrefill(null);
+    setCreateBankAccountId('');
     setPrefillLoading(true);
     try {
       const data = await commercialDocumentsApi.prefill(orderId, type);
       setPrefill(data);
       setCreateTemplateVersionId(data.template.versionId);
       setCreateLocale(data.template.locale);
+      setCreateBankAccountId(data.bankAccountId ?? '');
     } catch (cause) {
       setCreateError(
         cause instanceof AdminApiError
@@ -588,6 +591,7 @@ export default function OrdersPage() {
         documentType: createType,
         locale: createLocale,
         templateVersionId: createTemplateVersionId || null,
+        bankAccountId: createBankAccountId || null,
       });
       toast.success(t('common.saved'));
       setCreateType(null);
@@ -1242,7 +1246,15 @@ export default function OrdersPage() {
             <Button variant="secondary" onClick={() => setCreateType(null)} disabled={createBusy}>
               {t('common.cancel')}
             </Button>
-            <Button loading={createBusy} disabled={!prefill} onClick={() => void createDocument()}>
+            <Button
+              loading={createBusy}
+              disabled={
+                !prefill ||
+                prefill.bankAccountStatus === 'MISSING' ||
+                (prefill.bankAccounts.length > 0 && !createBankAccountId)
+              }
+              onClick={() => void createDocument()}
+            >
               {t('commercialDocuments.create.create')}
             </Button>
           </>
@@ -1302,6 +1314,35 @@ export default function OrdersPage() {
                 />
               )}
             </Field>
+            {prefill.bankAccounts.length > 0 ? (
+              <Field
+                label={t('commercialDocuments.create.bankAccount')}
+                help={
+                  createBankAccountId
+                    ? undefined
+                    : t('commercialDocuments.editor.selectBankAccountHint')
+                }
+              >
+                {({ inputId, describedBy }) => (
+                  <Select
+                    inputId={inputId}
+                    describedBy={describedBy}
+                    value={createBankAccountId}
+                    options={prefill.bankAccounts.map((account) => ({
+                      value: account.id,
+                      label: `${account.label} · ${account.bankName}${account.isDefault ? ' · ' + t('companyProfile.bank.default') : ''}`,
+                    }))}
+                    onChange={(event) => setCreateBankAccountId(event.target.value)}
+                  />
+                )}
+              </Field>
+            ) : (
+              <div className="alert alert-warning" role="alert">
+                {t('commercialDocuments.editor.noBankAccountForCurrency', {
+                  currency: prefill.currency,
+                })}
+              </div>
+            )}
             {prefill.missingFields.length > 0 || prefill.missingItemLines.length > 0 ? (
               <div className="alert alert-warning">
                 <strong>{t('commercialDocuments.create.missing')}</strong>

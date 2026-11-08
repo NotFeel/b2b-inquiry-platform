@@ -218,6 +218,10 @@ export const updateCommercialDocumentSchema = z.object({
   issueDate: z.string().date().nullable().optional(),
   validUntil: z.string().date().nullable().optional(),
   templateVersionId: uuidSchema.nullable().optional(),
+  /** Seller company for validating the selected bank account. */
+  companyProfileId: uuidSchema.nullable().optional(),
+  /** When set, the server rebuilds paymentSnapshot from this enabled account. */
+  bankAccountId: uuidSchema.nullable().optional(),
   seller: documentPartySchema.optional(),
   buyer: documentPartySchema.optional(),
   consignee: documentPartySchema.nullable().optional(),
@@ -326,16 +330,18 @@ export type CreateCompanyProfileInput = z.infer<typeof createCompanyProfileSchem
 export const updateCompanyProfileSchema = createCompanyProfileSchema.partial();
 export type UpdateCompanyProfileInput = z.infer<typeof updateCompanyProfileSchema>;
 
-export const createBankAccountSchema = z.object({
-  companyProfileId: uuidSchema,
+const bankAccountCoreSchema = z.object({
   label: nonEmptyText(120),
   accountHolder: nonEmptyText(240),
   bankName: nonEmptyText(240),
   bankAddress: optionalText(500),
+  // Historical accounts may keep a NULL country. New accounts require it.
+  bankCountryCode: countryCodeSchema.nullable().optional(),
   accountNumber: nonEmptyText(80),
   swiftCode: optionalText(40),
   wireRoutingNumber: optionalText(40),
   achRoutingNumber: optionalText(40),
+  // Historical accounts may keep a NULL currency. New accounts require it.
   currencyCode: z
     .string()
     .trim()
@@ -347,12 +353,102 @@ export const createBankAccountSchema = z.object({
   enabled: z.boolean().default(true),
   sortOrder: z.coerce.number().int().min(0).max(1000).default(0),
 });
+
+const assertBankAccountEnabledState = (
+  value: { enabled?: boolean; isDefault?: boolean },
+  context: z.RefinementCtx,
+) => {
+  if (value.enabled === false && value.isDefault === true) {
+    context.addIssue({
+      code: 'custom',
+      path: ['isDefault'],
+      message: 'validation.bankAccount.disabledCannotBeDefault',
+    });
+  }
+};
+
+/** New accounts must carry a dictionary-backed currency and country. */
+export const createBankAccountWithoutCompanyIdSchema = bankAccountCoreSchema
+  .extend({
+    bankCountryCode: countryCodeSchema,
+    currencyCode: z
+      .string()
+      .trim()
+      .toUpperCase()
+      .regex(/^[A-Z]{3}$/),
+  })
+  .superRefine(assertBankAccountEnabledState);
+export type CreateBankAccountWithoutCompanyIdInput = z.infer<
+  typeof createBankAccountWithoutCompanyIdSchema
+>;
+
+export const createBankAccountSchema = bankAccountCoreSchema
+  .extend({
+    companyProfileId: uuidSchema,
+    bankCountryCode: countryCodeSchema,
+    currencyCode: z
+      .string()
+      .trim()
+      .toUpperCase()
+      .regex(/^[A-Z]{3}$/),
+  })
+  .superRefine(assertBankAccountEnabledState);
 export type CreateBankAccountInput = z.infer<typeof createBankAccountSchema>;
 
-export const updateBankAccountSchema = createBankAccountSchema
-  .omit({ companyProfileId: true })
-  .partial();
+/**
+ * Partial updates keep omitted fields untouched. Explicit `null` is allowed for
+ * a historical country, but the service refuses clearing a value that exists.
+ */
+export const updateBankAccountSchema = z
+  .object({
+    label: nonEmptyText(120).optional(),
+    accountHolder: nonEmptyText(240).optional(),
+    bankName: nonEmptyText(240).optional(),
+    bankAddress: optionalText(500),
+    bankCountryCode: countryCodeSchema.nullable().optional(),
+    accountNumber: nonEmptyText(80).optional(),
+    swiftCode: optionalText(40),
+    wireRoutingNumber: optionalText(40),
+    achRoutingNumber: optionalText(40),
+    currencyCode: z
+      .string()
+      .trim()
+      .toUpperCase()
+      .regex(/^[A-Z]{3}$/)
+      .optional(),
+    isDefault: z.boolean().optional(),
+    enabled: z.boolean().optional(),
+    sortOrder: z.coerce.number().int().min(0).max(1000).optional(),
+  })
+  .superRefine(assertBankAccountEnabledState);
 export type UpdateBankAccountInput = z.infer<typeof updateBankAccountSchema>;
+
+/**
+ * Creates a company and its initial bank accounts in one transaction. A company
+ * may have at most one default account per currency; it may have none.
+ */
+export const createCompanyProfileWithBankAccountsSchema = z
+  .object({
+    company: createCompanyProfileSchema,
+    bankAccounts: z.array(createBankAccountWithoutCompanyIdSchema).max(50).default([]),
+  })
+  .superRefine((value, context) => {
+    const defaultCurrencies = new Set<string>();
+    value.bankAccounts.forEach((account, index) => {
+      if (!account.isDefault) return;
+      if (defaultCurrencies.has(account.currencyCode)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['bankAccounts', index, 'isDefault'],
+          message: 'validation.bankAccount.duplicateDefaultCurrency',
+        });
+      }
+      defaultCurrencies.add(account.currencyCode);
+    });
+  });
+export type CreateCompanyProfileWithBankAccountsInput = z.infer<
+  typeof createCompanyProfileWithBankAccountsSchema
+>;
 
 export const idQuerySchema = z.object({ id: uuidSchema });
 

@@ -26,7 +26,7 @@ import type {
   UpdateCommercialDocumentInput,
 } from '@b2b/validation';
 import Decimal from 'decimal.js';
-import { Prisma } from '@b2b/database';
+import { Prisma, type BankAccountProfile } from '@b2b/database';
 import { ApiError } from '../../common/errors/api-error';
 import { AuditService } from '../../common/services/audit.service';
 import { StorageService } from '../../common/services/storage.service';
@@ -53,7 +53,9 @@ const documentDetailInclude = {
   renderJobs: { orderBy: { createdAt: 'desc' }, take: 5 },
 } satisfies Prisma.CommercialDocumentInclude;
 
-type DocumentDetail = Prisma.CommercialDocumentGetPayload<{ include: typeof documentDetailInclude }>;
+type DocumentDetail = Prisma.CommercialDocumentGetPayload<{
+  include: typeof documentDetailInclude;
+}>;
 
 const orderForDocumentInclude = {
   items: { orderBy: { lineNo: 'asc' } },
@@ -155,11 +157,11 @@ export class CommercialDocumentsService {
           issuedAt: row.issuedAt?.toISOString() ?? null,
           orderId: row.orderId,
           orderNo: row.order?.orderNo ?? null,
-          buyerName: (buyer.companyName as string | undefined) ?? row.order?.buyerCompanyName ?? null,
+          buyerName:
+            (buyer.companyName as string | undefined) ?? row.order?.buyerCompanyName ?? null,
           sellerName:
             ((row.sellerSnapshot as Record<string, unknown> | null)?.companyName as
-              | string
-              | undefined) ?? null,
+              string | undefined) ?? null,
           templateName: row.template?.name ?? null,
           templateVersion: row.templateVersion?.version ?? null,
           hasPdf: Boolean(row.pdfFileKey),
@@ -186,9 +188,34 @@ export class CommercialDocumentsService {
   /** Prefill endpoint for the create wizard, including the exact missing list. */
   async prefill(orderId: string, documentType: CommercialDocumentType, actorId: string) {
     const order = await this.loadOrder(orderId);
-    const template = await this.resolveTemplateForOrder(order, documentType, 'en-US', null, actorId);
+    const template = await this.resolveTemplateForOrder(
+      order,
+      documentType,
+      'en-US',
+      null,
+      actorId,
+    );
     const companyProfile = await this.profiles.defaultProfile();
-    const bankAccount = await this.resolveBankAccount(companyProfile?.id ?? null, null);
+    const bankAccount = await this.resolveBankAccount(
+      companyProfile?.id ?? null,
+      null,
+      order.currencyCode,
+    );
+    const bankAccountStatus = await this.bankAccountStatus(
+      companyProfile?.id ?? null,
+      order.currencyCode,
+      bankAccount,
+    );
+    const bankAccounts = companyProfile
+      ? await this.prisma.bankAccountProfile.findMany({
+          where: {
+            companyProfileId: companyProfile.id,
+            currencyCode: order.currencyCode,
+            enabled: true,
+          },
+          orderBy: [{ isDefault: 'desc' }, { sortOrder: 'asc' }, { label: 'asc' }],
+        })
+      : [];
     const data = await this.buildFromOrder(
       order,
       documentType,
@@ -214,6 +241,11 @@ export class CommercialDocumentsService {
       orderNo: order.orderNo,
       documentType,
       currency: order.currencyCode,
+      companyProfileId: companyProfile?.id ?? null,
+      bankAccountId: bankAccount?.id ?? null,
+      bankAccount: bankAccount ? this.bankAccountSummary(bankAccount) : null,
+      bankAccountStatus,
+      bankAccounts: bankAccounts.map((account) => this.bankAccountSummary(account)),
       buyer: data.buyer,
       consignee: data.consignee,
       notifyParty: data.notifyParty,
@@ -273,12 +305,19 @@ export class CommercialDocumentsService {
       input.companyProfileId !== undefined && input.companyProfileId !== null
         ? await this.enabledCompanyProfile(input.companyProfileId)
         : await this.profiles.defaultProfile();
+    if (input.bankAccountId && !companyProfile?.id) {
+      throw new ApiError(
+        ERROR_CODES.companyProfileNotFound,
+        'A seller company profile is required to select a bank account.',
+      );
+    }
     const bankAccount = await this.resolveBankAccount(
       companyProfile?.id ?? null,
       input.bankAccountId ?? null,
+      currency,
     );
-    if (input.bankAccountId && !bankAccount) {
-      throw new ApiError(ERROR_CODES.bankAccountNotFound, 'The selected bank account was not found.');
+    if (!bankAccount) {
+      await this.assertBankAccountAvailable(companyProfile?.id ?? null, currency);
     }
     const data = await this.buildFromOrder(
       order,
@@ -287,9 +326,7 @@ export class CommercialDocumentsService {
       companyProfile,
       bankAccount,
     );
-    const issueDate = input.issueDate
-      ? this.parseDateOnly(input.issueDate)
-      : this.todayDateOnly();
+    const issueDate = input.issueDate ? this.parseDateOnly(input.issueDate) : this.todayDateOnly();
     const documentNo = await this.generateDocumentNo(input.documentType);
     const document = await this.prisma.$transaction(async (transaction) => {
       return transaction.commercialDocument.create({
@@ -310,9 +347,7 @@ export class CommercialDocumentsService {
           sellerSnapshot: data.seller as Prisma.InputJsonValue,
           buyerSnapshot: data.buyer as Prisma.InputJsonValue,
           consigneeSnapshot: (data.consignee ?? undefined) as Prisma.InputJsonValue | undefined,
-          notifyPartySnapshot: (data.notifyParty ?? undefined) as
-            | Prisma.InputJsonValue
-            | undefined,
+          notifyPartySnapshot: (data.notifyParty ?? undefined) as Prisma.InputJsonValue | undefined,
           tradeSnapshot: data.trade as Prisma.InputJsonValue,
           shippingSnapshot: data.shipping as Prisma.InputJsonValue,
           paymentSnapshot: (data.payment ?? undefined) as Prisma.InputJsonValue | undefined,
@@ -324,6 +359,8 @@ export class CommercialDocumentsService {
             orderNo: order.orderNo,
             orderCurrency: order.currencyCode,
             documentCurrency: currency,
+            companyProfileId: companyProfile?.id ?? null,
+            bankAccountId: bankAccount?.id ?? null,
             pricingPolicy: { scale: 2, rounding: 'HALF_UP', computedBy: 'server' },
           } as Prisma.InputJsonValue,
           subtotal: data.totals.subtotal,
@@ -365,7 +402,8 @@ export class CommercialDocumentsService {
       where: { id },
       include: { items: { orderBy: { lineNo: 'asc' } } },
     });
-    if (!document) throw new ApiError(ERROR_CODES.commercialDocumentNotFound, 'Document not found.');
+    if (!document)
+      throw new ApiError(ERROR_CODES.commercialDocumentNotFound, 'Document not found.');
     if (!EDITABLE_STATUSES.has(document.status)) {
       throw new ApiError(
         ERROR_CODES.commercialDocumentNotEditable,
@@ -417,7 +455,56 @@ export class CommercialDocumentsService {
           : ((document.notifyPartySnapshot as Record<string, unknown> | null) ?? null);
     const trade = this.mergeSnapshot(document.tradeSnapshot, input.trade);
     const shipping = this.mergeSnapshot(document.shippingSnapshot, input.shipping);
-    const payment = this.mergeSnapshot(document.paymentSnapshot, input.payment);
+    // Browser-supplied payment data is never trusted. A draft keeps its
+    // existing snapshot unless a bankAccountId is supplied, in which case the
+    // server re-reads the complete account below (docs/44 §10.2, §12).
+    let payment = (document.paymentSnapshot as Record<string, unknown> | null) ?? null;
+    let calculationSnapshot =
+      (document.calculationSnapshot as Record<string, unknown> | null) ?? {};
+    const storedCompanyProfileId =
+      typeof calculationSnapshot.companyProfileId === 'string'
+        ? calculationSnapshot.companyProfileId
+        : null;
+
+    if (input.bankAccountId !== undefined) {
+      const companyProfileId = input.companyProfileId ?? storedCompanyProfileId;
+      if (input.bankAccountId === null) {
+        // Explicitly clearing the selection also clears the copied payment data.
+        payment = null;
+        calculationSnapshot = { ...calculationSnapshot, companyProfileId, bankAccountId: null };
+      } else {
+        if (!companyProfileId) {
+          throw new ApiError(
+            ERROR_CODES.companyProfileNotFound,
+            'A seller company profile is required to select a bank account.',
+          );
+        }
+        const account = await this.resolveBankAccount(
+          companyProfileId,
+          input.bankAccountId,
+          currency,
+        );
+        if (!account) {
+          throw new ApiError(ERROR_CODES.bankAccountNotFound, 'Bank account not found.');
+        }
+        payment = this.paymentSnapshot(account);
+        calculationSnapshot = {
+          ...calculationSnapshot,
+          companyProfileId: account.companyProfileId,
+          bankAccountId: account.id,
+        };
+      }
+    } else if (input.currency && input.currency !== document.currency) {
+      // Never keep old-currency receiving details after a currency change.
+      payment = null;
+      calculationSnapshot = { ...calculationSnapshot, bankAccountId: null };
+    } else if (input.companyProfileId !== undefined) {
+      calculationSnapshot = {
+        ...calculationSnapshot,
+        companyProfileId: input.companyProfileId,
+      };
+    }
+
     const declaration = this.mergeSnapshot(document.declarationSnapshot, input.declaration);
     const signature = this.mergeSnapshot(document.signatureSnapshot, input.signature);
 
@@ -440,8 +527,7 @@ export class CommercialDocumentsService {
           netWeightKg: item.netWeightKg?.toString() ?? null,
           grossWeightKg: item.grossWeightKg?.toString() ?? null,
           cbm: item.cbm?.toString() ?? null,
-          packaging:
-            (item.packagingSnapshot as Record<string, unknown> | null | undefined) ?? null,
+          packaging: (item.packagingSnapshot as Record<string, unknown> | null | undefined) ?? null,
         }));
 
     const totals = this.calculateTotals(currency, itemInputs, {
@@ -492,6 +578,7 @@ export class CommercialDocumentsService {
           tradeSnapshot: trade as Prisma.InputJsonValue,
           shippingSnapshot: shipping as Prisma.InputJsonValue,
           paymentSnapshot: (payment ?? Prisma.DbNull) as Prisma.InputJsonValue,
+          calculationSnapshot: calculationSnapshot as Prisma.InputJsonValue,
           declarationSnapshot: declaration as Prisma.InputJsonValue,
           signatureSnapshot: signature as Prisma.InputJsonValue,
           ...(input.notes !== undefined ? { notes: input.notes } : {}),
@@ -514,7 +601,8 @@ export class CommercialDocumentsService {
           where: { id },
           select: { version: true, status: true },
         });
-        if (!current) throw new ApiError(ERROR_CODES.commercialDocumentNotFound, 'Document not found.');
+        if (!current)
+          throw new ApiError(ERROR_CODES.commercialDocumentNotFound, 'Document not found.');
         if (!EDITABLE_STATUSES.has(current.status)) {
           throw new ApiError(
             ERROR_CODES.commercialDocumentNotEditable,
@@ -563,9 +651,13 @@ export class CommercialDocumentsService {
 
   async requestRender(id: string, actorId: string, requestId: string) {
     const document = await this.prisma.commercialDocument.findUnique({ where: { id } });
-    if (!document) throw new ApiError(ERROR_CODES.commercialDocumentNotFound, 'Document not found.');
+    if (!document)
+      throw new ApiError(ERROR_CODES.commercialDocumentNotFound, 'Document not found.');
     if (document.status === 'CANCELLED') {
-      throw new ApiError(ERROR_CODES.commercialDocumentStateConflict, 'A cancelled document cannot be rendered.');
+      throw new ApiError(
+        ERROR_CODES.commercialDocumentStateConflict,
+        'A cancelled document cannot be rendered.',
+      );
     }
     const existing = await this.prisma.documentRenderJob.findFirst({
       where: {
@@ -759,11 +851,13 @@ export class CommercialDocumentsService {
           sellerSnapshot: source.sellerSnapshot as Prisma.InputJsonValue,
           buyerSnapshot: source.buyerSnapshot as Prisma.InputJsonValue,
           consigneeSnapshot: (source.consigneeSnapshot ?? Prisma.DbNull) as Prisma.InputJsonValue,
-          notifyPartySnapshot: (source.notifyPartySnapshot ?? Prisma.DbNull) as Prisma.InputJsonValue,
+          notifyPartySnapshot: (source.notifyPartySnapshot ??
+            Prisma.DbNull) as Prisma.InputJsonValue,
           tradeSnapshot: (source.tradeSnapshot ?? Prisma.DbNull) as Prisma.InputJsonValue,
           shippingSnapshot: (source.shippingSnapshot ?? Prisma.DbNull) as Prisma.InputJsonValue,
           paymentSnapshot: (source.paymentSnapshot ?? Prisma.DbNull) as Prisma.InputJsonValue,
-          declarationSnapshot: (source.declarationSnapshot ?? Prisma.DbNull) as Prisma.InputJsonValue,
+          declarationSnapshot: (source.declarationSnapshot ??
+            Prisma.DbNull) as Prisma.InputJsonValue,
           signatureSnapshot: (source.signatureSnapshot ?? Prisma.DbNull) as Prisma.InputJsonValue,
           totalsSnapshot: source.totalsSnapshot as Prisma.InputJsonValue,
           calculationSnapshot: {
@@ -798,8 +892,7 @@ export class CommercialDocumentsService {
               grossWeightKg: item.grossWeightKg,
               cbm: item.cbm,
               packagingSnapshot: (item.packagingSnapshot ?? undefined) as
-                | Prisma.InputJsonValue
-                | undefined,
+                Prisma.InputJsonValue | undefined,
             })),
           },
         },
@@ -825,14 +918,10 @@ export class CommercialDocumentsService {
     return this.detail(revision.id);
   }
 
-  async cancel(
-    id: string,
-    input: { reason?: string | null },
-    actorId: string,
-    requestId: string,
-  ) {
+  async cancel(id: string, input: { reason?: string | null }, actorId: string, requestId: string) {
     const document = await this.prisma.commercialDocument.findUnique({ where: { id } });
-    if (!document) throw new ApiError(ERROR_CODES.commercialDocumentNotFound, 'Document not found.');
+    if (!document)
+      throw new ApiError(ERROR_CODES.commercialDocumentNotFound, 'Document not found.');
     if (document.status === 'CANCELLED') return this.detail(id);
     if (document.status === 'SUPERSEDED') {
       throw new ApiError(
@@ -861,7 +950,8 @@ export class CommercialDocumentsService {
 
   async download(id: string, actorId: string, requestId: string) {
     const document = await this.prisma.commercialDocument.findUnique({ where: { id } });
-    if (!document) throw new ApiError(ERROR_CODES.commercialDocumentNotFound, 'Document not found.');
+    if (!document)
+      throw new ApiError(ERROR_CODES.commercialDocumentNotFound, 'Document not found.');
     if (!DOWNLOADABLE_STATUSES.has(document.status)) {
       throw new ApiError(
         ERROR_CODES.commercialDocumentPdfUnavailable,
@@ -901,7 +991,8 @@ export class CommercialDocumentsService {
       where: { id },
       include: documentDetailInclude,
     });
-    if (!document) throw new ApiError(ERROR_CODES.commercialDocumentNotFound, 'Document not found.');
+    if (!document)
+      throw new ApiError(ERROR_CODES.commercialDocumentNotFound, 'Document not found.');
     return document;
   }
 
@@ -924,22 +1015,118 @@ export class CommercialDocumentsService {
     return profile;
   }
 
-  private async resolveBankAccount(companyProfileId: string | null, bankAccountId: string | null) {
+  /**
+   * Resolves a document's receiving account.
+   *
+   * Manual selection must match the document currency, be enabled and belong to
+   * the selected company. Automatic selection only uses an enabled *default*
+   * account in the document currency; it never substitutes another currency
+   * (docs/44 §11).
+   */
+  private async resolveBankAccount(
+    companyProfileId: string | null,
+    bankAccountId: string | null,
+    currencyCode: string,
+  ): Promise<BankAccountProfile | null> {
     if (bankAccountId) {
-      const account = await this.prisma.bankAccountProfile.findFirst({
-        where: {
-          id: bankAccountId,
-          enabled: true,
-          ...(companyProfileId ? { companyProfileId } : {}),
-        },
+      const account = await this.prisma.bankAccountProfile.findUnique({
+        where: { id: bankAccountId },
       });
+      if (!account || (companyProfileId && account.companyProfileId !== companyProfileId)) {
+        throw new ApiError(
+          ERROR_CODES.bankAccountNotFound,
+          'The selected bank account was not found for this company.',
+        );
+      }
+      if (!account.enabled) {
+        throw new ApiError(
+          ERROR_CODES.bankAccountDisabled,
+          'The selected bank account is disabled.',
+        );
+      }
+      if (!account.currencyCode || account.currencyCode !== currencyCode) {
+        throw new ApiError(
+          ERROR_CODES.bankAccountCurrencyMismatch,
+          'The selected bank account currency does not match the document currency.',
+        );
+      }
       return account;
     }
     if (!companyProfileId) return null;
     return this.prisma.bankAccountProfile.findFirst({
-      where: { companyProfileId, enabled: true },
-      orderBy: [{ isDefault: 'desc' }, { sortOrder: 'asc' }],
+      where: {
+        companyProfileId,
+        currencyCode,
+        enabled: true,
+        isDefault: true,
+      },
     });
+  }
+
+  /** Distinguishes "choose an account" from "no account exists at all". */
+  private async assertBankAccountAvailable(companyProfileId: string | null, currencyCode: string) {
+    if (!companyProfileId) {
+      throw new ApiError(
+        ERROR_CODES.bankAccountMissing,
+        'No active bank account is configured for the selected document currency.',
+      );
+    }
+    const count = await this.prisma.bankAccountProfile.count({
+      where: { companyProfileId, currencyCode, enabled: true },
+    });
+    if (count === 0) {
+      throw new ApiError(
+        ERROR_CODES.bankAccountMissing,
+        'No active bank account is configured for the selected document currency.',
+      );
+    }
+    throw new ApiError(
+      ERROR_CODES.bankAccountDefaultRequired,
+      'Select a bank account in the document currency before creating this document.',
+    );
+  }
+
+  private async bankAccountStatus(
+    companyProfileId: string | null,
+    currencyCode: string,
+    selected: BankAccountProfile | null,
+  ): Promise<'MATCHED' | 'SELECT_REQUIRED' | 'MISSING'> {
+    if (selected) return 'MATCHED';
+    if (!companyProfileId) return 'MISSING';
+    const count = await this.prisma.bankAccountProfile.count({
+      where: { companyProfileId, currencyCode, enabled: true },
+    });
+    return count > 0 ? 'SELECT_REQUIRED' : 'MISSING';
+  }
+
+  private bankAccountSummary(account: BankAccountProfile) {
+    const normalized = account.accountNumber.replace(/\s+/g, '');
+    return {
+      id: account.id,
+      label: account.label,
+      bankName: account.bankName,
+      currencyCode: account.currencyCode,
+      bankCountryCode: account.bankCountryCode,
+      isDefault: account.isDefault,
+      enabled: account.enabled,
+      maskedAccountNumber: `****${normalized.slice(-4)}`,
+    };
+  }
+
+  private paymentSnapshot(account: BankAccountProfile) {
+    return {
+      schemaVersion: 1,
+      label: account.label,
+      accountHolder: account.accountHolder,
+      bankName: account.bankName,
+      bankAddress: account.bankAddress,
+      bankCountryCode: account.bankCountryCode,
+      accountNumber: account.accountNumber,
+      swiftCode: account.swiftCode,
+      wireRoutingNumber: account.wireRoutingNumber,
+      achRoutingNumber: account.achRoutingNumber,
+      currencyCode: account.currencyCode,
+    };
   }
 
   private async resolveTemplateForOrder(
@@ -966,8 +1153,7 @@ export class CommercialDocumentsService {
   ): Promise<BuiltDocumentData> {
     const buyer = this.buyerFromOrder(order);
     const consignee = this.consigneeFromOrder(order);
-    const notifyParty =
-      (order.notifyPartySnapshot as Record<string, unknown> | null) ?? null;
+    const notifyParty = (order.notifyPartySnapshot as Record<string, unknown> | null) ?? null;
     const seller = companyProfile
       ? {
           schemaVersion: 1,
@@ -989,19 +1175,7 @@ export class CommercialDocumentsService {
           taxId: null,
           address: null,
         };
-    const payment = bankAccount
-      ? {
-          schemaVersion: 1,
-          accountHolder: bankAccount.accountHolder,
-          bankName: bankAccount.bankName,
-          bankAddress: bankAccount.bankAddress,
-          accountNumber: bankAccount.accountNumber,
-          swiftCode: bankAccount.swiftCode,
-          wireRoutingNumber: bankAccount.wireRoutingNumber,
-          achRoutingNumber: bankAccount.achRoutingNumber,
-          currencyCode: bankAccount.currencyCode,
-        }
-      : null;
+    const payment = bankAccount ? this.paymentSnapshot(bankAccount) : null;
     const trade = this.tradeFromOrder(order);
     const shipping = this.shippingFromOrder(order);
     const items = order.items.map((item, index) => {
@@ -1017,9 +1191,7 @@ export class CommercialDocumentsService {
         productId: item.productId,
         sku: item.skuSnapshot,
         description:
-          item.customsDescriptionSnapshot ||
-          item.descriptionSnapshot ||
-          item.productNameSnapshot,
+          item.customsDescriptionSnapshot || item.descriptionSnapshot || item.productNameSnapshot,
         hsCode: item.hsCodeSnapshot ?? '',
         originCountryCode: item.originCountryCodeSnapshot ?? null,
         quantity: item.quantity.toString(),
@@ -1030,9 +1202,7 @@ export class CommercialDocumentsService {
         cartons: item.cartonCount,
         unitsPerCarton: item.unitsPerCarton,
         netWeightKg: netWeight,
-        grossWeightKg: item.totalGrossWeightKg.isZero()
-          ? null
-          : item.totalGrossWeightKg.toString(),
+        grossWeightKg: item.totalGrossWeightKg.isZero() ? null : item.totalGrossWeightKg.toString(),
         cbm: item.totalCbm?.toString() ?? null,
         packaging: item.packagingSnapshot,
       };
@@ -1170,10 +1340,8 @@ export class CommercialDocumentsService {
       namedPlace: (trade.namedPlace as string | undefined) ?? null,
       paymentTerms: (trade.paymentTerms as string | undefined) ?? null,
       contractNo: order.contractNo ?? (trade.contractNo as string | undefined) ?? null,
-      buyerReference:
-        order.buyerReference ?? (trade.buyerReference as string | undefined) ?? null,
-      exchangeRateText:
-        (trade.exchangeRateText as string | undefined) ?? exchangeRateText,
+      buyerReference: order.buyerReference ?? (trade.buyerReference as string | undefined) ?? null,
+      exchangeRateText: (trade.exchangeRateText as string | undefined) ?? exchangeRateText,
     };
   }
 
@@ -1195,7 +1363,9 @@ export class CommercialDocumentsService {
       transitTime: null,
       cartonCount: cartons > 0 ? cartons : null,
       netWeightKg: null,
-      grossWeightKg: gross.isZero() ? null : gross.toDecimalPlaces(6, Decimal.ROUND_HALF_UP).toString(),
+      grossWeightKg: gross.isZero()
+        ? null
+        : gross.toDecimalPlaces(6, Decimal.ROUND_HALF_UP).toString(),
       cbm: cbm.isZero() ? null : cbm.toDecimalPlaces(8, Decimal.ROUND_HALF_UP).toString(),
       marks: null,
     };
@@ -1209,10 +1379,7 @@ export class CommercialDocumentsService {
       const amount = new Decimal(fee.amountForeign.toString());
       if (fee.isFreight) {
         freight = freight.plus(amount);
-      } else if (
-        fee.feeTypeCode === 'insurance' ||
-        /insurance/i.test(fee.nameSnapshot)
-      ) {
+      } else if (fee.feeTypeCode === 'insurance' || /insurance/i.test(fee.nameSnapshot)) {
         insurance = insurance.plus(amount);
       } else {
         other = other.plus(amount);
@@ -1250,7 +1417,8 @@ export class CommercialDocumentsService {
       });
       return { ...result, normalizedItems: result.items };
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Document totals could not be calculated.';
+      const message =
+        error instanceof Error ? error.message : 'Document totals could not be calculated.';
       throw ApiError.validation(message, { totals: 'validation.document.totals' });
     }
   }
@@ -1457,6 +1625,7 @@ export class CommercialDocumentsService {
     const config = this.configFromDocument(document);
     const missing = findMissingDocumentFields(data, config);
     const latestJob = document.renderJobs[0] ?? null;
+    const calculationMeta = (document.calculationSnapshot as Record<string, unknown> | null) ?? {};
     return {
       id: document.id,
       type: document.documentType,
@@ -1470,6 +1639,12 @@ export class CommercialDocumentsService {
       version: document.version,
       orderId: document.orderId,
       orderNo: document.order?.orderNo ?? null,
+      companyProfileId:
+        typeof calculationMeta.companyProfileId === 'string'
+          ? calculationMeta.companyProfileId
+          : null,
+      bankAccountId:
+        typeof calculationMeta.bankAccountId === 'string' ? calculationMeta.bankAccountId : null,
       buyerReference: data.buyerReference,
       contractNo: data.contractNo,
       exchangeRateText: data.exchangeRateText,
@@ -1607,11 +1782,7 @@ export class CommercialDocumentsService {
     return Object.values(normalized).some(Boolean) ? normalized : null;
   }
 
-  private itemCreateData(
-    item: Record<string, unknown>,
-    index: number,
-    currency: string,
-  ) {
+  private itemCreateData(item: Record<string, unknown>, index: number, currency: string) {
     return {
       lineNo: (item.lineNo as number | undefined) ?? index + 1,
       productId: (item.productId as string | null | undefined) ?? null,

@@ -49,6 +49,7 @@ export interface DocumentShippingSnapshot {
 }
 
 export interface DocumentPaymentSnapshot {
+  label?: string | null;
   accountHolder?: string | null;
   bankName?: string | null;
   bankAddress?: string | null;
@@ -56,6 +57,8 @@ export interface DocumentPaymentSnapshot {
   swiftCode?: string | null;
   wireRoutingNumber?: string | null;
   achRoutingNumber?: string | null;
+  bankCountryCode?: string | null;
+  currencyCode?: string | null;
 }
 
 export interface DocumentDeclarationSnapshot {

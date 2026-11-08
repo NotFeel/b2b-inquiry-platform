@@ -54,6 +54,7 @@ export type DocumentShipping = {
 };
 
 export type DocumentPayment = {
+  label?: string | null;
   accountHolder?: string | null;
   bankName?: string | null;
   bankAddress?: string | null;
@@ -61,6 +62,8 @@ export type DocumentPayment = {
   swiftCode?: string | null;
   wireRoutingNumber?: string | null;
   achRoutingNumber?: string | null;
+  bankCountryCode?: string | null;
+  currencyCode?: string | null;
 };
 
 export type DocumentDeclaration = {
@@ -285,6 +288,8 @@ export type CommercialDocumentDetail = {
   version: number;
   orderId: string | null;
   orderNo: string | null;
+  companyProfileId: string | null;
+  bankAccountId: string | null;
   buyerReference: string | null;
   contractNo: string | null;
   exchangeRateText: string | null;
@@ -336,6 +341,11 @@ export type DocumentPrefill = {
   orderNo: string;
   documentType: 'PI' | 'CI';
   currency: string;
+  companyProfileId: string | null;
+  bankAccountId: string | null;
+  bankAccount: BankAccountProfile | null;
+  bankAccountStatus: 'MATCHED' | 'SELECT_REQUIRED' | 'MISSING';
+  bankAccounts: BankAccountProfile[];
   buyer: DocumentParty;
   consignee: DocumentParty | null;
   notifyParty: DocumentParty | null;
@@ -399,19 +409,27 @@ export type DocumentTemplateDetail = DocumentTemplateSummary & {
 
 export type BankAccountProfile = {
   id: string;
-  companyProfileId: string;
   label: string;
-  accountHolder: string;
   bankName: string;
+  currencyCode: string | null;
+  bankCountryCode: string | null;
+  isDefault: boolean;
+  enabled: boolean;
+  hasSwift: boolean;
+  maskedAccountNumber: string;
+};
+
+/** Full account data is only returned by the protected bank-account detail API. */
+export type BankAccountDetail = BankAccountProfile & {
+  companyProfileId: string;
+  accountHolder: string;
   bankAddress: string | null;
   accountNumber: string;
   swiftCode: string | null;
   wireRoutingNumber: string | null;
   achRoutingNumber: string | null;
-  currencyCode: string | null;
-  isDefault: boolean;
-  enabled: boolean;
   sortOrder: number;
+  hasSwift: boolean;
 };
 
 export type CompanyProfile = {
@@ -426,10 +444,27 @@ export type CompanyProfile = {
   address: DocumentAddress;
   logoAssetId: string | null;
   stampAssetId: string | null;
+  logoUrl: string | null;
+  stampUrl: string | null;
   isDefault: boolean;
   enabled: boolean;
   updatedAt?: string;
   bankAccounts?: BankAccountProfile[];
+};
+
+export type CompanyAssetKind = 'logo' | 'stamp';
+
+export type CompanyAssetRemoval = {
+  profile: CompanyProfile;
+  assetId: string | null;
+  removed: boolean;
+  deletionJobId: string | null;
+};
+
+export type UploadedCompanyAssetRemoval = {
+  assetId: string;
+  removed: boolean;
+  deletionJobId: string | null;
 };
 
 export type TemplateValidation = {
@@ -447,27 +482,19 @@ export const commercialDocumentsApi = {
     adminApi.list<OrderListRow>('/admin/orders', query),
   orderDetail: async (id: string) =>
     (await adminApi.get<{ data: OrderDetail }>(`/admin/orders/${id}`)).data,
-  updateOrderCustomerSnapshot: async (
-    id: string,
-    payload: Record<string, unknown>,
-  ) =>
-    (
-      await adminApi.patch<{ data: OrderDetail }>(
-        `/admin/orders/${id}/customer-snapshot`,
-        payload,
-      )
-    ).data,
+  updateOrderCustomerSnapshot: async (id: string, payload: Record<string, unknown>) =>
+    (await adminApi.patch<{ data: OrderDetail }>(`/admin/orders/${id}/customer-snapshot`, payload))
+      .data,
   syncOrderCustomerProfile: async (id: string, version: number) =>
-    adminApi.post<{ data: { customerId: string } }>(
-      `/admin/orders/${id}/sync-customer-profile`,
-      { version, confirm: true },
-    ),
+    adminApi.post<{ data: { customerId: string } }>(`/admin/orders/${id}/sync-customer-profile`, {
+      version,
+      confirm: true,
+    }),
   prefill: async (orderId: string, type: 'PI' | 'CI') =>
     (
-      await adminApi.get<{ data: DocumentPrefill }>(
-        `/admin/orders/${orderId}/document-prefill`,
-        { type },
-      )
+      await adminApi.get<{ data: DocumentPrefill }>(`/admin/orders/${orderId}/document-prefill`, {
+        type,
+      })
     ).data,
   createFromOrder: async (orderId: string, payload: Record<string, unknown>) =>
     (
@@ -531,9 +558,7 @@ export const commercialDocumentsApi = {
   templates: (query: Record<string, string | number | boolean | undefined>) =>
     adminApi.list<DocumentTemplateSummary>('/admin/document-templates', query),
   template: async (id: string) =>
-    (
-      await adminApi.get<{ data: DocumentTemplateDetail }>(`/admin/document-templates/${id}`)
-    ).data,
+    (await adminApi.get<{ data: DocumentTemplateDetail }>(`/admin/document-templates/${id}`)).data,
   activeTemplateOptions: async () =>
     (
       await adminApi.get<{
@@ -551,12 +576,8 @@ export const commercialDocumentsApi = {
       }>('/admin/document-templates/active-options')
     ).data,
   createTemplate: async (payload: Record<string, unknown>) =>
-    (
-      await adminApi.post<{ data: DocumentTemplateDetail }>(
-        '/admin/document-templates',
-        payload,
-      )
-    ).data,
+    (await adminApi.post<{ data: DocumentTemplateDetail }>('/admin/document-templates', payload))
+      .data,
   updateTemplate: async (id: string, payload: Record<string, unknown>) =>
     (
       await adminApi.patch<{ data: DocumentTemplateDetail }>(
@@ -594,33 +615,54 @@ export const commercialDocumentsApi = {
         data: Array<{
           id: string;
           companyName: string;
+          contactName: string | null;
+          phone: string | null;
+          email: string | null;
+          taxId: string | null;
           isDefault: boolean;
           address: DocumentAddress;
+          logoAssetId: string | null;
+          stampAssetId: string | null;
+          logoUrl: string | null;
+          stampUrl: string | null;
           bankAccounts: BankAccountProfile[];
         }>;
       }>('/admin/company-profiles/options')
     ).data,
   createCompanyProfile: async (payload: Record<string, unknown>) =>
+    (await adminApi.post<{ data: CompanyProfile }>('/admin/company-profiles', payload)).data,
+  createCompanyProfileWithBankAccounts: async (payload: Record<string, unknown>) =>
     (
-      await adminApi.post<{ data: CompanyProfile }>('/admin/company-profiles', payload)
-    ).data,
-  updateCompanyProfile: async (id: string, payload: Record<string, unknown>) =>
-    (
-      await adminApi.patch<{ data: CompanyProfile }>(
-        `/admin/company-profiles/${id}`,
+      await adminApi.post<{ data: CompanyProfile }>(
+        '/admin/company-profiles/with-bank-accounts',
         payload,
       )
     ).data,
+  updateCompanyProfile: async (id: string, payload: Record<string, unknown>) =>
+    (await adminApi.patch<{ data: CompanyProfile }>(`/admin/company-profiles/${id}`, payload)).data,
   deleteCompanyProfile: (id: string) =>
     adminApi.delete<{ data: { deleted: true } }>(`/admin/company-profiles/${id}`),
+  removeCompanyAsset: async (id: string, kind: CompanyAssetKind) =>
+    (
+      await adminApi.delete<{ data: CompanyAssetRemoval }>(
+        `/admin/company-profiles/${id}/assets/${kind}`,
+      )
+    ).data,
+  removeUploadedCompanyAsset: async (assetId: string) =>
+    (
+      await adminApi.delete<{ data: UploadedCompanyAssetRemoval }>(
+        `/admin/company-profile-assets/${assetId}`,
+      )
+    ).data,
+  bankAccount: async (id: string) =>
+    (await adminApi.get<{ data: BankAccountDetail }>(`/admin/bank-accounts/${id}`)).data,
   createBankAccount: async (payload: Record<string, unknown>) =>
     (await adminApi.post<{ data: BankAccountProfile }>('/admin/bank-accounts', payload)).data,
   updateBankAccount: async (id: string, payload: Record<string, unknown>) =>
-    (
-      await adminApi.patch<{ data: BankAccountProfile }>(`/admin/bank-accounts/${id}`, payload)
-    ).data,
-  deleteBankAccount: (id: string) =>
-    adminApi.delete<{ data: { deleted: true } }>(`/admin/bank-accounts/${id}`),
+    (await adminApi.patch<{ data: BankAccountProfile }>(`/admin/bank-accounts/${id}`, payload))
+      .data,
+  disableBankAccount: (id: string) =>
+    adminApi.delete<{ data: { disabled: true } }>(`/admin/bank-accounts/${id}`),
 };
 
 export type { AdminFileDownload, PaginatedResponse };
