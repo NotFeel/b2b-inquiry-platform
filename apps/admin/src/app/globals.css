@@ -474,3 +474,139 @@
   white-space: nowrap;
   text-align: left;
 }
+
+/* Customer correction summary (docs/43 R2-3): masked field-level differences
+   are readable but long values never force horizontal page scrolling. */
+.customer-change-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.customer-change-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-sunken);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.customer-change-list li > span:last-child {
+  text-align: right;
+  color: var(--color-text-secondary);
+}
+
+@media (max-width: 767px) {
+  .customer-change-list li {
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .customer-change-list li > span:last-child {
+    text-align: left;
+  }
+}
+
+/* Quotation calculator section navigation and sticky action bar (docs/43 R2-5). */
+.calculator-section-nav {
+  position: sticky;
+  top: var(--topbar-height);
+  z-index: var(--z-sticky);
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+  padding: var(--space-2);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+}
+
+.calculator-section-nav a {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.calculator-section-nav a:hover,
+.calculator-section-nav a:focus-visible {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.calculator-section-nav a:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.calculator-action-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: var(--z-sticky);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-popover);
+}
+
+.calculator-action-status {
+  min-width: 0;
+  flex: 1 1 260px;
+  font-size: var(--text-sm);
+}
+
+.calculator-ready {
+  color: var(--color-success);
+  font-weight: var(--weight-medium);
+}
+
+.calculator-action-bar .button-row {
+  flex: 0 1 auto;
+  justify-content: flex-end;
+}
+
+#calculator-customer,
+#calculator-trade,
+#calculator-billing,
+#calculator-shipping,
+#calculator-items,
+#calculator-pricing,
+#calculator-fees,
+#calculator-result {
+  scroll-margin-top: 96px;
+}
+
+@media (max-width: 767px) {
+  .calculator-section-nav {
+    position: static;
+  }
+
+  .calculator-action-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .calculator-action-bar .button-row {
+    justify-content: stretch;
+  }
+
+  .calculator-action-bar .button-row .btn {
+    flex: 1 1 auto;
+  }
+}

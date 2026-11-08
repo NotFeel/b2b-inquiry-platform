@@ -87,7 +87,6 @@ export type CalculatorInput = {
     };
   };
   buyerReference?: string;
-  contractNo?: string;
   trade?: {
     incotermCode?: string | null;
     namedPlace?: string;
@@ -256,10 +255,14 @@ export const quotationOrderApi = {
       input,
     ),
   createOrder: async (input: CalculatorInput) =>
-    postIdempotently<{ id: string; orderNo: string }>('direct-order', '/admin/orders', input),
+    postIdempotently<{ id: string; orderNo: string; contractNo: string }>(
+      'direct-order',
+      '/admin/orders',
+      input,
+    ),
   convert: async (id: string) =>
     (
-      await adminApi.post<{ data: { id: string; orderNo: string } }>(
+      await adminApi.post<{ data: { id: string; orderNo: string; contractNo: string } }>(
         `/admin/quotations/${id}/convert-to-order`,
       )
     ).data,

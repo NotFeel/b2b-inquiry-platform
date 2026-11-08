@@ -78,7 +78,12 @@ export default function QuotationsPage() {
     setBusyId(row.id);
     try {
       const result = await quotationOrderApi.convert(row.id);
-      toast.success(t('quotationCenter.orderCreated', { number: result.orderNo }));
+      toast.success(
+        t('quotationCenter.orderCreated', {
+          number: result.orderNo,
+          contractNo: result.contractNo,
+        }),
+      );
       await load();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('quotationCenter.saveError'));

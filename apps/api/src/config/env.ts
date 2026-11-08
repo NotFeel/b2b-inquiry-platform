@@ -2,6 +2,15 @@ import { z } from 'zod';
 
 // The API refuses to boot on an invalid environment. Nothing here has a
 // production-safe default for secrets: SESSION_SECRET must be provided.
+function isValidTimeZone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value }).format();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const booleanish = z
   .union([z.boolean(), z.enum(['true', 'false', '1', '0'])])
   .transform((value) => value === true || value === 'true' || value === '1');
@@ -77,6 +86,22 @@ export const envSchema = z
     DOWNLOAD_URL_TTL_SECONDS: z.coerce.number().int().min(30).max(3600).default(300),
 
     SITE_TIMEZONE: z.string().trim().default('UTC'),
+    /**
+     * Internal contract number format for formal orders (docs/43 §11.5):
+     * `${ORDER_CONTRACT_NO_PREFIX}-YYYYMMDD-XXXXXX`, dated in the configured
+     * business timezone. Randomness is always server-generated.
+     */
+    ORDER_CONTRACT_NO_PREFIX: z
+      .string()
+      .trim()
+      .toUpperCase()
+      .regex(/^[A-Z0-9]{1,12}$/, 'ORDER_CONTRACT_NO_PREFIX must be 1-12 letters or digits.')
+      .default('CT'),
+    ORDER_CONTRACT_NO_TIMEZONE: z
+      .string()
+      .trim()
+      .refine(isValidTimeZone, 'ORDER_CONTRACT_NO_TIMEZONE must be a valid IANA timezone.')
+      .default('Asia/Shanghai'),
     LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
     LOG_PRETTY: booleanish.default(false),
     TRUST_PROXY: booleanish.default(true),

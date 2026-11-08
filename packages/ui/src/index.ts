@@ -50,8 +50,14 @@ export {
 } from './components/DataTable';
 export { Pagination, type PaginationProps, type PaginationLabels } from './components/Pagination';
 export { Modal, ConfirmDialog, type ModalProps, type ConfirmDialogProps } from './components/Modal';
-export { Drawer, type DrawerProps } from './components/Drawer';
-export { Tabs, TabPanel, type TabItem, type TabsProps, type TabPanelProps } from './components/Tabs';
+export { Drawer, type DrawerProps, type DrawerSize, type DrawerLabels } from './components/Drawer';
+export {
+  Tabs,
+  TabPanel,
+  type TabItem,
+  type TabsProps,
+  type TabPanelProps,
+} from './components/Tabs';
 export { ToastProvider, useToast, type ToastTone, type ToastMessage } from './components/Toast';
 export { TreeSelect, type TreeNode, type TreeSelectProps } from './components/TreeSelect';
 export { PermissionGate, type PermissionGateProps } from './components/PermissionGate';

@@ -21,6 +21,8 @@ const REQUIRED_PERMISSION_CODES = [
 const REQUIRED_DICTIONARIES: Record<string, string[]> = {
   publish_status: ['draft', 'published', 'unpublished'],
   product_lifecycle: ['available', 'preorder', 'discontinued'],
+  // Country/region selectors must be database-backed (docs/43 R2-1).
+  country: ['US', 'CN', 'GB', 'DE', 'JP', 'AU'],
 };
 
 async function main(): Promise<void> {
@@ -126,7 +128,8 @@ async function main(): Promise<void> {
       continue;
     }
     if (!dictionary.enabled) problems.push('dictionary type ' + typeCode + ' is disabled');
-    if (!dictionary.systemLocked) problems.push('dictionary type ' + typeCode + ' must be system-locked');
+    if (!dictionary.systemLocked)
+      problems.push('dictionary type ' + typeCode + ' must be system-locked');
     const itemsByCode = new Map(dictionary.items.map((item) => [item.code, item] as const));
     for (const itemCode of expectedItems) {
       const item = itemsByCode.get(itemCode);
@@ -134,7 +137,8 @@ async function main(): Promise<void> {
         problems.push('missing dictionary option: ' + typeCode + '.' + itemCode);
         continue;
       }
-      if (!item.enabled) problems.push('dictionary option is disabled: ' + typeCode + '.' + itemCode);
+      if (!item.enabled)
+        problems.push('dictionary option is disabled: ' + typeCode + '.' + itemCode);
       for (const locale of ['zh-CN', 'en-US']) {
         const label = item.translations
           .find((translation) => translation.locale === locale)
@@ -144,6 +148,42 @@ async function main(): Promise<void> {
             'missing dictionary option translation: ' + typeCode + '.' + itemCode + ':' + locale,
           );
         }
+      }
+    }
+  }
+
+  const countryDictionary = await prisma.dictionaryType.findUnique({
+    where: { code: 'country' },
+    select: {
+      enabled: true,
+      systemLocked: true,
+      items: {
+        select: {
+          code: true,
+          enabled: true,
+          translations: { select: { locale: true, label: true } },
+        },
+      },
+    },
+  });
+  if (!countryDictionary) {
+    problems.push('missing dictionary type: country');
+  } else {
+    if (!countryDictionary.enabled) problems.push('dictionary type country is disabled');
+    if (!countryDictionary.systemLocked)
+      problems.push('dictionary type country must be system-locked');
+    if (countryDictionary.items.length < 240) {
+      problems.push(
+        `dictionary type country is incomplete: expected at least 240 items, got ${countryDictionary.items.length}`,
+      );
+    }
+    for (const item of countryDictionary.items) {
+      if (!item.enabled) continue;
+      for (const locale of ['zh-CN', 'en-US']) {
+        const label = item.translations
+          .find((translation) => translation.locale === locale)
+          ?.label.trim();
+        if (!label) problems.push(`missing country translation: ${item.code}:${locale}`);
       }
     }
   }
@@ -202,7 +242,7 @@ async function main(): Promise<void> {
   }
 
   console.log(
-    'Production reference-data verification OK: bulk-import and Excel-to-PDF menus, permissions, translations, role grants, and product status dictionaries.',
+    'Production reference-data verification OK: bulk-import and Excel-to-PDF menus, permissions, translations, role grants, product status dictionaries, and country reference data.',
   );
 }
 

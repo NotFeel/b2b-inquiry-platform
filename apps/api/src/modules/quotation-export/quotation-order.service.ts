@@ -1,5 +1,5 @@
-import { Injectable } from '@nestjs/common';
-import { createHash, randomUUID } from 'node:crypto';
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Prisma } from '@b2b/database';
 import { DICTIONARY_TYPES, ERROR_CODES, QUOTATION_EXPORT_LIMITS } from '@b2b/contracts';
 import Decimal from 'decimal.js';
@@ -16,6 +16,7 @@ import { JsonLogger } from '../../common/logger.service';
 import { CategoriesService } from '../categories/categories.service';
 import { isManagedProductImageKey } from '../products/product-image-policy';
 import { PrismaService } from '../../prisma/prisma.service';
+import { APP_ENV, type AppEnv } from '../../config/config.module';
 import {
   calculateQuotation,
   QuotationEngineError,
@@ -55,6 +56,7 @@ export class QuotationOrderService {
     private readonly storage: StorageService,
     private readonly categories: CategoriesService,
     private readonly logger: JsonLogger,
+    @Optional() @Inject(APP_ENV) private readonly env?: AppEnv,
   ) {}
 
   async config(locale: string) {
@@ -104,6 +106,84 @@ export class QuotationOrderService {
       productLifecycles: optionsFor(DICTIONARY_TYPES.productLifecycle),
       roundingMode: 'CEIL_2',
     };
+  }
+
+  /**
+   * Generates the internal contract number for a formal order.
+   *
+   * `CT-YYYYMMDD-XXXXXX` (docs/43 §11.5). The date is formatted in the business
+   * timezone, not the server timezone, and the random suffix uses Node's
+   * cryptographically secure source. Only formal order creation paths call
+   * this; quotations and historical orders keep their existing value.
+   */
+  generateContractNo(orderDate?: Date | string): string {
+    const prefix =
+      (this.env?.ORDER_CONTRACT_NO_PREFIX ?? process.env.ORDER_CONTRACT_NO_PREFIX ?? 'CT')
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, '')
+        .slice(0, 12) || 'CT';
+    const timeZone =
+      this.env?.ORDER_CONTRACT_NO_TIMEZONE ??
+      process.env.ORDER_CONTRACT_NO_TIMEZONE ??
+      'Asia/Shanghai';
+    // An order date is a calendar date, not an instant. Formatting an ISO date
+    // string directly avoids shifting the day for timezones west of UTC.
+    const dateOnly =
+      typeof orderDate === 'string' ? orderDate.match(/^(\d{4})-(\d{2})-(\d{2})/) : null;
+    let year: string;
+    let month: string;
+    let day: string;
+    if (dateOnly) {
+      year = dateOnly[1] ?? '';
+      month = dateOnly[2] ?? '';
+      day = dateOnly[3] ?? '';
+    } else {
+      const date =
+        orderDate instanceof Date && !Number.isNaN(orderDate.getTime()) ? orderDate : new Date();
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).formatToParts(date);
+      const value = (type: 'year' | 'month' | 'day') =>
+        parts.find((part) => part.type === type)?.value ?? '';
+      year = value('year');
+      month = value('month');
+      day = value('day');
+    }
+    return `${prefix}-${year}${month}${day}-${randomBytes(3).toString('hex').toUpperCase()}`;
+  }
+
+  /**
+   * Runs an order insert with a newly generated contract number. A unique
+   * collision regenerates the number a bounded number of times; every other
+   * database error is rethrown so it cannot be hidden as a retry.
+   */
+  private async withContractNoRetry<T>(
+    create: (contractNo: string) => Promise<T>,
+    orderDate?: Date | string,
+  ): Promise<T> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        return await create(this.generateContractNo(orderDate));
+      } catch (error) {
+        if (!this.isContractNoConflict(error)) throw error;
+        lastError = error;
+      }
+    }
+    throw lastError ?? new Error('Could not allocate a unique contract number.');
+  }
+
+  private isContractNoConflict(error: unknown): boolean {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
+      return false;
+    }
+    const target = (error.meta as { target?: unknown } | undefined)?.target;
+    const fields = Array.isArray(target) ? target.join(',') : String(target ?? '');
+    return fields.toLowerCase().includes('contractno');
   }
 
   async products(
@@ -320,83 +400,99 @@ export class QuotationOrderService {
     this.assertOrderCustomer(input);
     const prepared = await this.prepare(input);
     const result = this.calculate(prepared);
-    const customerSnapshot = this.customerSnapshot(input);
     const historySnapshots = await this.snapshotProductHistory(prepared, actorId);
-    const order = await this.prisma
-      .$transaction(async (tx) => {
-        const customerId = await this.ensureCustomer(tx, input);
-        return tx.order.create({
-          data: {
-            orderNo: this.number('O'),
-            status: 'CONFIRMED',
-            customerId,
-            createdById: actorId,
-            idempotencyKey,
-            idempotencyPayloadHash: payloadHash,
-            orderDate: this.date(input.orderDate!),
-            confirmedAt: new Date(),
-            currencyCode: input.currencyCode,
-            exchangeRate: input.exchangeRate,
-            exchangeRateDate: this.date(input.exchangeRateDate),
-            ...this.freightFields(prepared, result),
-            subtotalCny: result.totals.subtotalCny,
-            freightCny: result.totals.freightCny,
-            deliveryFeeCny: result.totals.deliveryFeeCny,
-            otherFeesCny: result.totals.otherFeesCny,
-            totalAmountCny: result.totals.totalAmountCny,
-            totalAmountForeignExact: result.totals.totalAmountForeignExact,
-            totalAmountForeign: result.totals.totalAmountForeign,
-            version: 1,
-            buyerReference: input.buyerReference || null,
-            contractNo: input.contractNo || null,
-            buyerCompanyName:
-              input.customer.legalCompanyName || input.customer.companyName || null,
-            buyerContactName: input.customer.contactName || null,
-            buyerEmail: input.customer.email ?? null,
-            buyerPhoneE164: input.customer.phoneE164 || null,
-            buyerCountryCode: input.customer.countryCode ?? null,
-            consigneeName: input.customer.shippingAddress?.recipient ?? null,
-            consigneeCountryCode: input.customer.shippingAddress?.countryCode ?? null,
-            buyerSnapshot: this.buyerSnapshot(input) as Prisma.InputJsonValue,
-            consigneeSnapshot: this.consigneeSnapshot(input) as Prisma.InputJsonValue,
-            tradeSnapshot: this.tradeSnapshot(input) as Prisma.InputJsonValue,
-            customerSnapshot: customerSnapshot as Prisma.InputJsonValue,
-            billingAddressSnapshot: input.customer.billingAddress as
-              Prisma.InputJsonValue | undefined,
-            shippingAddressSnapshot: input.customer.shippingAddress as Prisma.InputJsonValue,
-            calculationSnapshot: { input, result } as unknown as Prisma.InputJsonValue,
-            items: {
-              create: this.persistableItems(prepared, result, historySnapshots.byProductId),
-            },
-            fees: {
-              create: result.fees.map((fee, lineNo) => ({
-                lineNo: lineNo + 1,
-                feeTypeCode: fee.typeCode,
-                nameSnapshot: fee.name,
-                amountCny: fee.amountCny,
-                amountForeign: fee.amountForeign,
-                isFreight: fee.isFreight,
-                notes: null,
-              })),
-            },
-          },
-          include: { items: true, fees: true },
-        });
-      })
-      .catch(async (error: unknown) => {
+    const order = await this.withContractNoRetry(
+      (contractNo) =>
+        this.prisma
+          .$transaction(async (tx) => {
+            const customerId = await this.ensureCustomer(tx, input);
+            return tx.order.create({
+              data: {
+                orderNo: this.number('O'),
+                status: 'CONFIRMED',
+                customerId,
+                createdById: actorId,
+                idempotencyKey,
+                idempotencyPayloadHash: payloadHash,
+                orderDate: this.date(input.orderDate!),
+                confirmedAt: new Date(),
+                currencyCode: input.currencyCode,
+                exchangeRate: input.exchangeRate,
+                exchangeRateDate: this.date(input.exchangeRateDate),
+                ...this.freightFields(prepared, result),
+                subtotalCny: result.totals.subtotalCny,
+                freightCny: result.totals.freightCny,
+                deliveryFeeCny: result.totals.deliveryFeeCny,
+                otherFeesCny: result.totals.otherFeesCny,
+                totalAmountCny: result.totals.totalAmountCny,
+                totalAmountForeignExact: result.totals.totalAmountForeignExact,
+                totalAmountForeign: result.totals.totalAmountForeign,
+                version: 1,
+                buyerReference: input.buyerReference || null,
+                contractNo,
+                buyerCompanyName:
+                  input.customer.legalCompanyName || input.customer.companyName || null,
+                buyerContactName: input.customer.contactName || null,
+                buyerEmail: input.customer.email ?? null,
+                buyerPhoneE164: input.customer.phoneE164 || null,
+                buyerCountryCode: input.customer.countryCode ?? null,
+                consigneeName: input.customer.shippingAddress?.recipient ?? null,
+                consigneeCountryCode: input.customer.shippingAddress?.countryCode ?? null,
+                buyerSnapshot: this.buyerSnapshot(input) as Prisma.InputJsonValue,
+                consigneeSnapshot: this.consigneeSnapshot(input) as Prisma.InputJsonValue,
+                tradeSnapshot: this.tradeSnapshot(input, contractNo) as Prisma.InputJsonValue,
+                customerSnapshot: this.customerSnapshot(input, contractNo) as Prisma.InputJsonValue,
+                billingAddressSnapshot: input.customer.billingAddress as
+                  Prisma.InputJsonValue | undefined,
+                shippingAddressSnapshot: input.customer.shippingAddress as Prisma.InputJsonValue,
+                calculationSnapshot: { input, result } as unknown as Prisma.InputJsonValue,
+                items: {
+                  create: this.persistableItems(prepared, result, historySnapshots.byProductId),
+                },
+                fees: {
+                  create: result.fees.map((fee, lineNo) => ({
+                    lineNo: lineNo + 1,
+                    feeTypeCode: fee.typeCode,
+                    nameSnapshot: fee.name,
+                    amountCny: fee.amountCny,
+                    amountForeign: fee.amountForeign,
+                    isFreight: fee.isFreight,
+                    notes: null,
+                  })),
+                },
+              },
+              include: { items: true, fees: true },
+            });
+          })
+          .catch(async (error: unknown) => {
+            // A contract-number collision is retried with a new number; keep the
+            // staged image assets for that attempt.
+            if (this.isContractNoConflict(error)) throw error;
+            await this.discardSnapshotAssets(historySnapshots.stagedAssets);
+            const concurrent = await this.prisma.order.findUnique({
+              where: { createdById_idempotencyKey: { createdById: actorId, idempotencyKey } },
+              include: {
+                items: { orderBy: { lineNo: 'asc' } },
+                fees: { orderBy: { lineNo: 'asc' } },
+              },
+            });
+            if (!concurrent) throw error;
+            if (concurrent.idempotencyPayloadHash !== payloadHash)
+              throw ApiError.conflict(
+                ERROR_CODES.conflict,
+                'Idempotency key was already used for a different request.',
+              );
+            return concurrent;
+          }),
+      input.orderDate ?? undefined,
+    ).catch(async (error: unknown) => {
+      // Exhausted contract-number retries must not leave staged image assets
+      // without an order.
+      if (this.isContractNoConflict(error)) {
         await this.discardSnapshotAssets(historySnapshots.stagedAssets);
-        const concurrent = await this.prisma.order.findUnique({
-          where: { createdById_idempotencyKey: { createdById: actorId, idempotencyKey } },
-          include: { items: { orderBy: { lineNo: 'asc' } }, fees: { orderBy: { lineNo: 'asc' } } },
-        });
-        if (!concurrent) throw error;
-        if (concurrent.idempotencyPayloadHash !== payloadHash)
-          throw ApiError.conflict(
-            ERROR_CODES.conflict,
-            'Idempotency key was already used for a different request.',
-          );
-        return concurrent;
-      });
+      }
+      throw error;
+    });
     await this.audit.record({
       actorId,
       action: 'order.created',
@@ -459,132 +555,158 @@ export class QuotationOrderService {
       include: { items: { orderBy: { lineNo: 'asc' } }, fees: { orderBy: { lineNo: 'asc' } } },
     });
     if (existingOrder) return this.orderDto(existingOrder);
-    const order = await this.prisma
-      .$transaction(async (tx) => {
-        const quotation = await tx.quotation.findUnique({
-          where: { id },
-          include: { items: { orderBy: { lineNo: 'asc' } }, fees: { orderBy: { lineNo: 'asc' } } },
-        });
-        if (!quotation) throw ApiError.notFound('Quotation not found.');
-        if (quotation.status !== 'DRAFT')
-          throw ApiError.conflict(ERROR_CODES.conflict, 'Quotation is not a draft.');
-        const input = (quotation.calculationSnapshot as { input: QuotationCalculationInput }).input;
-        this.assertOrderCustomer(input);
-        if (
-          quotation.items.some(
-            (item) =>
-              !item.cartonCount ||
-              !item.cartonGrossWeightKg ||
-              item.cartonGrossWeightKg.isZero() ||
-              !item.cartonLengthCm ||
-              !item.cartonWidthCm ||
-              !item.cartonHeightCm,
-          )
-        ) {
-          throw ApiError.validation(
-            'Complete packaging data is required before converting this quotation to an order.',
-          );
-        }
-        if (
-          !quotation.freightBillingMethod ||
-          !quotation.freightCurrencyCode ||
-          !quotation.cbmRatePerCbm ||
-          !quotation.kgRatePerKg ||
-          !quotation.volumetricDivisorItemId ||
-          !quotation.volumetricDivisorCode ||
-          !quotation.volumetricDivisorValue
-        ) {
-          throw ApiError.conflict(
-            ERROR_CODES.conflict,
-            'This quotation uses an older freight calculation. Recalculate and save a new quotation before converting it.',
-          );
-        }
-        const created = await tx.order.create({
-          data: {
-            orderNo: this.number('O'),
-            status: 'CONFIRMED',
-            sourceQuotationId: quotation.id,
-            sourceQuotationRevision: quotation.revision,
-            customerId: quotation.customerId,
-            createdById: actorId,
-            orderDate: this.date(input.orderDate!),
-            confirmedAt: new Date(),
-            currencyCode: quotation.currencyCode,
-            exchangeRate: quotation.exchangeRate,
-            exchangeRateDate: quotation.exchangeRateDate,
-            freightBillingMethod: quotation.freightBillingMethod,
-            freightCurrencyCode: quotation.freightCurrencyCode,
-            cbmRatePerCbm: quotation.cbmRatePerCbm,
-            orderTotalCbm: quotation.orderTotalCbm,
-            cbmFreightAmount: quotation.cbmFreightAmount,
-            kgRatePerKg: quotation.kgRatePerKg,
-            volumetricDivisorItemId: quotation.volumetricDivisorItemId,
-            volumetricDivisorCode: quotation.volumetricDivisorCode,
-            volumetricDivisorValue: quotation.volumetricDivisorValue,
-            orderTotalVolumeWeightKg: quotation.orderTotalVolumeWeightKg,
-            orderTotalGrossWeightKg: quotation.orderTotalGrossWeightKg,
-            chargeableWeightKg: quotation.chargeableWeightKg,
-            kgChargeableBasis: quotation.kgChargeableBasis,
-            kgFreightAmount: quotation.kgFreightAmount,
-            selectedFreightAmount: quotation.selectedFreightAmount,
-            freightAllocationSnapshot: quotation.freightAllocationSnapshot as Prisma.InputJsonValue,
-            subtotalCny: quotation.subtotalCny,
-            freightCny: quotation.freightCny,
-            deliveryFeeCny: quotation.deliveryFeeCny,
-            otherFeesCny: quotation.otherFeesCny,
-            totalAmountCny: quotation.totalAmountCny,
-            totalAmountForeignExact: quotation.totalAmountForeignExact,
-            totalAmountForeign: quotation.totalAmountForeign,
-            version: 1,
-            buyerReference: input.buyerReference || null,
-            contractNo: input.contractNo || null,
-            buyerCompanyName:
-              input.customer.legalCompanyName || input.customer.companyName || null,
-            buyerContactName: input.customer.contactName || null,
-            buyerEmail: input.customer.email ?? null,
-            buyerPhoneE164: input.customer.phoneE164 || null,
-            buyerCountryCode: input.customer.countryCode ?? null,
-            consigneeName: input.customer.shippingAddress?.recipient ?? null,
-            consigneeCountryCode: input.customer.shippingAddress?.countryCode ?? null,
-            buyerSnapshot: this.buyerSnapshot(input) as Prisma.InputJsonValue,
-            consigneeSnapshot: this.consigneeSnapshot(input) as Prisma.InputJsonValue,
-            tradeSnapshot: this.tradeSnapshot(input) as Prisma.InputJsonValue,
-            customerSnapshot: quotation.customerSnapshot as Prisma.InputJsonValue,
-            billingAddressSnapshot: input.customer.billingAddress as
-              Prisma.InputJsonValue | undefined,
-            shippingAddressSnapshot: input.customer.shippingAddress as Prisma.InputJsonValue,
-            calculationSnapshot: quotation.calculationSnapshot as Prisma.InputJsonValue,
-            items: { create: quotation.items.map((item) => this.copyItem(item)) },
-            fees: {
-              create: quotation.fees.map((fee) => ({
-                lineNo: fee.lineNo,
-                feeTypeCode: fee.feeTypeCode,
-                nameSnapshot: fee.nameSnapshot,
-                amountCny: fee.amountCny,
-                amountForeign: fee.amountForeign,
-                isFreight: fee.isFreight,
-                notes: fee.notes,
-              })),
-            },
-          },
-          include: { items: true, fees: true },
-        });
-        await tx.quotation.update({
-          where: { id: quotation.id, status: 'DRAFT' },
-          data: { status: 'CONVERTED', convertedAt: new Date() },
-        });
-        return created;
-      })
-      .catch(async (error: unknown) => {
-        // `sourceQuotationId` is unique. If two conversion requests race, the
-        // loser returns the winner's persisted order instead of duplicating it.
-        const concurrentOrder = await this.prisma.order.findUnique({
-          where: { sourceQuotationId: id },
-          include: { items: { orderBy: { lineNo: 'asc' } }, fees: { orderBy: { lineNo: 'asc' } } },
-        });
-        if (concurrentOrder) return concurrentOrder;
-        throw error;
-      });
+    // Read the persisted quotation date before opening the write transaction so
+    // the generated contract number uses the same business date. The value is
+    // immutable for a quotation revision; the transaction still re-reads the
+    // row and re-checks its status.
+    const dateSource = await this.prisma.quotation.findUnique({
+      where: { id },
+      select: { calculationSnapshot: true },
+    });
+    if (!dateSource) throw ApiError.notFound('Quotation not found.');
+    const dateInput = (dateSource.calculationSnapshot as { input: QuotationCalculationInput })
+      .input;
+    const order = await this.withContractNoRetry(
+      (contractNo) =>
+        this.prisma
+          .$transaction(async (tx) => {
+            const quotation = await tx.quotation.findUnique({
+              where: { id },
+              include: {
+                items: { orderBy: { lineNo: 'asc' } },
+                fees: { orderBy: { lineNo: 'asc' } },
+              },
+            });
+            if (!quotation) throw ApiError.notFound('Quotation not found.');
+            if (quotation.status !== 'DRAFT')
+              throw ApiError.conflict(ERROR_CODES.conflict, 'Quotation is not a draft.');
+            const input = (quotation.calculationSnapshot as { input: QuotationCalculationInput })
+              .input;
+            this.assertOrderCustomer(input);
+            if (
+              quotation.items.some(
+                (item) =>
+                  !item.cartonCount ||
+                  !item.cartonGrossWeightKg ||
+                  item.cartonGrossWeightKg.isZero() ||
+                  !item.cartonLengthCm ||
+                  !item.cartonWidthCm ||
+                  !item.cartonHeightCm,
+              )
+            ) {
+              throw ApiError.validation(
+                'Complete packaging data is required before converting this quotation to an order.',
+              );
+            }
+            if (
+              !quotation.freightBillingMethod ||
+              !quotation.freightCurrencyCode ||
+              !quotation.cbmRatePerCbm ||
+              !quotation.kgRatePerKg ||
+              !quotation.volumetricDivisorItemId ||
+              !quotation.volumetricDivisorCode ||
+              !quotation.volumetricDivisorValue
+            ) {
+              throw ApiError.conflict(
+                ERROR_CODES.conflict,
+                'This quotation uses an older freight calculation. Recalculate and save a new quotation before converting it.',
+              );
+            }
+            const created = await tx.order.create({
+              data: {
+                orderNo: this.number('O'),
+                status: 'CONFIRMED',
+                sourceQuotationId: quotation.id,
+                sourceQuotationRevision: quotation.revision,
+                customerId: quotation.customerId,
+                createdById: actorId,
+                orderDate: this.date(input.orderDate!),
+                confirmedAt: new Date(),
+                currencyCode: quotation.currencyCode,
+                exchangeRate: quotation.exchangeRate,
+                exchangeRateDate: quotation.exchangeRateDate,
+                freightBillingMethod: quotation.freightBillingMethod,
+                freightCurrencyCode: quotation.freightCurrencyCode,
+                cbmRatePerCbm: quotation.cbmRatePerCbm,
+                orderTotalCbm: quotation.orderTotalCbm,
+                cbmFreightAmount: quotation.cbmFreightAmount,
+                kgRatePerKg: quotation.kgRatePerKg,
+                volumetricDivisorItemId: quotation.volumetricDivisorItemId,
+                volumetricDivisorCode: quotation.volumetricDivisorCode,
+                volumetricDivisorValue: quotation.volumetricDivisorValue,
+                orderTotalVolumeWeightKg: quotation.orderTotalVolumeWeightKg,
+                orderTotalGrossWeightKg: quotation.orderTotalGrossWeightKg,
+                chargeableWeightKg: quotation.chargeableWeightKg,
+                kgChargeableBasis: quotation.kgChargeableBasis,
+                kgFreightAmount: quotation.kgFreightAmount,
+                selectedFreightAmount: quotation.selectedFreightAmount,
+                freightAllocationSnapshot:
+                  quotation.freightAllocationSnapshot as Prisma.InputJsonValue,
+                subtotalCny: quotation.subtotalCny,
+                freightCny: quotation.freightCny,
+                deliveryFeeCny: quotation.deliveryFeeCny,
+                otherFeesCny: quotation.otherFeesCny,
+                totalAmountCny: quotation.totalAmountCny,
+                totalAmountForeignExact: quotation.totalAmountForeignExact,
+                totalAmountForeign: quotation.totalAmountForeign,
+                version: 1,
+                buyerReference: input.buyerReference || null,
+                contractNo,
+                buyerCompanyName:
+                  input.customer.legalCompanyName || input.customer.companyName || null,
+                buyerContactName: input.customer.contactName || null,
+                buyerEmail: input.customer.email ?? null,
+                buyerPhoneE164: input.customer.phoneE164 || null,
+                buyerCountryCode: input.customer.countryCode ?? null,
+                consigneeName: input.customer.shippingAddress?.recipient ?? null,
+                consigneeCountryCode: input.customer.shippingAddress?.countryCode ?? null,
+                buyerSnapshot: this.buyerSnapshot(input) as Prisma.InputJsonValue,
+                consigneeSnapshot: this.consigneeSnapshot(input) as Prisma.InputJsonValue,
+                tradeSnapshot: this.tradeSnapshot(input, contractNo) as Prisma.InputJsonValue,
+                customerSnapshot: {
+                  ...((quotation.customerSnapshot as Record<string, unknown> | null) ?? {}),
+                  contractNo,
+                } as Prisma.InputJsonValue,
+                billingAddressSnapshot: input.customer.billingAddress as
+                  Prisma.InputJsonValue | undefined,
+                shippingAddressSnapshot: input.customer.shippingAddress as Prisma.InputJsonValue,
+                calculationSnapshot: quotation.calculationSnapshot as Prisma.InputJsonValue,
+                items: { create: quotation.items.map((item) => this.copyItem(item)) },
+                fees: {
+                  create: quotation.fees.map((fee) => ({
+                    lineNo: fee.lineNo,
+                    feeTypeCode: fee.feeTypeCode,
+                    nameSnapshot: fee.nameSnapshot,
+                    amountCny: fee.amountCny,
+                    amountForeign: fee.amountForeign,
+                    isFreight: fee.isFreight,
+                    notes: fee.notes,
+                  })),
+                },
+              },
+              include: { items: true, fees: true },
+            });
+            await tx.quotation.update({
+              where: { id: quotation.id, status: 'DRAFT' },
+              data: { status: 'CONVERTED', convertedAt: new Date() },
+            });
+            return created;
+          })
+          .catch(async (error: unknown) => {
+            // `sourceQuotationId` is unique. If two conversion requests race, the
+            // loser returns the winner's persisted order instead of duplicating it.
+            const concurrentOrder = await this.prisma.order.findUnique({
+              where: { sourceQuotationId: id },
+              include: {
+                items: { orderBy: { lineNo: 'asc' } },
+                fees: { orderBy: { lineNo: 'asc' } },
+              },
+            });
+            if (concurrentOrder) return concurrentOrder;
+            throw error;
+          }),
+      dateInput.orderDate ?? undefined,
+    );
     await this.audit.record({
       actorId,
       action: 'quotation.converted_to_order',
@@ -596,7 +718,27 @@ export class QuotationOrderService {
     return this.orderDto(order);
   }
 
+  /**
+   * List filters may only use enabled dictionary options. The UI already uses
+   * the same option sets, but a crafted query must not silently produce an
+   * empty result for a code that does not exist (docs/43 R2-1).
+   */
+  private async assertReferenceCode(typeCode: 'country' | 'currency', code?: string) {
+    if (!code) return;
+    const item = await this.prisma.dictionaryItem.findFirst({
+      where: { code, enabled: true, type: { code: typeCode, enabled: true } },
+      select: { id: true },
+    });
+    if (!item) {
+      throw ApiError.validation(`Unknown ${typeCode} option.`, {
+        code: 'validation.reference.invalid',
+      });
+    }
+  }
+
   async listOrders(query: OrderListQuery) {
+    await this.assertReferenceCode('country', query.country);
+    await this.assertReferenceCode('currency', query.currency);
     const documentWhere = (type: 'PI' | 'CI') => {
       const flag = type === 'PI' ? query.hasPi : query.hasCi;
       if (flag === undefined) return undefined;
@@ -709,7 +851,9 @@ export class QuotationOrderService {
       existing.push(document);
       documentsByOrder.set(document.orderId, existing);
     }
-    const itemSummaryByOrder = new Map(itemSummaries.map((summary) => [summary.orderId, summary] as const));
+    const itemSummaryByOrder = new Map(
+      itemSummaries.map((summary) => [summary.orderId, summary] as const),
+    );
     const documentSummary = (document: (typeof documents)[number] | null) =>
       document
         ? {
@@ -737,19 +881,19 @@ export class QuotationOrderService {
         existing.push(document);
         series.set(document.documentNo, existing);
       }
-      const candidates = [...series.values()].map((documentsInSeries) =>
-        [...documentsInSeries].sort(
-          (left, right) =>
-            right.revisionNo - left.revisionNo ||
-            right.createdAt.getTime() - left.createdAt.getTime(),
-        )[0]!,
+      const candidates = [...series.values()].map(
+        (documentsInSeries) =>
+          [...documentsInSeries].sort(
+            (left, right) =>
+              right.revisionNo - left.revisionNo ||
+              right.createdAt.getTime() - left.createdAt.getTime(),
+          )[0]!,
       );
       // Revisions are compared only inside one documentNo series. Separate
       // series are ordered by the creation time of their latest revision.
       return (
-        candidates.sort(
-          (left, right) => right.createdAt.getTime() - left.createdAt.getTime(),
-        )[0] ?? null
+        candidates.sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())[0] ??
+        null
       );
     };
     return {
@@ -868,8 +1012,14 @@ export class QuotationOrderService {
     }
     const buyer = this.partySnapshot(input.buyer);
     const consignee = this.partySnapshot(input.consignee);
+    const existingTrade = (order.tradeSnapshot as Record<string, unknown> | null) ?? {};
+    // A few historical orders only carry the number inside tradeSnapshot; keep
+    // that value when the dedicated column is still empty.
+    const persistedContractNo =
+      order.contractNo ??
+      (typeof existingTrade.contractNo === 'string' ? existingTrade.contractNo : null);
     const trade = {
-      ...((order.tradeSnapshot as Record<string, unknown> | null) ?? {}),
+      ...existingTrade,
       schemaVersion: 1,
       ...(input.trade
         ? {
@@ -878,7 +1028,10 @@ export class QuotationOrderService {
             paymentTerms: input.trade.paymentTerms ?? null,
           }
         : {}),
-      contractNo: input.contractNo ?? null,
+      // Contract numbers are system-owned. The correction endpoint accepts the
+      // field for backward compatibility but always preserves the persisted
+      // value (docs/43 §11.5).
+      contractNo: persistedContractNo,
       buyerReference: input.buyerReference ?? null,
     };
     const updated = await this.prisma.order.updateMany({
@@ -895,7 +1048,6 @@ export class QuotationOrderService {
               : undefined,
         tradeSnapshot: trade as Prisma.InputJsonValue,
         buyerReference: input.buyerReference ?? null,
-        contractNo: input.contractNo ?? null,
         buyerCompanyName: buyer.companyName,
         buyerContactName: buyer.contactName,
         buyerEmail: buyer.email,
@@ -916,14 +1068,12 @@ export class QuotationOrderService {
           billingAddress: buyer.billingAddress,
           shippingAddress: consignee.shippingAddress,
           buyerReference: input.buyerReference ?? null,
-          contractNo: input.contractNo ?? null,
+          contractNo: persistedContractNo,
         } as Prisma.InputJsonValue,
         billingAddressSnapshot: (buyer.billingAddress ?? undefined) as
-          | Prisma.InputJsonValue
-          | undefined,
+          Prisma.InputJsonValue | undefined,
         shippingAddressSnapshot: (consignee.shippingAddress ?? undefined) as
-          | Prisma.InputJsonValue
-          | undefined,
+          Prisma.InputJsonValue | undefined,
       },
     });
     if (updated.count !== 1) {
@@ -947,9 +1097,6 @@ export class QuotationOrderService {
     }
     if ((order.buyerReference ?? null) !== (input.buyerReference ?? null)) {
       changedFields.push('buyerReference');
-    }
-    if ((order.contractNo ?? null) !== (input.contractNo ?? null)) {
-      changedFields.push('contractNo');
     }
     if (input.trade) changedFields.push('tradeSnapshot');
     if (input.notifyParty) changedFields.push('notifyPartySnapshot');
@@ -994,8 +1141,7 @@ export class QuotationOrderService {
       where: { id: customer.id },
       data: {
         displayName:
-          (typeof buyer.companyName === 'string' && buyer.companyName) ||
-          customer.displayName,
+          (typeof buyer.companyName === 'string' && buyer.companyName) || customer.displayName,
         legalName: typeof buyer.companyName === 'string' ? buyer.companyName : customer.legalName,
         contactName:
           typeof buyer.contactName === 'string' ? buyer.contactName : customer.contactName,
@@ -1021,7 +1167,10 @@ export class QuotationOrderService {
       entityType: 'Customer',
       entityId: customer.id,
       requestId,
-      metadata: { orderNo: order.orderNo, fields: ['company', 'contact', 'email', 'tax', 'address'] },
+      metadata: {
+        orderNo: order.orderNo,
+        fields: ['company', 'contact', 'email', 'tax', 'address'],
+      },
     });
     return { customerId: customer.id };
   }
@@ -1557,8 +1706,7 @@ export class QuotationOrderService {
       create: {
         phoneE164: input.customer.phoneE164,
         countryCode: input.customer.countryCode ?? null,
-        displayName:
-          input.customer.legalCompanyName || input.customer.companyName || null,
+        displayName: input.customer.legalCompanyName || input.customer.companyName || null,
         legalName: input.customer.legalCompanyName || null,
         contactName: input.customer.contactName || null,
         email: input.customer.email ?? null,
@@ -1581,8 +1729,7 @@ export class QuotationOrderService {
     const fields: string[] = [];
     if (!input.orderDate) fields.push('orderDate');
     if (!customer.companyName && !customer.contactName) fields.push('customerName');
-    if (!customer.phoneE164 || !/^\+[1-9]\d{1,14}$/.test(customer.phoneE164))
-      fields.push('phone');
+    if (!customer.phoneE164 || !/^\+[1-9]\d{1,14}$/.test(customer.phoneE164)) fields.push('phone');
     if (!customer.countryCode) fields.push('countryCode');
     if (!address?.recipient) fields.push('recipient');
     if (!address?.countryCode) fields.push('shippingCountryCode');
@@ -1597,7 +1744,7 @@ export class QuotationOrderService {
     }
   }
 
-  private customerSnapshot(input: QuotationCalculationInput) {
+  private customerSnapshot(input: QuotationCalculationInput, contractNo = input.contractNo) {
     return {
       schemaVersion: 1,
       companyName: input.customer.companyName,
@@ -1613,7 +1760,7 @@ export class QuotationOrderService {
       billingAddress: this.normalizeAddress(input.customer.billingAddress),
       shippingAddress: this.normalizeAddress(input.customer.shippingAddress),
       buyerReference: input.buyerReference || null,
-      contractNo: input.contractNo || null,
+      contractNo: contractNo || null,
     };
   }
 
@@ -1654,7 +1801,11 @@ export class QuotationOrderService {
     if (!shipping) return null;
     return {
       schemaVersion: 1,
-      companyName: shipping.companyName || input.customer.legalCompanyName || input.customer.companyName || null,
+      companyName:
+        shipping.companyName ||
+        input.customer.legalCompanyName ||
+        input.customer.companyName ||
+        null,
       contactName: shipping.recipient || input.customer.contactName || null,
       phone: shipping.phoneE164 || input.customer.phoneE164 || null,
       email: input.customer.email ?? null,
@@ -1662,7 +1813,7 @@ export class QuotationOrderService {
     };
   }
 
-  private tradeSnapshot(input: QuotationCalculationInput) {
+  private tradeSnapshot(input: QuotationCalculationInput, contractNo = input.contractNo) {
     const rate = new Decimal(input.exchangeRate);
     const exchangeRateText =
       input.currencyCode === 'CNY'
@@ -1673,7 +1824,7 @@ export class QuotationOrderService {
       incotermCode: input.trade?.incotermCode ?? null,
       namedPlace: input.trade?.namedPlace || null,
       paymentTerms: input.trade?.paymentTerms || null,
-      contractNo: input.contractNo || null,
+      contractNo: contractNo || null,
       buyerReference: input.buyerReference || null,
       exchangeRateText,
     };

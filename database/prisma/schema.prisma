@@ -1190,7 +1190,7 @@ model Order {
   /// Optimistic lock for customer-snapshot corrections (docs/41 §4.3).
   version                   Int                   @default(1)
   buyerReference            String?               @db.VarChar(120)
-  contractNo                String?               @db.VarChar(80)
+  contractNo                String?               @unique @db.VarChar(80)
   /// Structured buyer/consignee projections used for list filters and search.
   /// The JSON snapshots remain the document source of truth.
   buyerCompanyName          String?               @db.VarChar(240)

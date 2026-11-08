@@ -48,4 +48,11 @@ describe('quotation/order calculation input schema', () => {
     expect(quotationPreviewSchema.parse(inputWithoutTitle).title).toBe('Temporary calculation');
     expect(quotationCalculationSchema.safeParse(inputWithoutTitle).success).toBe(false);
   });
+
+  it('keeps contractNo optional for legacy drafts; formal order creation overwrites it', () => {
+    expect(quotationCalculationSchema.parse(input)).toMatchObject({ contractNo: '' });
+    expect(quotationCalculationSchema.parse({ ...input, contractNo: 'MANUAL-1' }).contractNo).toBe(
+      'MANUAL-1',
+    );
+  });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { PROTECTED_MENU_CODES } from '@b2b/contracts';
 import { MENU_SEED, type MenuSeed } from './menu-seed';
 import { REFERENCE_PERMISSIONS, REFERENCE_ROLES, syncReferenceData } from './seed';
+import { COUNTRY_REFERENCE } from './reference-data/countries';
 
 function flattenMenus(menus: MenuSeed[]): MenuSeed[] {
   return menus.flatMap((menu) => [menu, ...flattenMenus(menu.children ?? [])]);
@@ -55,5 +56,19 @@ describe('reference authorization and navigation seed', () => {
     await expect(syncReferenceData(client as never)).rejects.toBe(sentinel);
     expect(tx.$executeRaw).toHaveBeenCalledOnce();
     expect(tx.permission.findMany).toHaveBeenCalledOnce();
+  });
+});
+
+describe('country reference data', () => {
+  it('contains a complete, unique ISO alpha-2 set with bilingual labels', () => {
+    expect(COUNTRY_REFERENCE.length).toBeGreaterThanOrEqual(240);
+    const codes = COUNTRY_REFERENCE.map(([code]) => code);
+    expect(new Set(codes).size).toBe(codes.length);
+    for (const [code, en, zh] of COUNTRY_REFERENCE) {
+      expect(code).toMatch(/^[A-Z]{2}$/);
+      expect(en.trim()).not.toBe('');
+      expect(zh.trim()).not.toBe('');
+    }
+    expect(codes).toEqual(expect.arrayContaining(['US', 'CN', 'GB', 'DE', 'JP', 'AU']));
   });
 });

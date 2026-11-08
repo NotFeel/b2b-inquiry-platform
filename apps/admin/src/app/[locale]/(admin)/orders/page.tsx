@@ -43,22 +43,16 @@ import { useBreadcrumb } from '../../../../components/use-breadcrumb';
 import { useViewport } from '../../../../components/use-viewport';
 import { useSession } from '../../../../components/session-provider';
 import { OrderListView } from '../../../../components/orders/order-list-view';
+import { CountrySelect } from '../../../../components/reference-selects';
+import {
+  buildCustomerChanges,
+  type EditableCustomerSnapshot,
+  type EditableParty,
+} from '../../../../lib/order-customer-edit';
 
 type DocumentType = 'PI' | 'CI';
 
-interface PartyForm {
-  companyName: string;
-  contactName: string;
-  phone: string;
-  email: string;
-  taxId: string;
-  line1: string;
-  line2: string;
-  city: string;
-  state: string;
-  postalCode: string;
-  countryCode: string;
-}
+type PartyForm = EditableParty;
 
 const emptyParty: PartyForm = {
   companyName: '',
@@ -72,10 +66,17 @@ const emptyParty: PartyForm = {
   state: '',
   postalCode: '',
   countryCode: '',
+  addressCountryCode: '',
 };
 
-function partyToForm(party: DocumentParty | null | undefined): PartyForm {
-  const address = party?.billingAddress ?? party?.shippingAddress ?? party?.address ?? null;
+function partyToForm(
+  party: DocumentParty | null | undefined,
+  kind: 'billing' | 'shipping' = 'billing',
+): PartyForm {
+  const address =
+    kind === 'shipping'
+      ? (party?.shippingAddress ?? party?.address ?? party?.billingAddress ?? null)
+      : (party?.billingAddress ?? party?.address ?? party?.shippingAddress ?? null);
   return {
     companyName: String(party?.companyName ?? ''),
     contactName: String(party?.contactName ?? ''),
@@ -87,12 +88,39 @@ function partyToForm(party: DocumentParty | null | undefined): PartyForm {
     city: String(address?.city ?? ''),
     state: String(address?.state ?? ''),
     postalCode: String(address?.postalCode ?? ''),
-    countryCode: String(address?.countryCode ?? party?.countryCode ?? ''),
+    countryCode: String(party?.countryCode ?? ''),
+    addressCountryCode: String(address?.countryCode ?? party?.countryCode ?? ''),
   };
 }
 
-function formatAddress(party: DocumentParty | null | undefined): string {
-  const address = party?.billingAddress ?? party?.shippingAddress ?? party?.address ?? null;
+function formSnapshot(
+  buyer: PartyForm,
+  consignee: PartyForm,
+  reference: {
+    buyerReference: string;
+    incotermCode: string;
+    namedPlace: string;
+    paymentTerms: string;
+  },
+): EditableCustomerSnapshot {
+  return {
+    buyer,
+    consignee,
+    buyerReference: reference.buyerReference,
+    incotermCode: reference.incotermCode,
+    namedPlace: reference.namedPlace,
+    paymentTerms: reference.paymentTerms,
+  };
+}
+
+function formatAddress(
+  party: DocumentParty | null | undefined,
+  kind: 'billing' | 'shipping' = 'billing',
+): string {
+  const address =
+    kind === 'shipping'
+      ? (party?.shippingAddress ?? party?.address ?? party?.billingAddress ?? null)
+      : (party?.billingAddress ?? party?.address ?? party?.shippingAddress ?? null);
   if (!address) return '—';
   return [
     address.companyName,
@@ -166,8 +194,14 @@ export default function OrdersPage() {
     paymentTerms: '',
   });
   const [syncProfile, setSyncProfile] = useState(false);
+  const [billingSameAsConsignee, setBillingSameAsConsignee] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [editBusy, setEditBusy] = useState(false);
+  const [editBase, setEditBase] = useState<EditableCustomerSnapshot | null>(null);
+  const [conflictDetail, setConflictDetail] = useState<OrderDetail | null>(null);
+  const [pendingSync, setPendingSync] = useState<{ orderId: string; version: number } | null>(null);
+  const [syncPrompt, setSyncPrompt] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   const [createType, setCreateType] = useState<DocumentType | null>(null);
   const [createOrderId, setCreateOrderId] = useState<string | null>(null);
@@ -307,16 +341,25 @@ export default function OrdersPage() {
 
   const startEdit = () => {
     if (!detail) return;
-    setBuyerForm(partyToForm(detail.buyer));
-    setConsigneeForm(partyToForm(detail.consignee));
+    const buyer = partyToForm(detail.buyer);
+    const consignee = partyToForm(detail.consignee, 'shipping');
     const trade = detail.trade ?? {};
-    setReferenceForm({
+    const reference = {
       buyerReference: detail.buyerReference ?? '',
       contractNo: detail.contractNo ?? '',
       incotermCode: String(trade.incotermCode ?? ''),
       namedPlace: String(trade.namedPlace ?? ''),
       paymentTerms: String(trade.paymentTerms ?? ''),
-    });
+    };
+    setBuyerForm(buyer);
+    setConsigneeForm(consignee);
+    setReferenceForm(reference);
+    setEditBase(formSnapshot(buyer, consignee, reference));
+    setConflictDetail(null);
+    setPendingSync(null);
+    setSyncPrompt(false);
+    setSyncError(null);
+    setBillingSameAsConsignee(false);
     setSyncProfile(false);
     setEditError(null);
     setEditOpen(true);
@@ -339,7 +382,7 @@ export default function OrdersPage() {
             city: form.city.trim() || null,
             state: form.state.trim() || null,
             postalCode: form.postalCode.trim() || null,
-            countryCode: form.countryCode.trim().toUpperCase() || null,
+            countryCode: form.addressCountryCode.trim().toUpperCase() || null,
           },
         }
       : {
@@ -351,15 +394,21 @@ export default function OrdersPage() {
             city: form.city.trim() || null,
             state: form.state.trim() || null,
             postalCode: form.postalCode.trim() || null,
-            countryCode: form.countryCode.trim().toUpperCase() || null,
+            countryCode: form.addressCountryCode.trim().toUpperCase() || null,
           },
         }),
   });
 
   const saveCorrection = async () => {
     if (!detail) return;
-    if (!buyerForm.phone.trim() || !buyerForm.line1.trim() || !buyerForm.city.trim()) {
-      setEditError(`${t('commercialDocuments.orderEditor.buyerSection')}: ${t('errors.VALIDATION_FAILED')}`);
+    if (!/^\+[1-9]\d{1,14}$/.test(buyerForm.phone.trim())) {
+      setEditError(t('quotationCenter.orderPhoneInvalid'));
+      return;
+    }
+    if (!buyerForm.line1.trim() || !buyerForm.city.trim()) {
+      setEditError(
+        `${t('commercialDocuments.orderEditor.buyerSection')}: ${t('errors.VALIDATION_FAILED')}`,
+      );
       return;
     }
     if (!consigneeForm.line1.trim() || !consigneeForm.city.trim()) {
@@ -370,13 +419,13 @@ export default function OrdersPage() {
     }
     setEditBusy(true);
     setEditError(null);
+    setSyncError(null);
     try {
       const updated = await commercialDocumentsApi.updateOrderCustomerSnapshot(detail.id, {
         version: detail.version,
         buyer: buildParty(buyerForm, 'buyer'),
         consignee: buildParty(consigneeForm, 'consignee'),
         buyerReference: referenceForm.buyerReference.trim() || null,
-        contractNo: referenceForm.contractNo.trim() || null,
         trade: {
           incotermCode: referenceForm.incotermCode || null,
           namedPlace: referenceForm.namedPlace.trim() || null,
@@ -384,23 +433,60 @@ export default function OrdersPage() {
         },
       });
       setDetail(updated);
-      if (syncProfile && canSyncProfile) {
-        try {
-          await commercialDocumentsApi.syncOrderCustomerProfile(updated.id, updated.version);
-          toast.success(t('commercialDocuments.orderEditor.synced'));
-        } catch (cause) {
-          toast.error(
-            cause instanceof AdminApiError
-              ? translateError(locale, cause.code)
-              : t('errors.INTERNAL_ERROR'),
-          );
-        }
-      }
+      setEditBase(formSnapshot(buyerForm, consigneeForm, referenceForm));
+      setConflictDetail(null);
       toast.success(t('commercialDocuments.orderEditor.saved'));
+      await load();
+      if (syncProfile && canSyncProfile) {
+        // The snapshot is saved first. Customer-master sync is a separate,
+        // explicitly confirmed operation and may fail without losing the
+        // correction (docs/43 §11.4).
+        setPendingSync({ orderId: updated.id, version: updated.version });
+        setSyncPrompt(true);
+        return;
+      }
+      setEditOpen(false);
+    } catch (cause) {
+      if (
+        cause instanceof AdminApiError &&
+        (cause.code === 'ORDER_CONCURRENT_UPDATE' || cause.status === 409)
+      ) {
+        try {
+          const latest = await commercialDocumentsApi.orderDetail(detail.id);
+          setConflictDetail(latest);
+          setEditError(t('commercialDocuments.orderEditor.conflictHint'));
+        } catch {
+          setEditError(t('commercialDocuments.orderEditor.conflictReloadFailed'));
+        }
+      } else {
+        setEditError(
+          cause instanceof AdminApiError
+            ? translateError(locale, cause.code)
+            : t('errors.INTERNAL_ERROR'),
+        );
+      }
+    } finally {
+      setEditBusy(false);
+    }
+  };
+
+  const retrySync = async () => {
+    if (!pendingSync) return;
+    setEditBusy(true);
+    setSyncPrompt(false);
+    setSyncError(null);
+    try {
+      await commercialDocumentsApi.syncOrderCustomerProfile(
+        pendingSync.orderId,
+        pendingSync.version,
+      );
+      toast.success(t('commercialDocuments.orderEditor.synced'));
+      setPendingSync(null);
+      setSyncPrompt(false);
       setEditOpen(false);
       await load();
     } catch (cause) {
-      setEditError(
+      setSyncError(
         cause instanceof AdminApiError
           ? translateError(locale, cause.code)
           : t('errors.INTERNAL_ERROR'),
@@ -409,6 +495,67 @@ export default function OrdersPage() {
       setEditBusy(false);
     }
   };
+
+  const useServerVersion = () => {
+    if (!conflictDetail) return;
+    const buyer = partyToForm(conflictDetail.buyer);
+    const consignee = partyToForm(conflictDetail.consignee, 'shipping');
+    const trade = conflictDetail.trade ?? {};
+    const reference = {
+      buyerReference: conflictDetail.buyerReference ?? '',
+      contractNo: conflictDetail.contractNo ?? '',
+      incotermCode: String(trade.incotermCode ?? ''),
+      namedPlace: String(trade.namedPlace ?? ''),
+      paymentTerms: String(trade.paymentTerms ?? ''),
+    };
+    setBuyerForm(buyer);
+    setConsigneeForm(consignee);
+    setReferenceForm(reference);
+    setEditBase(formSnapshot(buyer, consignee, reference));
+    setDetail(conflictDetail);
+    setConflictDetail(null);
+    setEditError(null);
+  };
+
+  const keepLocalAndRefreshVersion = () => {
+    if (!conflictDetail) return;
+    const buyer = partyToForm(conflictDetail.buyer);
+    const consignee = partyToForm(conflictDetail.consignee, 'shipping');
+    const trade = conflictDetail.trade ?? {};
+    setEditBase(
+      formSnapshot(buyer, consignee, {
+        buyerReference: conflictDetail.buyerReference ?? '',
+        incotermCode: String(trade.incotermCode ?? ''),
+        namedPlace: String(trade.namedPlace ?? ''),
+        paymentTerms: String(trade.paymentTerms ?? ''),
+      }),
+    );
+    setDetail(conflictDetail);
+    setReferenceForm((current) => ({
+      ...current,
+      contractNo: conflictDetail.contractNo ?? '',
+    }));
+    setConflictDetail(null);
+    setEditError(t('commercialDocuments.orderEditor.conflictKeepHint'));
+  };
+
+  const currentSnapshot = formSnapshot(buyerForm, consigneeForm, referenceForm);
+  const customerChanges = editBase ? buildCustomerChanges(editBase, currentSnapshot) : [];
+  const conflictChanges = conflictDetail
+    ? buildCustomerChanges(
+        formSnapshot(
+          partyToForm(conflictDetail.buyer),
+          partyToForm(conflictDetail.consignee, 'shipping'),
+          {
+            buyerReference: conflictDetail.buyerReference ?? '',
+            incotermCode: String((conflictDetail.trade ?? {}).incotermCode ?? ''),
+            namedPlace: String((conflictDetail.trade ?? {}).namedPlace ?? ''),
+            paymentTerms: String((conflictDetail.trade ?? {}).paymentTerms ?? ''),
+          },
+        ),
+        currentSnapshot,
+      )
+    : [];
 
   const openCreate = async (type: DocumentType, orderId: string) => {
     setCreateType(type);
@@ -585,6 +732,14 @@ export default function OrdersPage() {
       <Drawer
         open={Boolean(detail) || detailLoading}
         title={detail?.orderNo ?? t('commercialDocuments.orderDetail.title')}
+        size="xl"
+        resizable
+        maximizable
+        labels={{
+          maximize: t('commercialDocuments.orderDetail.maximize'),
+          restore: t('commercialDocuments.orderDetail.restore'),
+          resize: t('commercialDocuments.orderDetail.resize'),
+        }}
         onClose={() => {
           detailSequence.current += 1;
           setDetail(null);
@@ -622,7 +777,9 @@ export default function OrdersPage() {
         {detail ? (
           <div className="stack-sm">
             {hasIssued ? (
-              <div className="alert alert-warning">{t('commercialDocuments.orderEditor.issuedHint')}</div>
+              <div className="alert alert-warning">
+                {t('commercialDocuments.orderEditor.issuedHint')}
+              </div>
             ) : null}
             <Tabs
               items={tabItems}
@@ -655,11 +812,12 @@ export default function OrdersPage() {
                 <h3>{t('commercialDocuments.orderDetail.buyer')}</h3>
                 <pre className="pre-wrap">{formatAddress(detail.buyer)}</pre>
                 <p>
-                  {String(detail.buyer?.contactName ?? '')} · {String(detail.buyer?.phone ?? '')} ·{' '}
-                  {String(detail.buyer?.email ?? '')}
+                  {[detail.buyer?.contactName, detail.buyer?.phone, detail.buyer?.email]
+                    .filter((value) => Boolean(value && String(value).trim()))
+                    .join(' · ') || t('commercialDocuments.orderEditor.notProvided')}
                 </p>
                 <h3>{t('commercialDocuments.orderDetail.consignee')}</h3>
-                <pre className="pre-wrap">{formatAddress(detail.consignee)}</pre>
+                <pre className="pre-wrap">{formatAddress(detail.consignee, 'shipping')}</pre>
                 {detail.notifyParty ? (
                   <>
                     <h3>{t('commercialDocuments.orderDetail.notifyParty')}</h3>
@@ -706,7 +864,8 @@ export default function OrdersPage() {
                         <td>{item.quantity}</td>
                         <td>{item.packaging?.cartonCount ?? '—'}</td>
                         <td>
-                          {item.packaging?.cartonLengthCm ?? '—'} × {item.packaging?.cartonWidthCm ?? '—'} ×{' '}
+                          {item.packaging?.cartonLengthCm ?? '—'} ×{' '}
+                          {item.packaging?.cartonWidthCm ?? '—'} ×{' '}
                           {item.packaging?.cartonHeightCm ?? '—'} cm
                         </td>
                         <td>{item.packaging?.totalCbm ?? '—'}</td>
@@ -772,7 +931,9 @@ export default function OrdersPage() {
                               size="sm"
                               variant="ghost"
                               onClick={() =>
-                                router.push(localeHref(locale, `/commercial-documents/${document.id}`))
+                                router.push(
+                                  localeHref(locale, `/commercial-documents/${document.id}`),
+                                )
                               }
                             >
                               {t('commercialDocuments.actions.open')}
@@ -813,9 +974,21 @@ export default function OrdersPage() {
             <Button variant="secondary" onClick={() => setEditOpen(false)} disabled={editBusy}>
               {t('common.cancel')}
             </Button>
-            <Button loading={editBusy} onClick={() => void saveCorrection()}>
-              {t('commercialDocuments.orderEditor.save')}
-            </Button>
+            {pendingSync ? (
+              <Button loading={editBusy} onClick={() => void retrySync()}>
+                {syncPrompt
+                  ? t('commercialDocuments.orderEditor.syncNow')
+                  : t('commercialDocuments.orderEditor.retrySync')}
+              </Button>
+            ) : (
+              <Button
+                loading={editBusy}
+                disabled={Boolean(conflictDetail)}
+                onClick={() => void saveCorrection()}
+              >
+                {t('commercialDocuments.orderEditor.save')}
+              </Button>
+            )}
           </>
         }
       >
@@ -826,10 +999,120 @@ export default function OrdersPage() {
               {editError}
             </div>
           ) : null}
+          {conflictDetail ? (
+            <div className="alert alert-warning" role="alert">
+              <strong>{t('commercialDocuments.orderEditor.conflictTitle')}</strong>
+              <p>{t('commercialDocuments.orderEditor.conflictHint')}</p>
+              {conflictChanges.length > 0 ? (
+                <ul className="customer-change-list">
+                  {conflictChanges.map((change) => (
+                    <li key={change.field}>
+                      <span>{t(change.labelKey)}</span>
+                      <span className="mono">
+                        {change.before || t('commercialDocuments.orderEditor.notProvided')} →{' '}
+                        {change.after || t('commercialDocuments.orderEditor.notProvided')}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="muted">{t('commercialDocuments.orderEditor.noChanges')}</p>
+              )}
+              <div className="button-row">
+                <Button size="sm" variant="secondary" onClick={useServerVersion}>
+                  {t('commercialDocuments.orderEditor.useServerVersion')}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={keepLocalAndRefreshVersion}>
+                  {t('commercialDocuments.orderEditor.keepLocal')}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          {pendingSync && syncPrompt && !syncError ? (
+            <div className="alert alert-warning" role="status">
+              <strong>{t('commercialDocuments.orderEditor.syncPromptTitle')}</strong>
+              <p>{t('commercialDocuments.orderEditor.syncConfirm')}</p>
+              <div className="button-row">
+                <Button size="sm" loading={editBusy} onClick={() => void retrySync()}>
+                  {t('commercialDocuments.orderEditor.syncNow')}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={editBusy}
+                  onClick={() => {
+                    setPendingSync(null);
+                    setSyncPrompt(false);
+                    setEditOpen(false);
+                  }}
+                >
+                  {t('commercialDocuments.orderEditor.syncLater')}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          {syncError ? (
+            <div className="alert alert-error" role="alert">
+              <strong>{t('commercialDocuments.orderEditor.syncFailed')}</strong>
+              <p>{syncError}</p>
+              <p className="muted">{t('commercialDocuments.orderEditor.syncFailedHint')}</p>
+              <Button
+                size="sm"
+                variant="secondary"
+                loading={editBusy}
+                onClick={() => void retrySync()}
+              >
+                {t('commercialDocuments.orderEditor.retrySync')}
+              </Button>
+            </div>
+          ) : null}
           <h3>{t('commercialDocuments.orderEditor.buyerSection')}</h3>
-          <PartyFields form={buyerForm} setForm={setBuyerForm} t={t} prefix="buyer" />
-          <h3>{t('commercialDocuments.orderEditor.consigneeSection')}</h3>
-          <PartyFields form={consigneeForm} setForm={setConsigneeForm} t={t} prefix="consignee" />
+          <PartyFields
+            form={buyerForm}
+            setForm={setBuyerForm}
+            t={t}
+            addressTitle={t('commercialDocuments.orderDetail.billingAddress')}
+          />
+          <Checkbox
+            id="billing-same-as-consignee"
+            label={t('commercialDocuments.orderEditor.billingSameAsConsignee')}
+            help={t('commercialDocuments.orderEditor.billingSameAsConsigneeHint')}
+            checked={billingSameAsConsignee}
+            onChange={(event) => {
+              const checked = event.target.checked;
+              setBillingSameAsConsignee(checked);
+              if (!checked) return;
+              setBuyerForm((current) => ({
+                ...current,
+                line1: consigneeForm.line1,
+                line2: consigneeForm.line2,
+                city: consigneeForm.city,
+                state: consigneeForm.state,
+                postalCode: consigneeForm.postalCode,
+                addressCountryCode: consigneeForm.addressCountryCode,
+              }));
+            }}
+          />
+          <div className="row-between">
+            <h3>{t('commercialDocuments.orderEditor.consigneeSection')}</h3>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                setConsigneeForm({ ...buyerForm });
+                setBillingSameAsConsignee(false);
+              }}
+            >
+              {t('commercialDocuments.orderEditor.copyBuyer')}
+            </Button>
+          </div>
+          <p className="field-help">{t('commercialDocuments.orderEditor.copyBuyerHint')}</p>
+          <PartyFields
+            form={consigneeForm}
+            setForm={setConsigneeForm}
+            t={t}
+            addressTitle={t('commercialDocuments.orderDetail.shippingAddress')}
+          />
           <h3>{t('commercialDocuments.orderEditor.referenceSection')}</h3>
           <div className="form-grid">
             <Field label={t('quotationCenter.buyerReference')}>
@@ -839,22 +1122,26 @@ export default function OrdersPage() {
                   describedBy={describedBy}
                   value={referenceForm.buyerReference}
                   onChange={(event) =>
-                    setReferenceForm((current) => ({ ...current, buyerReference: event.target.value }))
+                    setReferenceForm((current) => ({
+                      ...current,
+                      buyerReference: event.target.value,
+                    }))
                   }
                   maxLength={120}
                 />
               )}
             </Field>
-            <Field label={t('quotationCenter.contractNo')}>
+            <Field
+              label={t('quotationCenter.contractNo')}
+              help={t('commercialDocuments.orderEditor.contractNoReadOnly')}
+            >
               {({ inputId, describedBy }) => (
                 <Input
                   inputId={inputId}
                   describedBy={describedBy}
                   value={referenceForm.contractNo}
-                  onChange={(event) =>
-                    setReferenceForm((current) => ({ ...current, contractNo: event.target.value }))
-                  }
-                  maxLength={80}
+                  readOnly
+                  disabled
                 />
               )}
             </Field>
@@ -865,11 +1152,24 @@ export default function OrdersPage() {
                   describedBy={describedBy}
                   value={referenceForm.incotermCode}
                   placeholder={t('common.none')}
-                  options={['EXW', 'FCA', 'FAS', 'FOB', 'CFR', 'CIF', 'CPT', 'CIP', 'DAP', 'DPU', 'DDP'].map(
-                    (code) => ({ value: code, label: code }),
-                  )}
+                  options={[
+                    'EXW',
+                    'FCA',
+                    'FAS',
+                    'FOB',
+                    'CFR',
+                    'CIF',
+                    'CPT',
+                    'CIP',
+                    'DAP',
+                    'DPU',
+                    'DDP',
+                  ].map((code) => ({ value: code, label: code }))}
                   onChange={(event) =>
-                    setReferenceForm((current) => ({ ...current, incotermCode: event.target.value }))
+                    setReferenceForm((current) => ({
+                      ...current,
+                      incotermCode: event.target.value,
+                    }))
                   }
                 />
               )}
@@ -894,13 +1194,32 @@ export default function OrdersPage() {
                   describedBy={describedBy}
                   value={referenceForm.paymentTerms}
                   onChange={(event) =>
-                    setReferenceForm((current) => ({ ...current, paymentTerms: event.target.value }))
+                    setReferenceForm((current) => ({
+                      ...current,
+                      paymentTerms: event.target.value,
+                    }))
                   }
                   maxLength={500}
                 />
               )}
             </Field>
           </div>
+          <h3>{t('commercialDocuments.orderEditor.changeSummary')}</h3>
+          {customerChanges.length > 0 ? (
+            <ul className="customer-change-list" aria-live="polite">
+              {customerChanges.map((change) => (
+                <li key={change.field}>
+                  <span>{t(change.labelKey)}</span>
+                  <span className="mono">
+                    {change.before || t('commercialDocuments.orderEditor.notProvided')} →{' '}
+                    {change.after || t('commercialDocuments.orderEditor.notProvided')}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="muted">{t('commercialDocuments.orderEditor.noChanges')}</p>
+          )}
           {canSyncProfile ? (
             <Checkbox
               id="sync-profile"
@@ -1014,145 +1333,172 @@ function PartyFields({
   form,
   setForm,
   t,
-  prefix,
+  addressTitle,
 }: {
   form: PartyForm;
   setForm: (updater: (current: PartyForm) => PartyForm) => void;
   t: (key: string, params?: Record<string, string | number>) => string;
-  prefix: string;
+  addressTitle: string;
 }) {
   const update = (key: keyof PartyForm) => (event: ChangeEvent<HTMLInputElement>) =>
     setForm((current) => ({ ...current, [key]: event.target.value }));
+  const notProvided = t('commercialDocuments.orderEditor.notProvided');
   return (
-    <div className="form-grid">
-      <Field label={t('commercialDocuments.editor.fields.companyName')}>
-        {({ inputId, describedBy }) => (
-          <Input
-            inputId={inputId}
-            describedBy={describedBy}
-            value={form.companyName}
-            onChange={update('companyName')}
-            maxLength={240}
-          />
-        )}
-      </Field>
-      <Field label={t('commercialDocuments.editor.fields.contactName')}>
-        {({ inputId, describedBy }) => (
-          <Input
-            inputId={inputId}
-            describedBy={describedBy}
-            value={form.contactName}
-            onChange={update('contactName')}
-            maxLength={160}
-          />
-        )}
-      </Field>
-      <Field label={t('commercialDocuments.editor.fields.phone')}>
-        {({ inputId, describedBy }) => (
-          <Input
-            inputId={inputId}
-            describedBy={describedBy}
-            value={form.phone}
-            onChange={update('phone')}
-            maxLength={24}
-          />
-        )}
-      </Field>
-      <Field label={t('commercialDocuments.editor.fields.email')}>
-        {({ inputId, describedBy }) => (
-          <Input
-            inputId={inputId}
-            describedBy={describedBy}
-            type="email"
-            value={form.email}
-            onChange={update('email')}
-            maxLength={254}
-          />
-        )}
-      </Field>
-      <Field label={t('commercialDocuments.editor.fields.taxId')}>
-        {({ inputId, describedBy }) => (
-          <Input
-            inputId={inputId}
-            describedBy={describedBy}
-            value={form.taxId}
-            onChange={update('taxId')}
-            maxLength={60}
-          />
-        )}
-      </Field>
-      <Field label={t('commercialDocuments.editor.fields.addressLine1')}>
-        {({ inputId, describedBy }) => (
-          <Input
-            inputId={inputId}
-            describedBy={describedBy}
-            value={form.line1}
-            onChange={update('line1')}
-            maxLength={240}
-          />
-        )}
-      </Field>
-      <Field label={t('commercialDocuments.editor.fields.addressLine2')}>
-        {({ inputId, describedBy }) => (
-          <Input
-            inputId={inputId}
-            describedBy={describedBy}
-            value={form.line2}
-            onChange={update('line2')}
-            maxLength={240}
-          />
-        )}
-      </Field>
-      <Field label={t('commercialDocuments.editor.fields.city')}>
-        {({ inputId, describedBy }) => (
-          <Input
-            inputId={inputId}
-            describedBy={describedBy}
-            value={form.city}
-            onChange={update('city')}
-            maxLength={120}
-          />
-        )}
-      </Field>
-      <Field label={t('commercialDocuments.editor.fields.state')}>
-        {({ inputId, describedBy }) => (
-          <Input
-            inputId={inputId}
-            describedBy={describedBy}
-            value={form.state}
-            onChange={update('state')}
-            maxLength={120}
-          />
-        )}
-      </Field>
-      <Field label={t('commercialDocuments.editor.fields.postalCode')}>
-        {({ inputId, describedBy }) => (
-          <Input
-            inputId={inputId}
-            describedBy={describedBy}
-            value={form.postalCode}
-            onChange={update('postalCode')}
-            maxLength={40}
-          />
-        )}
-      </Field>
-      <Field label={t('commercialDocuments.editor.fields.countryCode')}>
-        {({ inputId, describedBy }) => (
-          <Input
-            inputId={inputId}
-            describedBy={describedBy}
-            value={form.countryCode}
-            onChange={(event) =>
-              setForm((current) => ({
-                ...current,
-                countryCode: event.target.value.toUpperCase().slice(0, 2),
-              }))
-            }
-            maxLength={2}
-            aria-label={`${prefix} country`}
-          />
-        )}
-      </Field>
+    <div className="stack-sm">
+      <h4>{t('commercialDocuments.orderEditor.partyDetails')}</h4>
+      <div className="form-grid">
+        <Field label={t('commercialDocuments.editor.fields.companyName')}>
+          {({ inputId, describedBy }) => (
+            <Input
+              inputId={inputId}
+              describedBy={describedBy}
+              value={form.companyName}
+              onChange={update('companyName')}
+              placeholder={notProvided}
+              maxLength={240}
+            />
+          )}
+        </Field>
+        <Field label={t('commercialDocuments.editor.fields.contactName')}>
+          {({ inputId, describedBy }) => (
+            <Input
+              inputId={inputId}
+              describedBy={describedBy}
+              value={form.contactName}
+              onChange={update('contactName')}
+              placeholder={notProvided}
+              maxLength={160}
+            />
+          )}
+        </Field>
+        <Field
+          label={t('commercialDocuments.editor.fields.phone')}
+          help={t('commercialDocuments.orderEditor.phoneHint')}
+        >
+          {({ inputId, describedBy }) => (
+            <Input
+              inputId={inputId}
+              describedBy={describedBy}
+              value={form.phone}
+              onChange={update('phone')}
+              placeholder="+14155552671"
+              maxLength={24}
+            />
+          )}
+        </Field>
+        <Field label={t('commercialDocuments.editor.fields.email')}>
+          {({ inputId, describedBy }) => (
+            <Input
+              inputId={inputId}
+              describedBy={describedBy}
+              type="email"
+              value={form.email}
+              onChange={update('email')}
+              placeholder={notProvided}
+              maxLength={254}
+            />
+          )}
+        </Field>
+        <Field label={t('commercialDocuments.editor.fields.taxId')}>
+          {({ inputId, describedBy }) => (
+            <Input
+              inputId={inputId}
+              describedBy={describedBy}
+              value={form.taxId}
+              onChange={update('taxId')}
+              placeholder={notProvided}
+              maxLength={60}
+            />
+          )}
+        </Field>
+        <Field label={t('commercialDocuments.editor.fields.countryCode')}>
+          {({ inputId, describedBy }) => (
+            <CountrySelect
+              inputId={inputId}
+              describedBy={describedBy}
+              value={form.countryCode}
+              onChange={(value) => setForm((current) => ({ ...current, countryCode: value }))}
+              placeholder={t('countrySelect.placeholder')}
+            />
+          )}
+        </Field>
+      </div>
+      <h4>{addressTitle}</h4>
+      <div className="form-grid">
+        <Field label={t('commercialDocuments.editor.fields.addressLine1')}>
+          {({ inputId, describedBy }) => (
+            <Input
+              inputId={inputId}
+              describedBy={describedBy}
+              value={form.line1}
+              onChange={update('line1')}
+              placeholder={notProvided}
+              maxLength={240}
+            />
+          )}
+        </Field>
+        <Field label={t('commercialDocuments.editor.fields.addressLine2')}>
+          {({ inputId, describedBy }) => (
+            <Input
+              inputId={inputId}
+              describedBy={describedBy}
+              value={form.line2}
+              onChange={update('line2')}
+              placeholder={notProvided}
+              maxLength={240}
+            />
+          )}
+        </Field>
+        <Field label={t('commercialDocuments.editor.fields.city')}>
+          {({ inputId, describedBy }) => (
+            <Input
+              inputId={inputId}
+              describedBy={describedBy}
+              value={form.city}
+              onChange={update('city')}
+              placeholder={notProvided}
+              maxLength={120}
+            />
+          )}
+        </Field>
+        <Field label={t('commercialDocuments.editor.fields.state')}>
+          {({ inputId, describedBy }) => (
+            <Input
+              inputId={inputId}
+              describedBy={describedBy}
+              value={form.state}
+              onChange={update('state')}
+              placeholder={notProvided}
+              maxLength={120}
+            />
+          )}
+        </Field>
+        <Field label={t('commercialDocuments.editor.fields.postalCode')}>
+          {({ inputId, describedBy }) => (
+            <Input
+              inputId={inputId}
+              describedBy={describedBy}
+              value={form.postalCode}
+              onChange={update('postalCode')}
+              placeholder={notProvided}
+              maxLength={40}
+            />
+          )}
+        </Field>
+        <Field label={t('commercialDocuments.editor.fields.addressCountryCode')}>
+          {({ inputId, describedBy }) => (
+            <CountrySelect
+              inputId={inputId}
+              describedBy={describedBy}
+              value={form.addressCountryCode}
+              onChange={(value) =>
+                setForm((current) => ({ ...current, addressCountryCode: value }))
+              }
+              placeholder={t('countrySelect.placeholder')}
+            />
+          )}
+        </Field>
+      </div>
     </div>
   );
 }

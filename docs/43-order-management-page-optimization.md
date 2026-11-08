@@ -816,7 +816,7 @@ Page 管理路由级状态、列表请求、分页和 Drawer 生命周期；展�
 #### 产品规则
 
 - 合同编号是系统内部生成的业务编号，不再由管理员手工输入。
-- 默认格式：`WX-YYYYMMDD-XXXXXX`，例如 `WX-20261107-A3F91C`。前缀通过环境配置 `ORDER_CONTRACT_NO_PREFIX` 管理，默认 `WX`；日期使用配置的业务时区（默认 `Asia/Shanghai`）；随机段为密码学安全随机字符，建议 6–8 位大写 Base32/Hex。
+- 默认格式：`CT-YYYYMMDD-XXXXXX`，例如 `CT-20261107-A3F91C`。前缀通过环境配置 `ORDER_CONTRACT_NO_PREFIX` 管理，默认 `CT`；日期使用配置的业务时区（默认 `Asia/Shanghai`）；随机段为密码学安全随机字符，建议 6–8 位大写 Base32/Hex。
 - 编号由后端生成，前端不得生成、拼接、覆盖或将空字符串当作最终编号。
 - 生成时机：正式创建订单时生成；从报价草稿转换为订单时生成。仅保存报价草稿不占用合同编号，草稿界面显示“创建正式订单时自动生成”。
 - 创建成功响应必须返回 `contractNo`，成功提示/订单详情展示实际编号。前端只读展示；正式创建订单前可以显示“系统自动生成”，不能预测展示一个尚未持久化的编号。
@@ -942,3 +942,115 @@ Page 管理路由级状态、列表请求、分页和 Drawer 生命周期；展�
 5. 不改订单金额算法、商品/费用快照、PI/CI 生命周期语义，不重建订单系统。
 6. 每个阶段完成后报告改动文件、行为变化、测试命令和真实结果。
 7. 不修改或部署生产环境；本任务仅修改本地开发代码并提交可审查的变更。
+
+---
+
+## 12. R2 执行记录（2026-11-07）
+
+### 12.1 R2-0 基线核对结论
+
+| 项目 | 现状 | 本轮改动 | 复用 | 不做 |
+|---|---|---|---|---|
+| 国家参考数据 | **缺失**：无 `Country` 表，也无 `country` 字典；订单列表、计算器、客户资料均为自由输入两位代码 | 新增 `country` 系统字典（250 项（ISO 3166-1 alpha-2 加常用 XK），含中英文），启动时由 reference seed 幂等同步；新增统一 `CountrySelect` | `DictionaryType` / `DictionaryItem` / `DictionaryItemTranslation` 两层字典、`/admin/dictionary/options/:typeCode` | 不新增 Country 表，不接第三方国家 API，不在前端硬编码国家列表 |
+| 币种参考数据 | 已有 `currency` 字典，本地启用 7 项（CNY/USD/EUR/GBP/JPY/CAD/AUD） | 列表筛选改用统一 `CurrencySelect`；计算器继续使用 `config().currencies` | 现有字典与 `QuotationOrderService.config()` | 不新建第二套币种配置 |
+| Drawer 组件 | `packages/ui/Drawer` 只有 `open/title/onClose/footer`，固定宽度，无拖动/最大化 | 扩展为 `size`、`resizable`、`maximizable`、`defaultWidth/minWidth/maxWidth`；原生 Pointer Events + 键盘调整；焦点进入/恢复与 Tab 限制 | 现有 `@b2b/ui` Drawer 与 `.overlay-right/.drawer` 样式 | 不在订单页复制 Drawer，不引入拖拽库 |
+| 订单详情 | 六 Tab（Overview/Customer/Items/Charges/Documents/Audit）已存在；Drawer 560px 宽；Items 表头 `t('quotationCenter.amount')` 缺少 `currency` 参数，输出字面量 `{{currency}}` | Drawer 默认 `xl`（`min(96vw, 1180px)`），可拖动/最大化；仅明细表格内部横向滚动；金额表头改为“金额 / Amount” | 现有六个 Tab、`OrderDetail` DTO、`commercialDocumentsApi.prefill/createFromOrder` | 不重写详情数据模型，不改 PI/CI 生命周期 |
+| 客户快照 | 前端一个平铺 `PartyForm`；账单/收货国家与主体国家混用；409 只显示错误；勾选同步后立即调用，失败无单独重试 | 主体与地址分组；主体国家/地址国家拆分；复制买方、账单同收货（一次性复制）；脱敏变更摘要；409 对比与显式选择；快照保存后单独确认主档同步，失败可重试 | `PATCH /admin/orders/:id/customer-snapshot`、`POST /admin/orders/:id/sync-customer-profile`、`Order.version` | 不改金额/商品/费用；不允许改合同编号 |
+| 合同编号 | `CalculatorInput.contractNo` 可编辑；`createOrder` 与 `convertQuotation` 都把输入值写入 Order；无唯一约束 | 两个正式创建入口均改为后端 `generateContractNo()`；`CT-YYYYMMDD-XXXXXX`，前缀/时区可配置；唯一索引 + 有限重试；客户修正接口不再允许修改 | 现有订单事务、幂等键、`Order`/`tradeSnapshot`/`customerSnapshot`、PI/CI prefill 的 `order.contractNo` | 不重写历史订单；不给历史空值补号；不把 Buyer Reference 与合同编号混用 |
+| 计算器 | 客户/贸易/地址/商品/费用/结果混在少量大区块；合同编号可编辑；无分区锚点；操作区在页面末尾 | 8 个可定位分区；顶部锚点；必填检查条；sticky 操作栏；国家选择器统一；合同编号只读说明；日期 `lang` 跟随 locale | `quotationOrderApi.config/products/preview/saveDraft/createOrder`、现有商品选择器、费用与运费规则 | 不改金额引擎、运费算法、Excel 模板映射 |
+
+关键确认：
+
+1. **国家数据原先不完整，实际是完全没有数据库参考数据。** 本轮新增 `database/prisma/reference-data/countries.ts`，并在 `seed.ts` 中作为 `systemLocked` 的 `country` 字典写入；本地数据库已同步 250 项，`US/CN/GB/DE/JP/AU` 等常用项及中英文翻译已验证。
+2. **Drawer 原先不支持宽度扩展。** 已在 `packages/ui` 内扩展，而不是在订单页面复制一套抽屉；`package` 构建与 Admin/API typecheck 已通过。
+3. **合同编号的写入路径只有两处**：`createOrder` 与 `convertQuotation`。两处均已改造；`Order.contractNo` 已加唯一索引。
+
+### 12.2 R2-1 参考数据选择器
+
+- 新增 `apps/admin/src/components/reference-selects.tsx`：
+  - `CountrySelect`：可搜索、可清空、键盘上下/Enter/Escape、移动端可用；值始终为两位 ISO code，历史未知 code 仍显示并标记为不可用，避免编辑旧订单时静默丢失。
+  - `CurrencySelect`：复用现有 `Select`，值始终为 ISO-4217 code。
+- 订单列表高级筛选的国家/币种改为上述组件；计算器客户国家、账单国家、收货国家及币种改为同一组件；客户资料编辑的两个主体国家、两个地址国家改为 `CountrySelect`。
+- 新增 `referenceDataApi.options()`，按 `typeCode + locale` 缓存同一请求；失败不缓存，允许重试。
+- `orderListQuerySchema` 仍校验国家/币种格式；`listOrders` 额外校验其必须是对应字典的启用项，避免伪造 code 静默返回空列表。
+- 测试：`order-customer-edit.spec.ts`、`reference-data-api.spec.ts`、`order-list.spec.ts` 覆盖筛选/URL/变更摘要/选项搜索。
+
+### 12.3 R2-2 Drawer 与详情
+
+- `Drawer` 新 API：`size`、`resizable`、`maximizable`、`defaultWidth`、`minWidth`、`maxWidth`、`labels`。
+- 拖动使用 Pointer Events；分隔条可聚焦，支持 `ArrowLeft/ArrowRight/Home/End`；拖动条不覆盖关闭按钮。
+- 打开时焦点进入 Drawer，关闭时恢复；Tab 焦点限制在 Drawer 内；Escape 关闭。
+- 订单详情使用 `size="xl"`；1440px 下默认 1180px，最大化后 100vw；商品/费用/单据表格只在 `.table-scroll/.table-wrap` 内部横向滚动。
+- 修复 `{{currency}}`：`quotationCenter.amount` 改为不带占位符的“金额 / Amount”；`exchangeRate` 同步改为“1 CNY = 目标币种 / target currency”，避免未传参的字面量。
+
+### 12.4 R2-3 客户资料
+
+- 表单分组：买方主体 + 账单地址、收货人主体 + 收货地址、贸易与参考信息、变更摘要。
+- 主体国家与地址国家分离；新增“复制买方资料”和“账单地址同收货地址（仅复制当前值一次，之后独立编辑）”。
+- 空值输入框显示“未填写 / Not provided”；电话提示 E.164，保存前仍由服务端 schema 校验。
+- 保存前实时显示字段级变更摘要；电话、邮箱、税号、地址行使用掩码，审计只记录字段名，不写敏感值。
+- 409：
+  - 保留当前表单输入；
+  - 重新拉取最新订单，展示服务器值 vs 本地值的差异；
+  - 用户可显式“采用服务器版本”或“保留我的编辑”后基于最新 version 再保存；不会自动覆盖输入。
+- 主档同步：
+  - 快照保存成功后不再自动同步；
+  - 若勾选“同时更新客户主档”，先提示“订单修正已保存”，再单独确认同步；
+  - 同步失败显示“订单修正已保存，客户主档同步失败”，可单独重试，不会重复保存表单。
+- 合同编号在修正表单中只读；服务端即使收到 `contractNo` 也保留原值。
+
+### 12.5 R2-4 合同编号
+
+- 新增 `generateContractNo(orderDate?)`：
+  - 默认 `CT-YYYYMMDD-XXXXXX`；
+  - `ORDER_CONTRACT_NO_PREFIX`（默认 `CT`）与 `ORDER_CONTRACT_NO_TIMEZONE`（默认 `Asia/Shanghai`）加入 env schema 与 `.env.example`；
+  - 随机段使用 `crypto.randomBytes(3)`，6 位大写 Hex；
+  - 订单日期按日历日期格式化，避免 UTC 跨时区偏移。
+- `createOrder`、`convertQuotation` 均在订单事务内生成并写入 `Order.contractNo`、`tradeSnapshot.contractNo`、`customerSnapshot.contractNo`。
+- 唯一冲突有限重试 5 次，只对 `contractNo` 的 P2002 重试；其他唯一冲突与幂等冲突保持原逻辑。
+- 幂等重试继续返回第一次创建的订单与合同编号；`convertQuotation` 继续忽略报价草稿中的旧合同编号。
+- 数据库：`Order.contractNo` 增加 `@unique`，迁移 `20261107170000_order_contract_no_unique`；迁移前检测重复非 NULL 值，存在重复则失败并提示人工处理。历史 NULL 不重写。
+- 计算器删除可编辑合同编号控件，改为“创建正式订单时由系统生成”的只读说明；创建订单/转换订单成功提示展示实际 `contractNo`。
+
+### 12.6 R2-5 计算器体验
+
+- 分区：客户与单据、贸易条款、账单地址、收货地址、商品明细、币种与运费、其他费用、计算结果。
+- 顶部 section nav；每个分区有锚点与 `scroll-margin-top`。
+- 底部 sticky 操作栏：计算、保存草稿、创建正式订单；窄屏纵向排列。
+- 实时显示创建订单必填项是否完整；创建失败时滚动到对应分区并聚焦字段（电话单独定位）。
+- 国家使用统一 `CountrySelect`；币种使用 `CurrencySelect`/`config.currencies`；日期控件带 `lang={locale}`。
+- 移除示例默认国家 `US` 与示例汇率 `0.1380`：国家必须选择，非 CNY 汇率必须录入正数，汇率日期随单据保存；CNY 固定为 1。
+- 保留现有 CNY 汇率固定为 1、币种字典、运费算法、金额服务端计算规则。
+
+### 12.7 迁移、回滚与验证
+
+迁移：
+
+- `20261107170000_order_contract_no_unique`：检查重复后创建 `orders_contractNo_key` 唯一索引。
+- 国家数据不新增表：由 `database/prisma/reference-data/countries.ts` + reference seed 幂等写入；API 启动的 `syncReferenceDataAtStartup()` 会在监听端口前同步。
+- 回滚合同索引：`DROP INDEX "orders_contractNo_key";`。国家字典可保留，不影响旧页面；如需移除，仅停用/删除该字典类型，不触碰订单历史字段。
+- 未执行生产迁移或部署。
+
+验证命令与结果：
+
+- `pnpm run lint`：通过。
+- `pnpm --filter @b2b/ui run typecheck`：通过。
+- `pnpm --filter @b2b/admin run typecheck`：通过。
+- `pnpm --filter @b2b/api run typecheck`：通过。
+- `pnpm --filter @b2b/admin run test`：21 个文件、199 项通过。
+- `pnpm --filter @b2b/database run test`：4 项通过。
+- `pnpm --filter @b2b/validation run test`：26 项通过。
+- `pnpm --filter @b2b/api run test`：425/428 通过；3 项失败仍为既有真实 `B2B_Quotation_Template.xlsx` 夹具解析测试，与 R2 改动无关。
+- 定向 `quotation-order.service.spec.ts`：7 项通过（含合同编号格式、日期、随机性、唯一冲突重试）。
+- `pnpm run db:seed:reference`：本地同步 250 个国家项，1.1s。
+- `pnpm run check:production-reference-data`：通过（含国家字典数量/翻译校验）。
+- 本地数据库 `orders_contractNo_key` 唯一索引已创建；当前非 NULL 合同编号无重复。
+- `ADMIN_API_PROXY_TARGET=http://localhost:3002 pnpm --filter @b2b/admin run build`：通过。
+- `pnpm --filter @b2b/api run build`：通过。
+- 未执行：登录后 1440/1600/768/360 实机截图回归；需在有管理员会话的浏览器中单独验收视觉与拖动体验。
+
+### 12.8 已知边界
+
+- `CountrySelect` 的 DOM 交互（点击/键盘/移动端）未做浏览器自动化测试；当前以纯函数搜索测试 + typecheck/lint 覆盖。
+- 历史订单中不存在于国家字典的 code 仍会显示，不会被强制改写；新订单只能从启用字典项选择。
+- 主档 syncing 的并发冲突沿用现有 `version` 检查；若保存快照后其他会话再次修改，重试同步会返回 409 并要求刷新。

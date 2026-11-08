@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Decimal from 'decimal.js';
+import { Prisma } from '@b2b/database';
 import type { AuditService } from '../../common/services/audit.service';
 import type { JsonLogger } from '../../common/logger.service';
 import type { CategoriesService } from '../categories/categories.service';
@@ -189,5 +190,63 @@ describe('order list aggregation', () => {
       },
     });
     expect(result.data[0]?.updatedAt).toBe(now.toISOString());
+  });
+});
+
+describe('contract number generation', () => {
+  const service = new QuotationOrderService(
+    {} as PrismaService,
+    {} as AuditService,
+    {} as StorageService,
+    {} as CategoriesService,
+    { error: vi.fn(), warn: vi.fn() } as unknown as JsonLogger,
+    {
+      ORDER_CONTRACT_NO_PREFIX: 'PO',
+      ORDER_CONTRACT_NO_TIMEZONE: 'Asia/Shanghai',
+    } as never,
+  );
+
+  it('uses the configured prefix, business date and a six-character random suffix', () => {
+    // 2026-11-07T16:30Z is already 2026-11-08 in Asia/Shanghai.
+    const value = service.generateContractNo(new Date('2026-11-07T16:30:00.000Z'));
+    expect(value).toMatch(/^PO-20261108-[0-9A-F]{6}$/);
+  });
+
+  it('uses an ISO order date as a calendar date without timezone shifting', () => {
+    expect(service.generateContractNo('2026-11-07')).toMatch(/^PO-20261107-[0-9A-F]{6}$/);
+  });
+
+  it('uses a different suffix for each generated number', () => {
+    const values = new Set(
+      Array.from({ length: 40 }, () =>
+        service.generateContractNo(new Date('2026-11-07T04:00:00.000Z')),
+      ),
+    );
+    expect(values.size).toBe(40);
+  });
+
+  it('regenerates only for a contractNo unique collision', async () => {
+    const calls: string[] = [];
+    let attempt = 0;
+    const collision = new Prisma.PrismaClientKnownRequestError('duplicate contract number', {
+      code: 'P2002',
+      clientVersion: '6.19.3',
+      meta: { target: ['contractNo'] },
+    });
+    const retryable = service as unknown as {
+      withContractNoRetry: <T>(
+        create: (contractNo: string) => Promise<T>,
+        orderDate?: string,
+      ) => Promise<T>;
+    };
+    const result = await retryable.withContractNoRetry(async (contractNo) => {
+      calls.push(contractNo);
+      attempt += 1;
+      if (attempt < 3) throw collision;
+      return contractNo;
+    }, '2026-11-07');
+    expect(calls).toHaveLength(3);
+    expect(new Set(calls).size).toBe(3);
+    expect(result).toMatch(/^PO-20261107-[0-9A-F]{6}$/);
   });
 });

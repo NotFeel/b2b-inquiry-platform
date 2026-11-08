@@ -617,6 +617,7 @@ export const DICTIONARY_TYPES = {
   packagingType: 'packaging_type',
   credentialType: 'credential_type',
   currency: 'currency',
+  country: 'country',
   volumetricWeightDivisor: 'volumetric_weight_divisor',
   quotationFeeType: 'quotation_fee_type',
 } as const;
@@ -637,6 +638,7 @@ export const SYSTEM_LOCKED_DICTIONARY_TYPES: readonly string[] = [
   DICTIONARY_TYPES.inquirySource,
   DICTIONARY_TYPES.adPlacement,
   DICTIONARY_TYPES.currency,
+  DICTIONARY_TYPES.country,
   DICTIONARY_TYPES.volumetricWeightDivisor,
 ];
 

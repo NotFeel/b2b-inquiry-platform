@@ -9,6 +9,7 @@ import {
 } from '@b2b/contracts';
 import { FAQ_SEED } from './faq-content';
 import { MENU_SEED, type MenuSeed } from './menu-seed';
+import { COUNTRY_REFERENCE } from './reference-data/countries';
 
 // Idempotent reference data: permissions, roles, menus, dictionaries, settings,
 // content pages, FAQ entries and tags. Business sample data is only created with
@@ -449,6 +450,15 @@ const DICTIONARIES: {
         labels: { 'zh-CN': '澳元（AUD）', 'en-US': 'Australian dollar (AUD)' },
       },
     ],
+  },
+  {
+    code: DICTIONARY_TYPES.country,
+    nameKey: 'dictionary.country',
+    systemLocked: true,
+    items: COUNTRY_REFERENCE.map(([code, en, zh]) => ({
+      code,
+      labels: { 'en-US': en, 'zh-CN': zh },
+    })),
   },
   {
     code: 'volumetric_weight_divisor',

@@ -13,6 +13,7 @@ import {
   Select,
 } from '@b2b/ui';
 import type { OrderDocumentSummary, OrderListRow } from '../../lib/commercial-documents-api';
+import { CountrySelect, CurrencySelect, useReferenceOptions } from '../reference-selects';
 import type { CalculatorExcelTemplateOption } from '../../lib/quotation-order-api';
 import {
   activeOrderFilterChips,
@@ -109,6 +110,7 @@ export function OrderListView(props: OrderListViewProps) {
     onOpenCalculator,
   } = props;
 
+  const currencyOptions = useReferenceOptions('currency', locale, canRead);
   const chips = activeOrderFilterChips(filters, t);
   const hasFilters = hasActiveOrderFilters(filters);
   const firstLoad = loading && rows.length === 0;
@@ -134,7 +136,12 @@ export function OrderListView(props: OrderListViewProps) {
                 {t('commercialDocuments.orders.clearAll')}
               </Button>
             ) : null}
-            <Button size="sm" variant="secondary" onClick={onToggleAdvanced} aria-expanded={advancedOpen}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={onToggleAdvanced}
+              aria-expanded={advancedOpen}
+            >
               {advancedOpen
                 ? t('commercialDocuments.orders.hideAdvanced')
                 : t('commercialDocuments.orders.showAdvanced')}
@@ -207,29 +214,32 @@ export function OrderListView(props: OrderListViewProps) {
 
         {advancedOpen ? (
           <div className="form-grid order-list-advanced">
-            <Field label={t('commercialDocuments.orders.currency')}>
+            <Field
+              label={t('commercialDocuments.orders.currency')}
+              help={currencyOptions.error ? t('currencySelect.loadFailed') : undefined}
+            >
               {({ inputId, describedBy }) => (
-                <Input
+                <CurrencySelect
                   inputId={inputId}
                   describedBy={describedBy}
                   value={filters.currency}
-                  onChange={(event) =>
-                    onChangeFilter('currency', event.target.value.toUpperCase().slice(0, 3))
-                  }
-                  maxLength={3}
+                  onChange={(value) => onChangeFilter('currency', value)}
+                  placeholder={t('commercialDocuments.orders.any')}
+                  options={currencyOptions.options}
+                  disabled={currencyOptions.loading}
+                  ariaLabel={t('commercialDocuments.orders.currency')}
                 />
               )}
             </Field>
             <Field label={t('commercialDocuments.orders.country')}>
               {({ inputId, describedBy }) => (
-                <Input
+                <CountrySelect
                   inputId={inputId}
                   describedBy={describedBy}
                   value={filters.country}
-                  onChange={(event) =>
-                    onChangeFilter('country', event.target.value.toUpperCase().slice(0, 2))
-                  }
-                  maxLength={2}
+                  onChange={(value) => onChangeFilter('country', value)}
+                  placeholder={t('commercialDocuments.orders.any')}
+                  ariaLabel={t('commercialDocuments.orders.country')}
                 />
               )}
             </Field>
@@ -267,7 +277,10 @@ export function OrderListView(props: OrderListViewProps) {
         ) : null}
 
         {chips.length > 0 ? (
-          <ul className="order-filter-chips" aria-label={t('commercialDocuments.orders.activeFilters')}>
+          <ul
+            className="order-filter-chips"
+            aria-label={t('commercialDocuments.orders.activeFilters')}
+          >
             {chips.map((chip) => (
               <li key={chip.key}>
                 <span>
@@ -319,7 +332,9 @@ export function OrderListView(props: OrderListViewProps) {
 
       <section className="panel stack-sm" aria-live="polite" aria-busy={loading}>
         <div className="row-between">
-          <h2 className="order-list-heading">{t('commercialDocuments.orders.results', { total })}</h2>
+          <h2 className="order-list-heading">
+            {t('commercialDocuments.orders.results', { total })}
+          </h2>
         </div>
 
         {loading && rows.length > 0 ? (
@@ -350,7 +365,11 @@ export function OrderListView(props: OrderListViewProps) {
         ) : rows.length === 0 ? (
           <EmptyState
             variant="search"
-            title={hasFilters ? t('commercialDocuments.orders.noResults') : t('commercialDocuments.orders.emptyTitle')}
+            title={
+              hasFilters
+                ? t('commercialDocuments.orders.noResults')
+                : t('commercialDocuments.orders.emptyTitle')
+            }
             description={
               hasFilters
                 ? t('commercialDocuments.orders.noResultsHint')
@@ -450,7 +469,11 @@ function RowActions(props: ListActionsProps & { compact?: boolean }) {
   } = props;
   return (
     <div className="row-actions">
-      <Button size="sm" variant={compact ? 'secondary' : 'ghost'} onClick={() => onOpenDetail(row.id)}>
+      <Button
+        size="sm"
+        variant={compact ? 'secondary' : 'ghost'}
+        onClick={() => onOpenDetail(row.id)}
+      >
         {t('commercialDocuments.orders.view')}
       </Button>
       {canCreateDocument && row.status === 'CONFIRMED' ? (
@@ -552,7 +575,11 @@ function OrderTable({
             <tr key={row.id}>
               <td>
                 <div className="row-tight">
-                  <button type="button" className="link-button mono" onClick={() => onOpenDetail(row.id)}>
+                  <button
+                    type="button"
+                    className="link-button mono"
+                    onClick={() => onOpenDetail(row.id)}
+                  >
                     {row.orderNo}
                   </button>
                   <CopyButton
@@ -654,7 +681,11 @@ function OrderCards({
         <li key={row.id} className="order-card">
           <div className="order-card-head">
             <div className="row-tight">
-              <button type="button" className="link-button mono" onClick={() => onOpenDetail(row.id)}>
+              <button
+                type="button"
+                className="link-button mono"
+                onClick={() => onOpenDetail(row.id)}
+              >
                 {row.orderNo}
               </button>
               <CopyButton

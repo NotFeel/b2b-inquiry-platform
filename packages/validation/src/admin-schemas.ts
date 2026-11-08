@@ -1540,6 +1540,7 @@ const quotationFormObjectSchema = z.object({
       preferredLanguage: 'en-US',
     }),
   buyerReference: z.string().trim().max(120).default(''),
+  /** Legacy draft compatibility; formal order creation always overwrites it. */
   contractNo: z.string().trim().max(80).default(''),
   trade: z
     .object({

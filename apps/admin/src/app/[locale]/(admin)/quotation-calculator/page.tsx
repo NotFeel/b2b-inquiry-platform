@@ -5,6 +5,7 @@ import Image from 'next/image';
 import { Button, Input, PageHeader, Select, useToast } from '@b2b/ui';
 import { useBreadcrumb } from '../../../../components/use-breadcrumb';
 import { QuotationProductPickerDialog } from '../../../../components/quotation-product-picker-dialog';
+import { CountrySelect, CurrencySelect } from '../../../../components/reference-selects';
 import { useSession } from '../../../../components/session-provider';
 import { AdminApiError } from '../../../../lib/admin-api';
 import { translateError } from '../../../../lib/i18n';
@@ -49,6 +50,11 @@ const blankItem = (): ItemDraft => ({
 function isValidFreightRate(value: string): boolean {
   const normalized = value.trim();
   return /^\d{1,16}(?:\.\d{1,8})?$/.test(normalized) && /[1-9]/.test(normalized);
+}
+
+function isValidExchangeRate(value: string): boolean {
+  const normalized = value.trim();
+  return /^\d{1,16}(?:\.\d{1,12})?$/.test(normalized) && /[1-9]/.test(normalized);
 }
 
 /** Strip insignificant fractional zeros for display without rounding the value. */
@@ -114,7 +120,7 @@ export default function QuotationCalculatorPage() {
   const [exportingExcel, setExportingExcel] = useState(false);
   const [title, setTitle] = useState('');
   const [currencyCode, setCurrencyCode] = useState('USD');
-  const [exchangeRate, setExchangeRate] = useState('0.1380');
+  const [exchangeRate, setExchangeRate] = useState('');
   const [exchangeRateDate, setExchangeRateDate] = useState(new Date().toISOString().slice(0, 10));
   const [freightBillingMethod, setFreightBillingMethod] = useState<'CBM' | 'KG'>('CBM');
   const [volumetricDivisorItemId, setVolumetricDivisorItemId] = useState('');
@@ -126,19 +132,19 @@ export default function QuotationCalculatorPage() {
   const [contactName, setContactName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
-  const [countryCode, setCountryCode] = useState('US');
+  const [countryCode, setCountryCode] = useState('');
+  const [shippingCountryCode, setShippingCountryCode] = useState('');
   const [customerType, setCustomerType] = useState<'COMPANY' | 'INDIVIDUAL'>('COMPANY');
   const [legalCompanyName, setLegalCompanyName] = useState('');
   const [taxId, setTaxId] = useState('');
   const [preferredLanguage, setPreferredLanguage] = useState('en-US');
   const [buyerReference, setBuyerReference] = useState('');
-  const [contractNo, setContractNo] = useState('');
   const [billingSameAsShipping, setBillingSameAsShipping] = useState(true);
   const [billingAddressLine, setBillingAddressLine] = useState('');
   const [billingCity, setBillingCity] = useState('');
   const [billingRegion, setBillingRegion] = useState('');
   const [billingPostalCode, setBillingPostalCode] = useState('');
-  const [billingCountryCode, setBillingCountryCode] = useState('US');
+  const [billingCountryCode, setBillingCountryCode] = useState('');
   const [shippingCompany, setShippingCompany] = useState('');
   const [shippingPhone, setShippingPhone] = useState('');
   const [incotermCode, setIncotermCode] = useState('');
@@ -252,18 +258,18 @@ export default function QuotationCalculatorPage() {
           legalCompanyName: legalCompanyName.trim(),
           contactName: contactName.trim(),
           phoneE164: phone.trim(),
-          countryCode,
+          countryCode: countryCode || null,
           customerType,
           taxId: taxId.trim(),
           preferredLanguage,
           ...(email.trim() ? { email: email.trim() } : {}),
-          ...(recipient && city && addressLine
+          ...(recipient && city && addressLine && shippingCountryCode
             ? {
                 shippingAddress: {
                   recipient: recipient.trim(),
                   companyName: shippingCompany.trim(),
                   phoneE164: shippingPhone.trim(),
-                  countryCode,
+                  countryCode: shippingCountryCode,
                   region: region.trim(),
                   city: city.trim(),
                   postalCode: postalCode.trim(),
@@ -273,7 +279,7 @@ export default function QuotationCalculatorPage() {
               }
             : {}),
           ...(billingSameAsShipping
-            ? recipient && city && addressLine
+            ? recipient && city && addressLine && shippingCountryCode
               ? {
                   billingAddress: {
                     recipient: recipient.trim(),
@@ -288,7 +294,7 @@ export default function QuotationCalculatorPage() {
                   },
                 }
               : {}
-            : billingAddressLine && billingCity
+            : billingAddressLine && billingCity && billingCountryCode
               ? {
                   billingAddress: {
                     recipient: legalCompanyName.trim() || companyName.trim(),
@@ -305,7 +311,6 @@ export default function QuotationCalculatorPage() {
               : {}),
         },
     buyerReference: buyerReference.trim(),
-    contractNo: contractNo.trim(),
     trade: {
       incotermCode: incotermCode || null,
       namedPlace: namedPlace.trim(),
@@ -375,6 +380,11 @@ export default function QuotationCalculatorPage() {
   const runPreview = async () => {
     if (!validateItemQuantities()) return;
     const input = buildInput(true);
+    if (currencyCode !== 'CNY' && !isValidExchangeRate(exchangeRate)) {
+      setError(t('quotationCenter.exchangeRateRequired'));
+      document.querySelector<HTMLInputElement>('input[placeholder="0.000000"]')?.focus();
+      return;
+    }
     if (!isValidFreightRate(input.cbmRatePerCbm) || !isValidFreightRate(input.kgRatePerKg)) {
       setPreviewRatesInvalid(true);
       setResult(null);
@@ -405,6 +415,11 @@ export default function QuotationCalculatorPage() {
 
   const saveDraft = async () => {
     if (!validateItemQuantities()) return;
+    if (currencyCode !== 'CNY' && !isValidExchangeRate(exchangeRate)) {
+      setError(t('quotationCenter.exchangeRateRequired'));
+      document.querySelector<HTMLInputElement>('input[placeholder="0.000000"]')?.focus();
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -424,35 +439,76 @@ export default function QuotationCalculatorPage() {
   };
 
   const orderFieldLabels: Record<string, string> = {
+    title: t('quotationCenter.titleField'),
     customerName: t('quotationCenter.orderFieldCustomerName'),
     phone: t('quotationCenter.phone'),
     countryCode: t('quotationCenter.countryCode'),
-    shippingCountryCode: t('quotationCenter.countryCode'),
+    shippingCountryCode: t('quotationCenter.shippingCountryCode'),
     orderDate: t('quotationCenter.orderDate'),
+    exchangeRate: t('quotationCenter.exchangeRate'),
     recipient: t('quotationCenter.recipient'),
     city: t('quotationCenter.city'),
     addressLine: t('quotationCenter.addressLine'),
   };
 
-  const validateOrderCustomer = () => {
-    const fields: string[] = [];
-    if (!companyName.trim() && !contactName.trim()) fields.push('customerName');
-    if (!/^[A-Z]{2}$/.test(countryCode.trim())) fields.push('countryCode');
-    if (!orderDate) fields.push('orderDate');
-    if (!recipient.trim()) fields.push('recipient');
-    if (!city.trim()) fields.push('city');
-    if (!addressLine.trim()) fields.push('addressLine');
+  const orderReadiness = (() => {
+    const missing: string[] = [];
+    if (!title.trim()) missing.push('title');
+    if (!companyName.trim() && !contactName.trim()) missing.push('customerName');
+    if (!/^[A-Z]{2}$/.test(countryCode.trim())) missing.push('countryCode');
+    if (!/^[A-Z]{2}$/.test(shippingCountryCode.trim())) missing.push('shippingCountryCode');
+    if (!orderDate) missing.push('orderDate');
+    if (currencyCode !== 'CNY' && !isValidExchangeRate(exchangeRate)) {
+      missing.push('exchangeRate');
+    }
+    if (!recipient.trim()) missing.push('recipient');
+    if (!city.trim()) missing.push('city');
+    if (!addressLine.trim()) missing.push('addressLine');
+    return {
+      missing,
+      phoneInvalid: !/^\+[1-9]\d{1,14}$/.test(phone.trim()),
+    };
+  })();
 
-    if (!/^\+[1-9]\d{1,14}$/.test(phone.trim())) {
+  const focusOrderProblem = () => {
+    const shippingFields = ['shippingCountryCode', 'recipient', 'city', 'addressLine'];
+    const pricingFields = ['exchangeRate'];
+    const sectionId = orderReadiness.missing.some((field) => pricingFields.includes(field))
+      ? 'calculator-pricing'
+      : orderReadiness.missing.some((field) => shippingFields.includes(field))
+        ? 'calculator-shipping'
+        : 'calculator-customer';
+    const section = document.getElementById(sectionId);
+    section?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const phoneInput = document.querySelector<HTMLInputElement>(
+      'input[placeholder="+14155552671"]',
+    );
+    if (orderReadiness.phoneInvalid && phoneInput) {
+      phoneInput.focus();
+      return;
+    }
+    if (orderReadiness.missing.includes('exchangeRate')) {
+      document.querySelector<HTMLInputElement>('input[placeholder="0.000000"]')?.focus();
+      return;
+    }
+    section?.querySelector<HTMLInputElement>('input, select')?.focus();
+  };
+
+  const validateOrderCustomer = () => {
+    if (orderReadiness.phoneInvalid) {
       setError(t('quotationCenter.orderPhoneInvalid'));
+      focusOrderProblem();
       return false;
     }
-    if (fields.length) {
+    if (orderReadiness.missing.length) {
       setError(
         t('quotationCenter.orderFieldsRequired', {
-          fields: fields.map((field) => orderFieldLabels[field] ?? field).join('、'),
+          fields: orderReadiness.missing
+            .map((field) => orderFieldLabels[field] ?? field)
+            .join('、'),
         }),
       );
+      focusOrderProblem();
       return false;
     }
     return true;
@@ -465,7 +521,12 @@ export default function QuotationCalculatorPage() {
     setError('');
     try {
       const saved = await quotationOrderApi.createOrder(buildInput());
-      toast.success(t('quotationCenter.orderCreated', { number: saved.orderNo }));
+      toast.success(
+        t('quotationCenter.orderCreated', {
+          number: saved.orderNo,
+          contractNo: saved.contractNo,
+        }),
+      );
     } catch (cause) {
       if (cause instanceof AdminApiError) {
         const fields = cause.details?.fields;
@@ -475,9 +536,7 @@ export default function QuotationCalculatorPage() {
             fieldNames.includes('phone')
               ? t('quotationCenter.orderPhoneInvalid')
               : t('quotationCenter.orderFieldsRequired', {
-                  fields: fieldNames
-                    .map((field) => orderFieldLabels[field] ?? field)
-                    .join('、'),
+                  fields: fieldNames.map((field) => orderFieldLabels[field] ?? field).join('、'),
                 }),
           );
         } else setError(translateError(locale, cause.code));
@@ -539,6 +598,22 @@ export default function QuotationCalculatorPage() {
           </Button>
         }
       />
+      <nav className="calculator-section-nav" aria-label={t('quotationCenter.sectionNav')}>
+        {[
+          ['calculator-customer', 'customerSection'],
+          ['calculator-trade', 'tradeTerms'],
+          ['calculator-billing', 'billingAddress'],
+          ['calculator-shipping', 'shippingAddress'],
+          ['calculator-items', 'itemsSection'],
+          ['calculator-pricing', 'pricingSection'],
+          ['calculator-fees', 'otherFees'],
+          ['calculator-result', 'summary'],
+        ].map(([id, key]) => (
+          <a key={id} href={`#${id}`}>
+            {t(`quotationCenter.${key}`)}
+          </a>
+        ))}
+      </nav>
       {error ? (
         <div className="alert alert-error" role="alert">
           {error}
@@ -550,7 +625,7 @@ export default function QuotationCalculatorPage() {
         </section>
       ) : (
         <>
-          <section className="panel stack-sm">
+          <section className="panel stack-sm" id="calculator-customer">
             <h2>{t('quotationCenter.customerSection')}</h2>
             <p className="muted">{t('quotationCenter.orderRequirementsHint')}</p>
             {customers.length ? (
@@ -587,6 +662,9 @@ export default function QuotationCalculatorPage() {
                       }
                       if (shipping) {
                         setRecipient(String(shipping.recipient ?? ''));
+                        setShippingCountryCode(
+                          String(shipping.countryCode ?? selected.countryCode ?? countryCode),
+                        );
                         setShippingCompany(String(shipping.companyName ?? ''));
                         setShippingPhone(String(shipping.phoneE164 ?? ''));
                         setCity(String(shipping.city ?? ''));
@@ -643,16 +721,17 @@ export default function QuotationCalculatorPage() {
                 />
               </SimpleField>
               <SimpleField label={t('quotationCenter.countryCode')}>
-                <Input
+                <CountrySelect
                   value={countryCode}
-                  onChange={(event) => setCountryCode(event.target.value.toUpperCase().slice(0, 2))}
-                  maxLength={2}
-                  placeholder={t('quotationCenter.countryCodePlaceholder')}
+                  onChange={setCountryCode}
+                  placeholder={t('countrySelect.placeholder')}
+                  ariaLabel={t('quotationCenter.countryCode')}
                 />
               </SimpleField>
               <SimpleField label={t('quotationCenter.orderDate')}>
                 <Input
                   type="date"
+                  lang={locale}
                   value={orderDate}
                   onChange={(event) => setOrderDate(event.target.value)}
                 />
@@ -700,15 +779,15 @@ export default function QuotationCalculatorPage() {
                   maxLength={120}
                 />
               </SimpleField>
-              <SimpleField label={t('quotationCenter.contractNo')}>
-                <Input
-                  value={contractNo}
-                  onChange={(event) => setContractNo(event.target.value)}
-                  maxLength={80}
-                />
-              </SimpleField>
+              <div className="field">
+                <span className="field-label">{t('quotationCenter.contractNo')}</span>
+                <p className="muted">{t('quotationCenter.contractNoAuto')}</p>
+              </div>
             </div>
-            <h3>{t('quotationCenter.tradeTerms')}</h3>
+          </section>
+
+          <section className="panel stack-sm" id="calculator-trade">
+            <h2>{t('quotationCenter.tradeTerms')}</h2>
             <div className="form-grid">
               <SimpleField label={t('quotationCenter.incoterm')}>
                 <Select
@@ -745,15 +824,28 @@ export default function QuotationCalculatorPage() {
                 />
               </SimpleField>
             </div>
-            <h3>{t('quotationCenter.billingAddress')}</h3>
+          </section>
+
+          <section className="panel stack-sm" id="calculator-billing">
+            <h2>{t('quotationCenter.billingAddress')}</h2>
             <label className="field-checkbox">
               <input
                 type="checkbox"
                 checked={billingSameAsShipping}
-                onChange={(event) => setBillingSameAsShipping(event.target.checked)}
+                onChange={(event) => {
+                  const checked = event.target.checked;
+                  setBillingSameAsShipping(checked);
+                  if (!checked) return;
+                  setBillingAddressLine(addressLine);
+                  setBillingCity(city);
+                  setBillingRegion(region);
+                  setBillingPostalCode(postalCode);
+                  setBillingCountryCode(shippingCountryCode);
+                }}
               />
               <span>{t('quotationCenter.billingSameAsShipping')}</span>
             </label>
+            <p className="field-help">{t('quotationCenter.billingSameAsShippingHint')}</p>
             {billingSameAsShipping ? null : (
               <div className="form-grid">
                 <SimpleField label={t('quotationCenter.addressLine')}>
@@ -784,19 +876,20 @@ export default function QuotationCalculatorPage() {
                     maxLength={40}
                   />
                 </SimpleField>
-                <SimpleField label={t('quotationCenter.countryCode')}>
-                  <Input
+                <SimpleField label={t('quotationCenter.billingCountryCode')}>
+                  <CountrySelect
                     value={billingCountryCode}
-                    onChange={(event) =>
-                      setBillingCountryCode(event.target.value.toUpperCase().slice(0, 2))
-                    }
-                    maxLength={2}
-                    placeholder={t('quotationCenter.countryCodePlaceholder')}
+                    onChange={setBillingCountryCode}
+                    placeholder={t('countrySelect.placeholder')}
+                    ariaLabel={t('quotationCenter.billingCountryCode')}
                   />
                 </SimpleField>
               </div>
             )}
-            <h3>{t('quotationCenter.shippingAddress')}</h3>
+          </section>
+
+          <section className="panel stack-sm" id="calculator-shipping">
+            <h2>{t('quotationCenter.shippingAddress')}</h2>
             <div className="form-grid">
               <SimpleField label={t('quotationCenter.recipient')}>
                 <Input
@@ -817,6 +910,14 @@ export default function QuotationCalculatorPage() {
                   value={shippingPhone}
                   onChange={(event) => setShippingPhone(event.target.value)}
                   maxLength={24}
+                />
+              </SimpleField>
+              <SimpleField label={t('quotationCenter.shippingCountryCode')}>
+                <CountrySelect
+                  value={shippingCountryCode}
+                  onChange={setShippingCountryCode}
+                  placeholder={t('countrySelect.placeholder')}
+                  ariaLabel={t('quotationCenter.shippingCountryCode')}
                 />
               </SimpleField>
               <SimpleField label={t('quotationCenter.city')}>
@@ -850,7 +951,7 @@ export default function QuotationCalculatorPage() {
             </div>
           </section>
 
-          <section className="panel stack-sm">
+          <section className="panel stack-sm" id="calculator-items">
             <div className="row-between">
               <h2>{t('quotationCenter.itemsSection')}</h2>
               <Button variant="secondary" onClick={() => setProductPickerOpen(true)}>
@@ -1093,20 +1194,18 @@ export default function QuotationCalculatorPage() {
             </div>
           </section>
 
-          <section className="panel stack-sm">
+          <section className="panel stack-sm" id="calculator-pricing">
             <h2>{t('quotationCenter.pricingSection')}</h2>
             <div className="form-grid">
               <SimpleField label={t('quotationCenter.currency')}>
-                <Select
+                <CurrencySelect
                   value={currencyCode}
-                  onChange={(event) => {
-                    setCurrencyCode(event.target.value);
+                  onChange={(value) => {
+                    setCurrencyCode(value);
                     setResult(null);
                   }}
-                  options={config.currencies.map((currency) => ({
-                    value: currency.code,
-                    label: currency.label,
-                  }))}
+                  options={config.currencies}
+                  ariaLabel={t('quotationCenter.currency')}
                 />
               </SimpleField>
               <SimpleField label={t('quotationCenter.exchangeRate')}>
@@ -1118,11 +1217,14 @@ export default function QuotationCalculatorPage() {
                     setExchangeRate(event.target.value);
                     setResult(null);
                   }}
+                  placeholder="0.000000"
                 />
+                <p className="field-help">{t('quotationCenter.exchangeRateHint')}</p>
               </SimpleField>
               <SimpleField label={t('quotationCenter.exchangeRateDate')}>
                 <Input
                   type="date"
+                  lang={locale}
                   value={exchangeRateDate}
                   onChange={(event) => {
                     setExchangeRateDate(event.target.value);
@@ -1212,8 +1314,11 @@ export default function QuotationCalculatorPage() {
                 {t('quotationCenter.freightRatesRequired')}
               </p>
             ) : null}
+          </section>
+
+          <section className="panel stack-sm" id="calculator-fees">
             <div className="row-between">
-              <h3>{t('quotationCenter.otherFees')}</h3>
+              <h2>{t('quotationCenter.otherFees')}</h2>
               <Button
                 variant="secondary"
                 disabled={config.feeTypes.length === 0}
@@ -1309,38 +1414,7 @@ export default function QuotationCalculatorPage() {
             ))}
           </section>
 
-          <section className="panel stack-sm">
-            <div className="button-row">
-              {canCalculate ? (
-                <Button
-                  variant="secondary"
-                  loading={saving}
-                  disabled={saving || items.length === 0}
-                  onClick={() => void runPreview()}
-                >
-                  {t('quotationCenter.calculate')}
-                </Button>
-              ) : null}
-              {canSave ? (
-                <Button
-                  variant="secondary"
-                  loading={saving}
-                  disabled={saving || !title.trim() || items.every((item) => !item.productId)}
-                  onClick={() => void saveDraft()}
-                >
-                  {t('quotationCenter.saveDraft')}
-                </Button>
-              ) : null}
-              {canCreateOrder ? (
-                <Button
-                  loading={saving}
-                  disabled={saving || !title.trim() || items.length === 0}
-                  onClick={() => void createOrder()}
-                >
-                  {t('quotationCenter.createOrder')}
-                </Button>
-              ) : null}
-            </div>
+          <section className="panel stack-sm" id="calculator-result">
             {previewMatchesCurrentInput && result ? (
               <div className="stack-sm" aria-live="polite">
                 <h2>{t('quotationCenter.summary')}</h2>
@@ -1409,7 +1483,7 @@ export default function QuotationCalculatorPage() {
                         <th>{t('quotationCenter.product')}</th>
                         <th>{t('quotationCenter.totalQuantity')}</th>
                         <th>{t('quotationCenter.unitPrice', { currency: currencyCode })}</th>
-                        <th>{t('quotationCenter.amount', { currency: currencyCode })}</th>
+                        <th>{t('quotationCenter.amount')}</th>
                         {canReadFreightAllocation ? (
                           <th>
                             {t('quotationCenter.freightAllocated', { currency: currencyCode })}
@@ -1447,6 +1521,61 @@ export default function QuotationCalculatorPage() {
               </div>
             ) : null}
           </section>
+
+          <div
+            className="calculator-action-bar"
+            role="region"
+            aria-label={t('quotationCenter.actions')}
+          >
+            <div className="calculator-action-status" aria-live="polite">
+              {canCreateOrder ? (
+                orderReadiness.missing.length === 0 && !orderReadiness.phoneInvalid ? (
+                  <span className="calculator-ready">{t('quotationCenter.orderReady')}</span>
+                ) : orderReadiness.phoneInvalid ? (
+                  <span className="field-error">{t('quotationCenter.orderPhoneInvalid')}</span>
+                ) : (
+                  <span className="field-error">
+                    {t('quotationCenter.orderNotReady', {
+                      fields: orderReadiness.missing
+                        .map((field) => orderFieldLabels[field] ?? field)
+                        .join('、'),
+                    })}
+                  </span>
+                )
+              ) : null}
+            </div>
+            <div className="button-row">
+              {canCalculate ? (
+                <Button
+                  variant="secondary"
+                  loading={saving}
+                  disabled={saving || items.length === 0}
+                  onClick={() => void runPreview()}
+                >
+                  {t('quotationCenter.calculate')}
+                </Button>
+              ) : null}
+              {canSave ? (
+                <Button
+                  variant="secondary"
+                  loading={saving}
+                  disabled={saving || !title.trim() || items.every((item) => !item.productId)}
+                  onClick={() => void saveDraft()}
+                >
+                  {t('quotationCenter.saveDraft')}
+                </Button>
+              ) : null}
+              {canCreateOrder ? (
+                <Button
+                  loading={saving}
+                  disabled={saving || !title.trim() || items.length === 0}
+                  onClick={() => void createOrder()}
+                >
+                  {t('quotationCenter.createOrder')}
+                </Button>
+              ) : null}
+            </div>
+          </div>
         </>
       )}
       {productPickerOpen ? (
