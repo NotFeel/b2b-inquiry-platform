@@ -171,6 +171,20 @@ export const commonMessages: Record<'en-US' | 'zh-CN', Messages> = {
         'The PDF is not ready yet. Wait for rendering to finish or retry.',
       COMMERCIAL_DOCUMENT_RENDER_FAILED:
         'The PDF could not be generated. Retry the render request.',
+      COMMERCIAL_DOCUMENT_CONVERTER_UNAVAILABLE:
+        'The PDF converter (LibreOffice) is unavailable. Check the Worker converter path and runtime PATH.',
+      COMMERCIAL_DOCUMENT_CONVERSION_FAILED:
+        'LibreOffice could not convert this document to PDF. Check the Worker log for the conversion exit details.',
+      COMMERCIAL_DOCUMENT_CONVERSION_TIMEOUT:
+        'PDF generation timed out. Retry the job or reduce an unusually large document.',
+      COMMERCIAL_DOCUMENT_PDFINFO_UNAVAILABLE:
+        'The PDF validation tool (pdfinfo) is unavailable. Check the Worker runtime PATH.',
+      COMMERCIAL_DOCUMENT_OUTPUT_INVALID:
+        'The generated PDF was incomplete or invalid. Retry the render job and check the Worker log if it repeats.',
+      COMMERCIAL_DOCUMENT_OUTPUT_TOO_LARGE:
+        'The generated PDF exceeds the configured size limit. Review the document assets and render limits.',
+      COMMERCIAL_DOCUMENT_OUTPUT_TOO_MANY_PAGES:
+        'The generated PDF exceeds the configured page limit. Review the document content and render limits.',
       COMMERCIAL_DOCUMENT_STATE_CONFLICT:
         'The document status changed. Reload it before trying again.',
       COMMERCIAL_DOCUMENT_CONCURRENT_UPDATE:
@@ -181,9 +195,13 @@ export const commonMessages: Record<'en-US' | 'zh-CN', Messages> = {
         'This template belongs to a different document type (PI or CI).',
       DOCUMENT_TEMPLATE_NOT_FOUND: 'The document template was not found.',
       DOCUMENT_TEMPLATE_NOT_DELETABLE:
-        'Only an unpublished draft without version history can be deleted.',
+        'Only a non-default draft or disabled template can be deleted. Remove the ACTIVE/default state first.',
       DOCUMENT_TEMPLATE_IN_USE:
-        'This template is referenced by a PI/CI document and cannot be deleted.',
+        'This template is referenced by a PI/CI document or PDF render job and cannot be deleted.',
+      DOCUMENT_TEMPLATE_NOT_ACTIVE:
+        'This template is disabled or inactive and cannot be used to create a commercial document.',
+      DOCUMENT_TEMPLATE_LOCALE_MISMATCH:
+        'The document language must match the selected template version language.',
       COMPANY_PROFILE_NOT_FOUND: 'The company profile was not found.',
       BANK_ACCOUNT_NOT_FOUND: 'The bank account was not found.',
       BANK_ACCOUNT_IN_USE: 'This bank account is still used by a company profile.',
@@ -496,14 +514,30 @@ export const commonMessages: Record<'en-US' | 'zh-CN', Messages> = {
       COMMERCIAL_DOCUMENT_TEMPLATE_IN_USE: '该模板版本已被已签发单据引用，不能修改。',
       COMMERCIAL_DOCUMENT_PDF_UNAVAILABLE: 'PDF 尚未生成完成，请稍候重试。',
       COMMERCIAL_DOCUMENT_RENDER_FAILED: 'PDF 生成失败，请重试渲染任务。',
+      COMMERCIAL_DOCUMENT_CONVERTER_UNAVAILABLE:
+        'PDF 转换器（LibreOffice）不可用。请检查 Worker 的转换器路径和运行环境 PATH。',
+      COMMERCIAL_DOCUMENT_CONVERSION_FAILED:
+        'LibreOffice 无法将当前单据转换为 PDF。请查看 Worker 日志中的转换退出信息。',
+      COMMERCIAL_DOCUMENT_CONVERSION_TIMEOUT: 'PDF 生成超时，请重试；大文件可适当调整渲染限制。',
+      COMMERCIAL_DOCUMENT_PDFINFO_UNAVAILABLE:
+        'PDF 校验工具（pdfinfo）不可用。请检查 Worker 的运行环境 PATH。',
+      COMMERCIAL_DOCUMENT_OUTPUT_INVALID:
+        '生成的 PDF 不完整或无效，请重试；若持续发生请查看 Worker 日志。',
+      COMMERCIAL_DOCUMENT_OUTPUT_TOO_LARGE:
+        '生成的 PDF 超出配置的大小上限，请检查单据素材和渲染限制。',
+      COMMERCIAL_DOCUMENT_OUTPUT_TOO_MANY_PAGES:
+        '生成的 PDF 超出配置的页数上限，请检查单据内容和渲染限制。',
       COMMERCIAL_DOCUMENT_STATE_CONFLICT: '单据状态已变化，请刷新后重试。',
       COMMERCIAL_DOCUMENT_CONCURRENT_UPDATE: '该单据已被其他会话修改，请刷新后重试。',
       COMMERCIAL_DOCUMENT_ORDER_MISMATCH: '该单据不属于所选订单。',
       DOCUMENT_TEMPLATE_NOT_PUBLISHED: '只能使用已发布的模板版本。',
       DOCUMENT_TEMPLATE_TYPE_MISMATCH: '该模板属于其他单据类型（PI 或 CI）。',
       DOCUMENT_TEMPLATE_NOT_FOUND: '未找到该单据模板。',
-      DOCUMENT_TEMPLATE_NOT_DELETABLE: '只有没有版本历史的未发布草稿可以删除。',
-      DOCUMENT_TEMPLATE_IN_USE: '该模板已被 PI/CI 单据引用，不能删除。',
+      DOCUMENT_TEMPLATE_NOT_DELETABLE:
+        '只有非默认的草稿或已停用模板可以删除，请先取消默认状态或停用模板。',
+      DOCUMENT_TEMPLATE_IN_USE: '该模板已被 PI/CI 单据或 PDF 渲染任务引用，不能删除。',
+      DOCUMENT_TEMPLATE_NOT_ACTIVE: '该模板已停用或不可用，不能用于创建商业单据。',
+      DOCUMENT_TEMPLATE_LOCALE_MISMATCH: '单据语言必须与所选模板版本语言一致。',
       COMPANY_PROFILE_NOT_FOUND: '未找到公司资料。',
       BANK_ACCOUNT_NOT_FOUND: '未找到银行账户。',
       BANK_ACCOUNT_IN_USE: '该银行账户仍被公司资料引用。',

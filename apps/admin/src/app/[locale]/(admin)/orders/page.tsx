@@ -19,10 +19,7 @@ import {
 import type { PaginatedResponse } from '../../../../lib/admin-api';
 import { AdminApiError } from '../../../../lib/admin-api';
 import { commercialDocumentsApi } from '../../../../lib/commercial-documents-api';
-import {
-  commercialDocumentFieldLabel,
-  commercialDocumentLocaleLabel,
-} from '../../../../lib/commercial-document-labels';
+import { commercialDocumentLocaleLabel } from '../../../../lib/commercial-document-labels';
 import type {
   DocumentParty,
   DocumentPrefill,
@@ -39,10 +36,15 @@ import {
   type OrderFilterKey,
   type OrderListFilters,
 } from '../../../../lib/order-list';
+import {
+  isCreateDocumentPrefillCurrent,
+  preserveValidBankAccount,
+} from '../../../../lib/order-document-create';
 import { useBreadcrumb } from '../../../../components/use-breadcrumb';
 import { useViewport } from '../../../../components/use-viewport';
 import { useSession } from '../../../../components/session-provider';
 import { OrderListView } from '../../../../components/orders/order-list-view';
+import { CommercialDocumentMissingFields } from '../../../../components/commercial-document-missing-fields';
 import { CountrySelect } from '../../../../components/reference-selects';
 import {
   buildCustomerChanges,
@@ -220,6 +222,7 @@ export default function OrdersPage() {
   const canReadOrders = can('order.read');
   const loadSequence = useRef(0);
   const detailSequence = useRef(0);
+  const createPrefillSequence = useRef(0);
   const filtersRef = useRef(filters);
   filtersRef.current = filters;
 
@@ -558,32 +561,87 @@ export default function OrdersPage() {
       )
     : [];
 
-  const openCreate = async (type: DocumentType, orderId: string) => {
-    setCreateType(type);
-    setCreateOrderId(orderId);
+  const loadCreatePrefill = async ({
+    orderId,
+    type,
+    templateVersionId,
+    documentLocale,
+    clearCurrent = false,
+  }: {
+    orderId: string;
+    type: DocumentType;
+    templateVersionId?: string;
+    documentLocale?: string;
+    clearCurrent?: boolean;
+  }) => {
+    const sequence = ++createPrefillSequence.current;
+    if (clearCurrent) setPrefill(null);
     setCreateError(null);
-    setPrefill(null);
-    setCreateBankAccountId('');
     setPrefillLoading(true);
     try {
-      const data = await commercialDocumentsApi.prefill(orderId, type);
+      const data = await commercialDocumentsApi.prefill(orderId, type, {
+        templateVersionId,
+        locale: documentLocale,
+      });
+      if (sequence !== createPrefillSequence.current) return;
       setPrefill(data);
-      setCreateTemplateVersionId(data.template.versionId);
-      setCreateLocale(data.template.locale);
-      setCreateBankAccountId(data.bankAccountId ?? '');
+      setCreateTemplateVersionId(data.resolvedTemplate.versionId);
+      setCreateLocale(data.resolvedTemplate.locale);
+      setCreateBankAccountId((current) =>
+        preserveValidBankAccount(current, data.bankAccounts, data.bankAccountId),
+      );
     } catch (cause) {
+      if (sequence !== createPrefillSequence.current) return;
       setCreateError(
         cause instanceof AdminApiError
           ? translateError(locale, cause.code)
           : t('errors.INTERNAL_ERROR'),
       );
     } finally {
-      setPrefillLoading(false);
+      if (sequence === createPrefillSequence.current) setPrefillLoading(false);
     }
   };
 
+  const openCreate = async (type: DocumentType, orderId: string) => {
+    setCreateType(type);
+    setCreateOrderId(orderId);
+    setCreateTemplateVersionId('');
+    setCreateLocale('en-US');
+    setCreateBankAccountId('');
+    await loadCreatePrefill({ orderId, type, clearCurrent: true });
+  };
+
+  const closeCreate = () => {
+    ++createPrefillSequence.current;
+    setCreateType(null);
+    setCreateOrderId(null);
+    setPrefill(null);
+    setPrefillLoading(false);
+    setCreateError(null);
+    setCreateBusy(false);
+  };
+
+  const retryCreateValidation = () => {
+    if (!createOrderId || !createType) return;
+    void loadCreatePrefill({
+      orderId: createOrderId,
+      type: createType,
+      templateVersionId: createTemplateVersionId || undefined,
+      documentLocale: createTemplateVersionId ? createLocale : undefined,
+    });
+  };
+
   const createDocument = async () => {
-    if (!createType || !createOrderId) return;
+    if (
+      !createType ||
+      !createOrderId ||
+      !prefill ||
+      prefillLoading ||
+      prefill.resolvedTemplate.versionId !== createTemplateVersionId ||
+      prefill.resolvedTemplate.locale !== createLocale
+    ) {
+      return;
+    }
     setCreateBusy(true);
     setCreateError(null);
     try {
@@ -594,7 +652,7 @@ export default function OrdersPage() {
         bankAccountId: createBankAccountId || null,
       });
       toast.success(t('common.saved'));
-      setCreateType(null);
+      closeCreate();
       router.push(localeHref(locale, `/commercial-documents/${created.id}`));
     } catch (cause) {
       setCreateError(
@@ -606,6 +664,17 @@ export default function OrdersPage() {
       setCreateBusy(false);
     }
   };
+
+  const selectedCreateTemplate =
+    prefill?.templateOptions.find((option) => option.versionId === createTemplateVersionId) ?? null;
+  const selectedCreateBankAccount =
+    prefill?.bankAccounts.find((account) => account.id === createBankAccountId) ?? null;
+  const createPrefillCurrent = isCreateDocumentPrefillCurrent({
+    resolvedTemplate: prefill?.resolvedTemplate ?? null,
+    selectedTemplateVersionId: createTemplateVersionId,
+    selectedLocale: createLocale,
+    loading: prefillLoading,
+  });
 
   const changeFilter = (key: OrderFilterKey, value: string) => {
     const next = { ...filters, [key]: value };
@@ -1240,16 +1309,18 @@ export default function OrdersPage() {
         open={createType !== null}
         title={t('commercialDocuments.create.title')}
         size="md"
-        onClose={() => setCreateType(null)}
+        onClose={closeCreate}
         footer={
           <>
-            <Button variant="secondary" onClick={() => setCreateType(null)} disabled={createBusy}>
+            <Button variant="secondary" onClick={closeCreate} disabled={createBusy}>
               {t('common.cancel')}
             </Button>
             <Button
               loading={createBusy}
               disabled={
                 !prefill ||
+                !createPrefillCurrent ||
+                prefillLoading ||
                 prefill.bankAccountStatus === 'MISSING' ||
                 (prefill.bankAccounts.length > 0 && !createBankAccountId)
               }
@@ -1262,8 +1333,11 @@ export default function OrdersPage() {
       >
         {prefillLoading ? <p>{t('quotationCenter.loading')}</p> : null}
         {createError ? (
-          <div className="alert alert-error" role="alert">
-            {createError}
+          <div className="alert alert-error stack-sm" role="alert">
+            <span>{createError}</span>
+            <Button variant="secondary" onClick={retryCreateValidation}>
+              {t('commercialDocuments.create.retryValidation')}
+            </Button>
           </div>
         ) : null}
         {prefill ? (
@@ -1273,12 +1347,25 @@ export default function OrdersPage() {
               <dd>{t(`commercialDocuments.types.${prefill.documentType}`)}</dd>
               <dt>{t('commercialDocuments.create.template')}</dt>
               <dd>
-                {prefill.template.name} v{prefill.template.version}
+                {selectedCreateTemplate?.name ?? prefill.resolvedTemplate.name} v
+                {selectedCreateTemplate?.version ?? prefill.resolvedTemplate.version} ·{' '}
+                {commercialDocumentLocaleLabel(
+                  selectedCreateTemplate?.locale ?? prefill.resolvedTemplate.locale,
+                  t,
+                )}
               </dd>
               <dt>{t('commercialDocuments.columns.currency')}</dt>
               <dd>{prefill.currency}</dd>
               <dt>{t('commercialDocuments.editor.fields.total')}</dt>
               <dd className="mono">{prefill.totals.totalAmount}</dd>
+              {selectedCreateBankAccount ? (
+                <>
+                  <dt>{t('commercialDocuments.create.bankAccount')}</dt>
+                  <dd>
+                    {selectedCreateBankAccount.label} · {selectedCreateBankAccount.bankName}
+                  </dd>
+                </>
+              ) : null}
             </dl>
             <Field label={t('commercialDocuments.create.template')}>
               {({ inputId, describedBy }) => (
@@ -1288,29 +1375,47 @@ export default function OrdersPage() {
                   value={createTemplateVersionId}
                   options={prefill.templateOptions.map((option) => ({
                     value: option.versionId,
-                    label: `${option.name} v${option.version} · ${commercialDocumentLocaleLabel(option.locale, t)}`,
+                    label: `${option.name} v${option.version} · ${commercialDocumentLocaleLabel(option.locale, t)}${option.hasUnpublishedChanges ? ` · ${t('documentTemplates.pendingPublish')}` : ''}`,
                   }))}
                   onChange={(event) => {
-                    setCreateTemplateVersionId(event.target.value);
                     const selected = prefill.templateOptions.find(
                       (option) => option.versionId === event.target.value,
                     );
-                    if (selected) setCreateLocale(selected.locale);
+                    if (!selected || !createOrderId || !createType) return;
+                    setCreateTemplateVersionId(selected.versionId);
+                    setCreateLocale(selected.locale);
+                    void loadCreatePrefill({
+                      orderId: createOrderId,
+                      type: createType,
+                      templateVersionId: selected.versionId,
+                      documentLocale: selected.locale,
+                    });
                   }}
                 />
               )}
             </Field>
-            <Field label={t('commercialDocuments.create.locale')}>
+            {selectedCreateTemplate?.hasUnpublishedChanges ? (
+              <p className="notice notice-warning" role="status">
+                {t('commercialDocuments.create.templateDraftPending', {
+                  version: selectedCreateTemplate.version,
+                })}
+              </p>
+            ) : null}
+            <Field
+              label={t('commercialDocuments.create.locale')}
+              help={t('commercialDocuments.create.localeFollowsTemplate')}
+            >
               {({ inputId, describedBy }) => (
                 <Select
                   inputId={inputId}
                   describedBy={describedBy}
                   value={createLocale}
+                  disabled
                   options={[
                     { value: 'en-US', label: commercialDocumentLocaleLabel('en-US', t) },
                     { value: 'zh-CN', label: commercialDocumentLocaleLabel('zh-CN', t) },
                   ]}
-                  onChange={(event) => setCreateLocale(event.target.value)}
+                  onChange={() => undefined}
                 />
               )}
             </Field>
@@ -1343,26 +1448,26 @@ export default function OrdersPage() {
                 })}
               </div>
             )}
-            {prefill.missingFields.length > 0 || prefill.missingItemLines.length > 0 ? (
-              <div className="alert alert-warning">
-                <strong>{t('commercialDocuments.create.missing')}</strong>
-                <ul>
-                  {prefill.missingFieldLabels.map((field) => (
-                    <li key={field.key}>{commercialDocumentFieldLabel(field.key, t)}</li>
-                  ))}
-                  {prefill.missingItemLines.map((line) => (
-                    <li key={`line-${line.lineNo}`}>
-                      {t('commercialDocuments.editor.missingItemLine', {
-                        line: line.lineNo,
-                        fields: line.fields
-                          .map((field) => commercialDocumentFieldLabel(field, t))
-                          .join(', '),
-                      })}
-                    </li>
-                  ))}
-                </ul>
+            {prefillLoading ? (
+              <div className="alert" role="status">
+                {t('commercialDocuments.create.validationLoading')}
               </div>
-            ) : null}
+            ) : createPrefillCurrent ? (
+              <CommercialDocumentMissingFields
+                report={prefill.missingReport}
+                missingFields={prefill.missingFields}
+                missingItemLines={prefill.missingItemLines}
+                templateName={`${prefill.resolvedTemplate.name} v${prefill.resolvedTemplate.version}`}
+                t={t}
+              />
+            ) : (
+              <div className="alert alert-warning stack-sm" role="alert">
+                <span>{t('commercialDocuments.create.validationStale')}</span>
+                <Button variant="secondary" onClick={retryCreateValidation}>
+                  {t('commercialDocuments.create.retryValidation')}
+                </Button>
+              </div>
+            )}
           </div>
         ) : null}
       </Modal>

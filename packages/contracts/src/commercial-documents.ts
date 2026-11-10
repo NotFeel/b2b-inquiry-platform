@@ -16,6 +16,11 @@ export const COMMERCIAL_DOCUMENT_STATUSES = [
 ] as const;
 export type CommercialDocumentStatus = (typeof COMMERCIAL_DOCUMENT_STATUSES)[number];
 
+/** Only formal business documents may expose their generated PDF for download. */
+export function isCommercialDocumentDownloadable(status: string): boolean {
+  return status === 'ISSUED' || status === 'SUPERSEDED' || status === 'CANCELLED';
+}
+
 export const DOCUMENT_TEMPLATE_STATUSES = ['DRAFT', 'ACTIVE', 'DISABLED'] as const;
 export type DocumentTemplateStatus = (typeof DOCUMENT_TEMPLATE_STATUSES)[number];
 

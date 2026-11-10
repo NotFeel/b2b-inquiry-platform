@@ -1,6 +1,7 @@
-import { constants as fsConstants, promises as fs } from 'node:fs';
+import { promises as fs } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { ERROR_CODES } from '@b2b/contracts';
+import { resolveExecutablePath } from '../resolve-executable';
 import { ExcelPdfProcessingError } from './excel-pdf-errors';
 
 export interface PdfValidationResult {
@@ -68,9 +69,8 @@ export async function validatePdfOutput(input: {
     await handle.close();
   }
 
-  try {
-    await fs.access(input.pdfInfoPath, fsConstants.X_OK);
-  } catch {
+  const pdfInfoPath = await resolveExecutablePath(input.pdfInfoPath);
+  if (!pdfInfoPath) {
     throw new ExcelPdfProcessingError(
       ERROR_CODES.excelPdfConverterUnavailable,
       'The PDF inspection utility is unavailable.',
@@ -78,7 +78,7 @@ export async function validatePdfOutput(input: {
     );
   }
 
-  const info = await readPdfInfo(input.pdfInfoPath, input.path, input.timeoutMs ?? 30_000);
+  const info = await readPdfInfo(pdfInfoPath, input.path, input.timeoutMs ?? 30_000);
   const { pageCount } = info;
   if (!Number.isInteger(pageCount) || pageCount < 1) {
     throw new ExcelPdfProcessingError(

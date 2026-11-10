@@ -188,6 +188,17 @@ export type CalculatorExcelTemplateOption = {
   version: number;
 };
 
+export type QuotationDraftEditData = {
+  quotation: {
+    id: string;
+    quotationNo: string;
+    title: string;
+    revision: number;
+  };
+  calculation: CalculatorInput;
+  products: CalculatorProduct[];
+};
+
 export function saveQuotationExcelDownload(download: AdminFileDownload): void {
   const url = URL.createObjectURL(download.blob);
   const link = document.createElement('a');
@@ -254,6 +265,19 @@ export const quotationOrderApi = {
       '/admin/quotations',
       input,
     ),
+  quotationEditData: async (id: string) =>
+    (await adminApi.get<{ data: QuotationDraftEditData }>(`/admin/quotations/${id}/edit-data`))
+      .data,
+  updateDraft: async (id: string, input: CalculatorInput) =>
+    (
+      await adminApi.patch<{ data: { id: string; quotationNo: string; revision: number } }>(
+        `/admin/quotations/${id}`,
+        input,
+      )
+    ).data,
+  deleteQuotation: async (id: string) =>
+    (await adminApi.delete<{ data: { id: string; deleted: true } }>(`/admin/quotations/${id}`))
+      .data,
   createOrder: async (input: CalculatorInput) =>
     postIdempotently<{ id: string; orderNo: string; contractNo: string }>(
       'direct-order',

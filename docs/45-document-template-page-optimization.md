@@ -38,7 +38,7 @@
 | P0 | 字段未勾选，预览仍显示 | `visibleSections()` 已过滤隐藏区域和隐藏字段；但 `render.ts` 仍在页眉硬编码输出单据编号、Revision、Currency，绕过字段配置 | 移除绕过配置的硬编码输出，统一由配置控制 |
 | P0 | 某些字段/区域隐藏后仍出现 | Notes、条款提示、真实性声明和签章区存在独立渲染路径；签章区只判断区域存在，内部仍可能输出已隐藏的签名项 | 所有业务字段、区域和条款都必须经过统一可见性判断 |
 | P0 | 预览不是纯预览 | Admin 的 `preview()` 先调用 `persistTemplate()`，预览会先保存草稿；`validate()` 也会先保存 | 预览和校验默认使用当前未保存配置，不隐式保存 |
-| P1 | 错误创建的草稿无法删除 | Controller 没有 DELETE 路由，Service 没有草稿删除方法，页面只有编辑/停用 | 增加受保护的“删除草稿”操作，只允许删除未发布且未被单据引用的草稿 |
+| P1 | 模板更新后旧模板持续堆积 | Controller 仅有受限草稿删除，页面无法清理已停用且无引用的旧模板 | 增加受保护的“删除模板”操作；非默认 DRAFT/DISABLED 且无单据、渲染任务引用时可连同无引用版本删除 |
 | P1 | 模板列表难以管理 | 页面只请求第 1 页、最多 100 条；没有搜索、类型筛选、状态筛选和分页控件 | 补齐已有列表 API 支持的查询、筛选和分页 |
 | P1 | 编辑页面太长 | 基本信息、样式、字段、商品列、条款、版本历史全部连续纵向堆叠 | 按工作步骤分组/Tab，桌面端保留清晰编辑区，移动端使用分段切换 |
 | P1 | 预览窗口无法高效对照 | 预览通过 Modal + iframe 打开，编辑和预览不能同时对照 | 桌面端支持编辑/预览并排或可切换工作区；移动端使用“编辑/预览”切换 |
@@ -68,12 +68,13 @@
 2. 草稿可以修改；发布后生成新的不可变版本。
 3. 已发布版本不得原地修改或删除。
 4. 已被任意 PI/CI 单据引用的模板/模板版本不得物理删除。
-5. 错误创建的草稿只有同时满足以下条件才允许删除：
-   - 当前模板状态为 DRAFT；
-   - 不存在任何已发布版本；
+5. 模板只有同时满足以下条件才允许删除：
+   - 当前模板状态为 DRAFT 或 DISABLED；
+   - `isDefault = false`（ACTIVE 默认模板必须先停用并取消默认标记）；
    - 不存在任何 CommercialDocument 引用该模板；
-   - 不存在版本、渲染任务或其他数据库关系阻止删除。
-6. DISABLED 模板不直接删除。用户可先通过现有启用/恢复流程将未发布草稿恢复为 DRAFT，再执行删除；若有发布历史则只能停用。
+   - 不存在 DocumentRenderJob 引用模板版本；
+   - 无其他数据库关系阻止删除。
+6. 删除时可在同一事务中删除该模板下无单据/渲染任务引用的历史版本；正式历史单据引用继续由 Restrict 外键保护。
 7. 删除是永久操作，必须二次确认并审计；删除成功后列表和当前编辑区同步刷新。
 8. 删除失败必须给出明确原因，不允许前端隐藏错误或假报成功。
 9. 不自动删除已签发 PI/CI、PDF、快照、模板版本或关联渲染任务。
@@ -221,7 +222,7 @@ Admin 页面当前 `preview()` 和 `validate()` 都先执行 `persistTemplate()`
 
 ---
 
-## 5. 草稿删除与误创建恢复
+## 5. 模板删除与堆积数据清理
 
 ### 5.1 API
 
@@ -235,7 +236,7 @@ DELETE /admin/document-templates/:id
 
 - 新增 `document_template.delete`。
 - Controller 必须执行服务端权限验证。
-- 前端仅在 `can('document_template.delete')` 且目标为可删除草稿时显示按钮。
+- 前端仅在 `can('document_template.delete')` 且服务端返回 `canDelete=true` 时显示按钮。
 
 需要同步：
 
@@ -250,19 +251,19 @@ DELETE /admin/document-templates/:id
 在 `DocumentTemplatesService` 增加独立删除方法，执行顺序：
 
 1. 查询模板，不存在返回 404。
-2. 检查 status 必须为 DRAFT，否则返回 409。
-3. 检查 `versions` 数量必须为 0，否则返回 409。
-4. 检查 `documents` 关联数量必须为 0，否则返回 409。
-5. 在事务内再次校验并删除，避免检查与删除之间出现并发引用。
-6. 记录审计事件 `document_template.deleted`，metadata 仅记录模板 ID、code、documentType、locale、name；不记录完整 config 中可能存在的敏感业务内容。
+2. 检查 status 必须为 DRAFT 或 DISABLED，且 `isDefault = false`，否则返回 409。
+3. 检查 `documents` 关联数量必须为 0，否则返回 409。
+4. 查询该模板所有版本 ID，并检查 `DocumentRenderJob.templateVersionId` 引用数必须为 0，否则返回 409。
+5. 在事务内再次校验，先删除该模板的历史版本，再删除模板；并发引用由校验与 Restrict 外键保护。
+6. 记录审计事件 `document_template.deleted`，metadata 仅记录模板 ID、code、documentType、locale、name、删除前状态和版本数；不记录完整 config 中可能存在的敏感业务内容。
 7. 返回明确的删除结果。
 8. 捕获外键 Restrict 冲突，映射为 HTTP 409 和明确提示。
 
 推荐错误语义：
 
 - `TEMPLATE_NOT_FOUND`：404。
-- `TEMPLATE_NOT_DELETABLE`：409（已发布、已停用或存在版本）。
-- `TEMPLATE_IN_USE`：409（已有单据引用）。
+- `TEMPLATE_NOT_DELETABLE`：409（ACTIVE、默认状态或其他不满足删除条件的模板）。
+- `TEMPLATE_IN_USE`：409（已有单据或 PDF 渲染任务引用）。
 - `TEMPLATE_CONCURRENT_UPDATE`：409（并发变化）。
 
 具体错误码必须复用项目现有错误码约定；若新增，更新 contracts/errors、错误映射和双语文案。
@@ -273,11 +274,11 @@ DELETE /admin/document-templates/:id
 
 | 模板状态 | 操作 |
 |---|---|
-| DRAFT 且无版本/无单据引用 | 编辑、预览、复制、删除草稿 |
-| DRAFT 但已被单据引用或存在版本 | 编辑、预览、复制；不显示删除 |
+| DRAFT 且非默认、无单据/渲染任务引用 | 编辑、预览、复制、删除模板 |
+| DRAFT 但已引用或为默认 | 编辑、预览、复制；不显示删除 |
 | ACTIVE | 编辑草稿、预览、复制、版本历史、停用 |
-| DISABLED 且有发布历史 | 查看/编辑草稿、预览、复制、启用；不显示删除 |
-| DISABLED 且无版本/无引用 | 可先恢复为 DRAFT，再删除；也可提供明确的“删除未发布草稿”入口，但后端仍须检查 |
+| DISABLED 且非默认、无单据/渲染任务引用 | 查看/编辑草稿、预览、复制、启用、删除模板及无引用版本历史 |
+| DISABLED 但被单据或渲染任务引用 | 查看/编辑草稿、预览、复制、启用；不显示删除 |
 
 删除确认弹窗必须展示：
 
@@ -285,7 +286,7 @@ DELETE /admin/document-templates/:id
 - PI 或 CI 类型；
 - 语言；
 - 当前状态；
-- “此操作不可恢复，仅删除未发布草稿，不影响已签发单据”的说明。
+- “此操作不可恢复；仅删除非默认、未引用的草稿/停用模板及其无引用版本，不影响已签发单据”的说明。
 
 删除成功后：
 
@@ -591,8 +592,10 @@ DELETE /admin/document-templates/:id
 |---|---|---|
 | API-001 | 删除无版本、无引用 DRAFT | 删除成功并审计 |
 | API-002 | 删除 ACTIVE 模板 | 409 |
-| API-003 | 删除 DISABLED 模板 | 409，除非经批准的安全草稿删除路径 |
-| API-004 | 删除有版本的模板 | 409 |
+| API-003 | 删除非默认、无引用的 DISABLED 模板 | 删除成功并连同无引用版本历史清理 |
+| API-004 | 删除有版本但无单据/渲染任务引用的 DRAFT/DISABLED 模板 | 删除成功并清理版本历史 |
+| API-004A | 删除默认模板 | 409，必须先取消默认标记 |
+| API-004B | 删除关联版本仍被 PDF 渲染任务引用的模板 | 409 |
 | API-005 | 删除被 CommercialDocument 引用的模板 | 409 |
 | API-006 | 删除不存在模板 | 404 |
 | API-007 | 无 document_template.delete 权限 | 403 |
@@ -609,7 +612,8 @@ DELETE /admin/document-templates/:id
 
 - 新建模板成功后进入编辑器。
 - 错误创建的 DRAFT 可删除。
-- ACTIVE / 有版本模板没有物理删除入口。
+- ACTIVE 或默认模板没有物理删除入口。
+- 非默认、无引用的 DRAFT/DISABLED 模板显示物理删除入口，即使存在无引用版本历史。
 - 删除确认显示正确模板名称和类型。
 - 删除取消不改变数据。
 - 删除成功后列表、计数和编辑器状态同步。

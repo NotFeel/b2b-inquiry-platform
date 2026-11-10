@@ -289,6 +289,55 @@
   gap: var(--space-3);
 }
 
+.commercial-document-validation {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.commercial-document-validation-group {
+  display: grid;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.commercial-document-validation-group h4,
+.commercial-document-validation-group p {
+  margin: 0;
+}
+
+.commercial-document-validation-group ul {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.commercial-document-validation-group li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  min-width: 0;
+}
+
+.commercial-document-validation-group li > span:first-child {
+  overflow-wrap: anywhere;
+}
+
+.commercial-document-validation-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.commercial-document-validation-fields > span {
+  display: inline-flex;
+  gap: var(--space-1);
+  align-items: center;
+}
+
 .template-filters {
   display: grid;
   grid-template-columns: minmax(220px, 1.5fr) repeat(3, minmax(140px, 0.75fr)) auto;
@@ -352,6 +401,54 @@
 
 .template-field-card-head .mono {
   overflow-wrap: anywhere;
+}
+
+.template-columns-table {
+  min-width: 900px;
+}
+
+.template-column-name {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 180px;
+}
+
+.template-column-name .mono {
+  overflow-wrap: anywhere;
+  font-size: var(--text-xs);
+}
+
+.template-columns-table th:nth-child(1),
+.template-columns-table th:nth-child(3),
+.template-columns-table td:nth-child(1),
+.template-columns-table td:nth-child(3) {
+  text-align: center;
+}
+
+.template-column-checkbox {
+  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.template-column-label-input {
+  min-width: 12rem;
+}
+
+.template-column-width-input {
+  width: 7.5rem;
+}
+
+.template-column-actions {
+  flex-wrap: nowrap;
+}
+
+.template-column-actions .btn {
+  min-width: 44px;
+  min-height: 44px;
 }
 
 .template-toggle-grid {

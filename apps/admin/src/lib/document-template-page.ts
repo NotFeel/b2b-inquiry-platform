@@ -38,8 +38,8 @@ export function documentTemplateSignature(
   return JSON.stringify({ meta, config });
 }
 
-export function isDocumentTemplateDraftDeletable(
-  template: Pick<DocumentTemplateSummary, 'status' | 'versionCount'>,
+export function isDocumentTemplateDeletable(
+  template: Pick<DocumentTemplateSummary, 'canDelete'>,
 ): boolean {
-  return template.status === 'DRAFT' && template.versionCount === 0;
+  return template.canDelete;
 }

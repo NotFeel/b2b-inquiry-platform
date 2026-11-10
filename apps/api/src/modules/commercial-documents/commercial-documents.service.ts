@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   ERROR_CODES,
+  isCommercialDocumentDownloadable,
   type CommercialDocumentType,
   type DocumentRenderJobPayload,
 } from '@b2b/contracts';
@@ -36,7 +37,6 @@ import { CompanyProfilesService } from './company-profiles.service';
 import { DocumentTemplatesService } from './document-templates.service';
 
 const EDITABLE_STATUSES = new Set(['DRAFT', 'REVIEW']);
-const DOWNLOADABLE_STATUSES = new Set(['ISSUED', 'SUPERSEDED', 'CANCELLED']);
 const MAX_ASSET_BYTES = 2 * 1024 * 1024;
 const ASSET_MIME: Record<string, string> = {
   png: 'image/png',
@@ -186,13 +186,20 @@ export class CommercialDocumentsService {
   }
 
   /** Prefill endpoint for the create wizard, including the exact missing list. */
-  async prefill(orderId: string, documentType: CommercialDocumentType, actorId: string) {
+  async prefill(
+    orderId: string,
+    documentType: CommercialDocumentType,
+    actorId: string,
+    selection: { templateVersionId?: string; locale?: string } = {},
+  ) {
     const order = await this.loadOrder(orderId);
+    const locale =
+      selection.locale === 'zh-CN' || selection.locale === 'en-US' ? selection.locale : 'en-US';
     const template = await this.resolveTemplateForOrder(
       order,
       documentType,
-      'en-US',
-      null,
+      locale,
+      selection.templateVersionId ?? null,
       actorId,
     );
     const companyProfile = await this.profiles.defaultProfile();
@@ -224,18 +231,33 @@ export class CommercialDocumentsService {
       bankAccount,
     );
     const items = data.items.map((item, index) => this.itemRenderData(item, index));
-    const renderData = this.prefillRenderData(order, documentType, items, data.totals, {
-      seller: data.seller,
-      buyer: data.buyer,
-      consignee: data.consignee,
-      notifyParty: data.notifyParty,
-      trade: data.trade,
-      shipping: data.shipping,
-      payment: data.payment,
-      declaration: data.declaration,
-      signature: data.signature,
-    });
+    const renderData = this.prefillRenderData(
+      order,
+      documentType,
+      items,
+      data.totals,
+      {
+        seller: data.seller,
+        buyer: data.buyer,
+        consignee: data.consignee,
+        notifyParty: data.notifyParty,
+        trade: data.trade,
+        shipping: data.shipping,
+        payment: data.payment,
+        declaration: data.declaration,
+        signature: data.signature,
+      },
+      locale,
+    );
     const missing = findMissingDocumentFields(renderData, template.config);
+    const resolvedTemplate = {
+      id: template.template.id,
+      versionId: template.version.id,
+      version: template.version.version,
+      name: template.template.name,
+      locale: template.template.locale,
+      checksum: template.version.checksum,
+    };
     return {
       orderId: order.id,
       orderNo: order.orderNo,
@@ -256,20 +278,17 @@ export class CommercialDocumentsService {
       declaration: data.declaration,
       items: data.items,
       totals: data.totals,
-      template: {
-        id: template.template.id,
-        versionId: template.version.id,
-        version: template.version.version,
-        name: template.template.name,
-        locale: template.template.locale,
-      },
+      resolvedTemplate,
+      /** Compatibility alias for older Admin clients. */
+      template: resolvedTemplate,
       templateOptions: await this.templates.activeOptions(documentType),
       missingFields: missing.missing,
       missingFieldLabels: missing.missing.map((key) => ({
         key,
-        label: defaultFieldLabel(key, 'en-US'),
+        label: defaultFieldLabel(key, locale),
       })),
       missingItemLines: missing.missingItemLines,
+      missingReport: missing,
     };
   }
 
@@ -398,12 +417,7 @@ export class CommercialDocumentsService {
     actorId: string,
     requestId: string,
   ) {
-    const document = await this.prisma.commercialDocument.findUnique({
-      where: { id },
-      include: { items: { orderBy: { lineNo: 'asc' } } },
-    });
-    if (!document)
-      throw new ApiError(ERROR_CODES.commercialDocumentNotFound, 'Document not found.');
+    const document = await this.loadDetail(id);
     if (!EDITABLE_STATUSES.has(document.status)) {
       throw new ApiError(
         ERROR_CODES.commercialDocumentNotEditable,
@@ -421,14 +435,29 @@ export class CommercialDocumentsService {
     let templateVersionId = document.templateVersionId;
     let templateVersionNo = document.templateVersionNo;
     let templateId = document.templateId;
+    let selectedTemplateLocale = document.template?.locale ?? null;
     if (input.templateVersionId) {
       const resolved = await this.templates.resolveVersion(
         input.templateVersionId,
         document.documentType,
       );
+      if (resolved.template.status !== 'ACTIVE') {
+        throw new ApiError(
+          ERROR_CODES.documentTemplateNotActive,
+          'The selected template is not active.',
+        );
+      }
       templateVersionId = resolved.version.id;
       templateVersionNo = resolved.version.version;
       templateId = resolved.template.id;
+      selectedTemplateLocale = resolved.template.locale;
+    }
+    const targetLocale = input.locale ?? document.locale;
+    if (selectedTemplateLocale && targetLocale !== selectedTemplateLocale) {
+      throw new ApiError(
+        ERROR_CODES.documentTemplateLocaleMismatch,
+        'The document language must match the selected template language.',
+      );
     }
 
     const currency = (input.currency ?? document.currency).toUpperCase();
@@ -639,10 +668,12 @@ export class CommercialDocumentsService {
     const config = this.configFromDocument(document);
     const data = this.renderData(document);
     const assets = await this.renderAssets(data);
+    const missing = findMissingDocumentFields(data, config);
     return {
       data: {
         html: renderCommercialDocumentHtml(config, data, assets),
-        missingFields: findMissingDocumentFields(data, config).missing,
+        missingFields: missing.missing,
+        missingReport: missing,
         documentNo: document.documentNo,
         revisionNo: document.revisionNo,
       },
@@ -746,6 +777,7 @@ export class CommercialDocumentsService {
           details: {
             missingFields: missing.missing,
             missingItemLines: missing.missingItemLines,
+            missingReport: missing,
           },
         },
       );
@@ -948,11 +980,115 @@ export class CommercialDocumentsService {
     return this.detail(updated.id);
   }
 
+  /**
+   * Permanently removes a draft created for a superseded template or by
+   * mistake. Issued history, revision chains and in-flight renders remain
+   * protected. Generated files are queued for retryable physical deletion in
+   * the same transaction that removes the database records.
+   */
+  async remove(id: string, actorId: string, requestId: string) {
+    const result = await this.prisma.$transaction(async (transaction) => {
+      const document = await transaction.commercialDocument.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          documentType: true,
+          documentNo: true,
+          revisionNo: true,
+          status: true,
+          pdfFileKey: true,
+          templateId: true,
+          templateVersionNo: true,
+          _count: { select: { revisions: true } },
+        },
+      });
+      if (!document) {
+        throw new ApiError(ERROR_CODES.commercialDocumentNotFound, 'Document not found.');
+      }
+      if (document.status !== 'DRAFT') {
+        throw new ApiError(
+          ERROR_CODES.commercialDocumentStateConflict,
+          'Only a draft commercial document can be deleted.',
+        );
+      }
+      if (document._count.revisions > 0) {
+        throw new ApiError(
+          ERROR_CODES.commercialDocumentStateConflict,
+          'A document with revisions cannot be deleted.',
+        );
+      }
+
+      const activeRenderJobs = await transaction.documentRenderJob.count({
+        where: {
+          documentId: id,
+          status: { in: ['QUEUED', 'PROCESSING'] },
+        },
+      });
+      if (activeRenderJobs > 0) {
+        throw new ApiError(
+          ERROR_CODES.commercialDocumentStateConflict,
+          'Wait for the active PDF render to finish before deleting this draft.',
+        );
+      }
+
+      const renderJobs = await transaction.documentRenderJob.findMany({
+        where: { documentId: id, fileKey: { not: null } },
+        select: { fileKey: true },
+      });
+      const storageKeys = [
+        ...new Set(
+          [document.pdfFileKey, ...renderJobs.map((job) => job.fileKey)].filter(
+            (key): key is string => Boolean(key),
+          ),
+        ),
+      ];
+      const deletionJobIds: string[] = [];
+      for (const storageKey of storageKeys) {
+        const idempotencyKey = `commercial-document:${id}:${createHash('sha256')
+          .update(storageKey)
+          .digest('hex')}`;
+        const job = await transaction.fileDeletionJob.upsert({
+          where: { idempotencyKey },
+          create: {
+            storageKey,
+            entityType: 'commercial_document',
+            entityId: id,
+            requestedBy: actorId,
+            status: 'QUEUED',
+            idempotencyKey,
+          },
+          update: {},
+        });
+        deletionJobIds.push(job.id);
+      }
+
+      await transaction.commercialDocument.delete({ where: { id } });
+      return { document, deletionJobIds };
+    });
+
+    await this.audit.record({
+      actorId,
+      action: 'commercial_document.deleted',
+      entityType: 'CommercialDocument',
+      entityId: id,
+      requestId,
+      metadata: {
+        documentNo: result.document.documentNo,
+        documentType: result.document.documentType,
+        revisionNo: result.document.revisionNo,
+        templateId: result.document.templateId,
+        templateVersionNo: result.document.templateVersionNo,
+        deletedFileCount: result.deletionJobIds.length,
+      },
+    });
+    return { deleted: true as const, deletionJobIds: result.deletionJobIds };
+  }
+
   async download(id: string, actorId: string, requestId: string) {
     const document = await this.prisma.commercialDocument.findUnique({ where: { id } });
     if (!document)
       throw new ApiError(ERROR_CODES.commercialDocumentNotFound, 'Document not found.');
-    if (!DOWNLOADABLE_STATUSES.has(document.status)) {
+    if (!isCommercialDocumentDownloadable(document.status)) {
       throw new ApiError(
         ERROR_CODES.commercialDocumentPdfUnavailable,
         'Only an issued or cancelled document can be downloaded.',
@@ -1138,7 +1274,20 @@ export class CommercialDocumentsService {
     requestId?: string,
   ) {
     if (templateVersionId) {
-      return this.templates.resolveVersion(templateVersionId, documentType);
+      const resolved = await this.templates.resolveVersion(templateVersionId, documentType);
+      if (resolved.template.status !== 'ACTIVE') {
+        throw new ApiError(
+          ERROR_CODES.documentTemplateNotActive,
+          'The selected template is not active.',
+        );
+      }
+      if (resolved.template.locale !== locale) {
+        throw new ApiError(
+          ERROR_CODES.documentTemplateLocaleMismatch,
+          'The document language must match the selected template language.',
+        );
+      }
+      return resolved;
     }
     void order;
     return this.templates.ensureDefaultVersion(documentType, locale, actorId, requestId);
@@ -1457,13 +1606,14 @@ export class CommercialDocumentsService {
       declaration: Record<string, unknown>;
       signature: Record<string, unknown>;
     },
+    locale: 'en-US' | 'zh-CN',
   ): CommercialDocumentRenderData {
     return this.renderDataFromParts({
       documentType,
       documentNo: 'PREVIEW',
       revisionNo: 1,
       status: 'DRAFT',
-      locale: 'en-US',
+      locale,
       currency: order.currencyCode,
       issueDate: this.todayDateOnly().toISOString().slice(0, 10),
       validUntil: null,
@@ -1639,6 +1789,7 @@ export class CommercialDocumentsService {
       version: document.version,
       orderId: document.orderId,
       orderNo: document.order?.orderNo ?? null,
+      orderDate: document.order?.orderDate.toISOString().slice(0, 10) ?? null,
       companyProfileId:
         typeof calculationMeta.companyProfileId === 'string'
           ? calculationMeta.companyProfileId
@@ -1700,6 +1851,7 @@ export class CommercialDocumentsService {
         label: defaultFieldLabel(key, document.locale),
       })),
       missingItemLines: missing.missingItemLines,
+      missingReport: missing,
       pdf: {
         available: Boolean(document.pdfFileKey),
         generatedAt: document.generatedAt?.toISOString() ?? null,

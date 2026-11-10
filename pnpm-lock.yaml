@@ -41,6 +41,9 @@ importers:
 
   apps/admin:
     dependencies:
+      '@b2b/commercial-documents':
+        specifier: workspace:*
+        version: link:../../packages/commercial-documents
       '@b2b/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts

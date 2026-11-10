@@ -22,6 +22,7 @@ describe('commercial document endpoint authorization metadata', () => {
     ['issue', Permission.commercialDocumentIssue],
     ['revision', Permission.commercialDocumentRevisionCreate],
     ['cancel', Permission.commercialDocumentCancel],
+    ['remove', Permission.commercialDocumentDelete],
     ['download', Permission.commercialDocumentDownload],
   ])('commercial document %s is protected by %s', (method, permission) => {
     expect(permissions(CommercialDocumentsController.prototype, method)).toEqual([permission]);

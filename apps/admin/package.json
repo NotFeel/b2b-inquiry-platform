@@ -14,6 +14,7 @@
     "clean": "rm -rf .next .next-dev .open-next .wrangler"
   },
   "dependencies": {
+    "@b2b/commercial-documents": "workspace:*",
     "@b2b/contracts": "workspace:*",
     "@b2b/i18n": "workspace:*",
     "@b2b/ui": "workspace:*",

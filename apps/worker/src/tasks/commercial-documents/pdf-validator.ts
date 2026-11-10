@@ -1,5 +1,6 @@
 import { promises as fs } from 'node:fs';
 import { spawn } from 'node:child_process';
+import { resolveExecutablePath } from '../resolve-executable';
 
 export interface CommercialPdfValidation {
   sizeBytes: number;
@@ -42,11 +43,9 @@ export async function validateCommercialPdf(input: {
     await handle.close();
   }
 
-  const pageCount = await readPageCount(
-    input.pdfInfoPath,
-    input.path,
-    input.timeoutMs ?? 30_000,
-  );
+  const pdfInfoPath = await resolveExecutablePath(input.pdfInfoPath);
+  if (!pdfInfoPath) throw new Error('COMMERCIAL_DOCUMENT_PDFINFO_UNAVAILABLE');
+  const pageCount = await readPageCount(pdfInfoPath, input.path, input.timeoutMs ?? 30_000);
   if (!Number.isInteger(pageCount) || pageCount < 1) {
     throw new Error('COMMERCIAL_DOCUMENT_OUTPUT_INVALID');
   }

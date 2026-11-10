@@ -99,6 +99,7 @@ export const REFERENCE_PERMISSIONS: { code: string; module: string; nameKey: str
   ['commercial_document.revision.create', 'commercial-document'],
   ['commercial_document.cancel', 'commercial-document'],
   ['commercial_document.download', 'commercial-document'],
+  ['commercial_document.delete', 'commercial-document'],
   ['document_template.read', 'document-template'],
   ['document_template.create', 'document-template'],
   ['document_template.update', 'document-template'],

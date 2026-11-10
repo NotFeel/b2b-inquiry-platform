@@ -189,6 +189,19 @@ describe('renderCommercialDocumentHtml', () => {
     expect(html).not.toContain('73181590');
   });
 
+  it('uses ruled item-table cells and right-aligns numeric headers with their data', () => {
+    const config = createDefaultTemplateConfig('CI');
+    const html = renderCommercialDocumentHtml(config, baseDocument);
+
+    expect(html).toContain('table.items th, table.items td { border: 0.4pt solid #d1d5db;');
+    expect(html).toContain('table.items th:not(.numeric) { text-align: left; }');
+    expect(html).toContain('td.numeric, th.numeric { text-align: right; }');
+    expect(html).toContain('<th class="numeric" style="width:11%">Unit price</th>');
+    expect(html).toContain('<th class="numeric" style="width:12%">Amount</th>');
+    expect(html).toContain('<td class="numeric">0.28</td>');
+    expect(html).toContain('<td class="numeric">280.00</td>');
+  });
+
   it('routes header metadata through the shared field visibility settings', () => {
     const config = createDefaultTemplateConfig('CI');
     for (const [section, field] of [
@@ -258,9 +271,38 @@ describe('renderCommercialDocumentHtml', () => {
       stampDataUri: 'data:image/png;base64,STAMP',
     });
     expect(html).not.toContain('LOGO');
-    expect(html).toContain('STAMP');
-    expect(html).toContain('Seller signature / stamp');
-    expect(html).not.toContain('Buyer signature');
+    const overlay = html.match(
+      /<img class="stamp-overlay" src="data:image\/svg\+xml;base64,([^"]+)"/,
+    )?.[1];
+    expect(overlay).toBeDefined();
+    const svg = Buffer.from(overlay!, 'base64').toString('utf8');
+    expect(svg).toContain('data:image/png;base64,STAMP');
+    expect(svg).toContain('Seller signature / stamp');
+    expect(svg).not.toContain('Buyer signature');
+  });
+
+  it('composes the seller stamp above the signature text inside its signature cell', () => {
+    const config = createDefaultTemplateConfig('CI');
+    const html = renderCommercialDocumentHtml(config, baseDocument, {
+      stampDataUri: 'data:image/png;base64,STAMP',
+    });
+
+    expect(html).toContain('<div class="signature-cell has-stamp">');
+    expect(html).toContain(
+      '.stamp-overlay { display: block; width: 80mm; max-width: 100%; height: 34mm; }',
+    );
+
+    const overlay = html.match(
+      /<img class="stamp-overlay" src="data:image\/svg\+xml;base64,([^"]+)"/,
+    )?.[1];
+    expect(overlay).toBeDefined();
+    const svg = Buffer.from(overlay!, 'base64').toString('utf8');
+    expect(svg).toContain('>Seller signature / stamp</text>');
+    expect(svg).toContain('>Alice Seller, Export Manager</text>');
+    expect(svg).toContain('<image href="data:image/png;base64,STAMP"');
+    expect(svg.indexOf('<image')).toBeGreaterThan(
+      svg.indexOf('>Alice Seller, Export Manager</text>'),
+    );
   });
 
   it('does not output a signature or item table without visible cells', () => {
@@ -283,16 +325,36 @@ describe('findMissingDocumentFields', () => {
     const report = findMissingDocumentFields(baseDocument, createDefaultTemplateConfig('CI'));
     expect(report.missing).toEqual([]);
     expect(report.missingItemLines).toEqual([]);
+    expect(report.businessRequired).toEqual([]);
+    expect(report.templateRequired).toEqual([]);
+    expect(report.templateVisibilityConflicts).toEqual([]);
   });
 
   it('reports customs, trade and bank gaps specifically', () => {
+    const config = createDefaultTemplateConfig('CI');
+    for (const key of ['trade.namedPlace', 'trade.paymentTerms']) {
+      const field = config.sections
+        .flatMap((section) => section.fields)
+        .find((candidate) => candidate.key === key);
+      if (field) field.required = true;
+    }
+    for (const key of ['payment.bankName', 'payment.accountNumber']) {
+      const field = config.sections
+        .flatMap((section) => section.fields)
+        .find((candidate) => candidate.key === key);
+      if (field) field.required = true;
+    }
+    for (const key of ['items.hsCode', 'items.originCountryCode']) {
+      const column = config.itemColumns.find((candidate) => candidate.key === key);
+      if (column) column.required = true;
+    }
     const incomplete: CommercialDocumentRenderData = {
       ...baseDocument,
       trade: { incotermCode: 'DDP' },
       payment: { accountHolder: 'Wuxan' },
       items: [{ ...baseDocument.items[0]!, hsCode: '', originCountryCode: '' }],
     };
-    const report = findMissingDocumentFields(incomplete, createDefaultTemplateConfig('CI'));
+    const report = findMissingDocumentFields(incomplete, config);
     expect(report.missing).toEqual(
       expect.arrayContaining([
         'trade.namedPlace',
@@ -304,10 +366,99 @@ describe('findMissingDocumentFields', () => {
     expect(report.missingItemLines[0]?.fields).toEqual(
       expect.arrayContaining(['items.hsCode', 'items.originCountryCode']),
     );
+    expect(report.businessRequired.map((entry) => entry.key)).toEqual(
+      expect.arrayContaining(['trade.namedPlace', 'trade.paymentTerms', 'payment.bankName']),
+    );
+    expect(report.itemLineMissing[0]?.fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: 'items.hsCode',
+          source: 'TEMPLATE_REQUIRED',
+          lineNo: 1,
+        }),
+        expect.objectContaining({
+          key: 'items.originCountryCode',
+          source: 'TEMPLATE_REQUIRED',
+        }),
+      ]),
+    );
+  });
+
+  it('does not enforce a business field when the template does not require it', () => {
+    const config = createDefaultTemplateConfig('CI');
+    const document: CommercialDocumentRenderData = {
+      ...baseDocument,
+      buyer: {
+        ...baseDocument.buyer,
+        companyName: null,
+        billingAddress: null,
+      },
+    };
+    const report = findMissingDocumentFields(document, config);
+    expect(report.missing).not.toContain('buyer.companyName');
+    expect(report.businessRequired).toEqual([]);
+    expect(report.templateRequired).toEqual([]);
+  });
+
+  it('does not validate required fields when their template section or column is hidden', () => {
+    const config = createDefaultTemplateConfig('CI');
+    const buyer = config.sections.find((section) => section.key === 'buyer');
+    if (buyer) buyer.visible = false;
+    for (const field of buyer?.fields ?? []) field.required = true;
+    const hsColumn = config.itemColumns.find((column) => column.key === 'items.hsCode');
+    if (hsColumn) {
+      hsColumn.visible = false;
+      hsColumn.required = true;
+    }
+    const report = findMissingDocumentFields(
+      { ...baseDocument, buyer: { ...baseDocument.buyer, phone: null } },
+      config,
+    );
+    expect(report.missing).not.toContain('buyer.companyName');
+    expect(report.missing).not.toContain('buyer.phone');
+    expect(report.missingItemLines.flatMap((line) => line.fields)).not.toContain('items.hsCode');
+    expect(report.templateVisibilityConflicts).toEqual([]);
+    expect(report.templateRequired.map((entry) => entry.key)).not.toContain('buyer.phone');
+  });
+
+  it('reports visible required template fields as an additional source', () => {
+    const config = createDefaultTemplateConfig('CI');
+    const sellerTaxId = config.sections
+      .find((section) => section.key === 'seller')
+      ?.fields.find((field) => field.key === 'seller.taxId');
+    if (sellerTaxId) sellerTaxId.required = true;
+    const report = findMissingDocumentFields(
+      { ...baseDocument, seller: { ...baseDocument.seller, taxId: null } },
+      config,
+    );
+    expect(report.templateRequired).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: 'seller.taxId',
+          source: 'TEMPLATE_REQUIRED',
+          sectionKey: 'seller',
+        }),
+      ]),
+    );
+    expect(report.businessRequired.map((entry) => entry.key)).not.toContain('seller.taxId');
   });
 });
 
 describe('parseTemplateConfig', () => {
+  it('defaults item-column required to false for historical templates', () => {
+    const config = createDefaultTemplateConfig('CI') as unknown as {
+      itemColumns: Array<Record<string, unknown>>;
+    };
+    const legacy = {
+      ...config,
+      itemColumns: config.itemColumns.map(({ required: _required, ...column }) => column),
+    };
+
+    expect(
+      parseTemplateConfig(legacy).itemColumns.every((column) => column.required === false),
+    ).toBe(true);
+  });
+
   it('rejects unknown field keys, script-like values and duplicate columns', () => {
     const config = createDefaultTemplateConfig('CI') as unknown as Record<string, unknown>;
     expect(() =>

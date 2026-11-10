@@ -3,6 +3,7 @@ import {
   createCommercialDocumentSchema,
   documentTemplateListQuerySchema,
   documentTemplateValidateSchema,
+  orderDocumentPrefillQuerySchema,
   updateCommercialDocumentSchema,
   updateOrderCustomerSnapshotSchema,
 } from './commercial-documents';
@@ -75,6 +76,21 @@ describe('createCommercialDocumentSchema', () => {
   });
 });
 
+describe('orderDocumentPrefillQuerySchema', () => {
+  it('accepts an optional published template version and locale', () => {
+    expect(
+      orderDocumentPrefillQuerySchema.safeParse({
+        type: 'CI',
+        templateVersionId: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d',
+        locale: 'zh-CN',
+      }).success,
+    ).toBe(true);
+    expect(orderDocumentPrefillQuerySchema.safeParse({ type: 'CI', locale: 'fr-FR' }).success).toBe(
+      false,
+    );
+  });
+});
+
 describe('updateCommercialDocumentSchema', () => {
   it('requires a positive version for optimistic locking', () => {
     expect(updateCommercialDocumentSchema.safeParse({ version: 0 }).success).toBe(false);
@@ -84,6 +100,27 @@ describe('updateCommercialDocumentSchema', () => {
         items: [{ quantity: '1', unitPrice: '2.5', hsCode: '73181590' }],
       }).success,
     ).toBe(true);
+  });
+
+  it('accepts CBM values at the database precision without weakening money fields', () => {
+    const payload = {
+      version: 2,
+      shipping: { cbm: '0.1122885' },
+      items: [{ quantity: '1', unitPrice: '2.5', hsCode: '73181590', cbm: '0.0725985' }],
+    };
+    expect(updateCommercialDocumentSchema.safeParse(payload).success).toBe(true);
+    expect(
+      updateCommercialDocumentSchema.safeParse({
+        version: 2,
+        items: [{ quantity: '1', unitPrice: '2.1234567', hsCode: '73181590' }],
+      }).success,
+    ).toBe(false);
+    expect(
+      updateCommercialDocumentSchema.safeParse({
+        version: 2,
+        shipping: { cbm: '0.1234567890123456' },
+      }).success,
+    ).toBe(false);
   });
 });
 

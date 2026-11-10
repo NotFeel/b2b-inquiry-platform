@@ -11,6 +11,15 @@ import {
   type DocumentItemColumnKey,
   type DocumentSectionKey,
 } from './field-catalog';
+import { isFieldVisible, isSectionVisible } from './visibility';
+
+export {
+  hasVisibleFields,
+  isFieldVisible,
+  isItemColumnRequired,
+  isItemColumnVisible,
+  isSectionVisible,
+} from './visibility';
 
 // A template is declarative data only. It cannot contain HTML, JavaScript,
 // SQL, URLs or arbitrary expressions — those are the primary injection and
@@ -79,6 +88,7 @@ const sectionSchema = z.object({
 const itemColumnSchema = z.object({
   key: z.enum(DOCUMENT_ITEM_COLUMN_KEYS),
   visible: z.boolean().default(true),
+  required: z.boolean().default(false),
   /** Legacy single-language override kept for existing templates. */
   label: z.string().trim().max(80).optional(),
   labels: localizedTextSchema(80),
@@ -290,6 +300,7 @@ export function createDefaultTemplateConfig(
     itemColumns: DOCUMENT_ITEM_COLUMN_KEYS.map((key) => ({
       key,
       visible: columns[key].visible,
+      required: false,
       width: columns[key].width,
       label: DOCUMENT_ITEM_COLUMN_LABELS[key][locale],
     })),
@@ -365,35 +376,6 @@ export function visibleSections(
           required: field.required,
         })),
     }));
-}
-
-export function isSectionVisible(
-  config: DocumentTemplateConfig,
-  sectionKey: DocumentSectionKey,
-): boolean {
-  return config.sections.find((section) => section.key === sectionKey)?.visible === true;
-}
-
-/**
- * An absent field is hidden. This prevents legacy or malformed configurations
- * from accidentally exposing a field that the editor did not explicitly enable.
- */
-export function isFieldVisible(
-  config: DocumentTemplateConfig,
-  sectionKey: DocumentSectionKey,
-  fieldKey: string,
-): boolean {
-  const section = config.sections.find((candidate) => candidate.key === sectionKey);
-  if (!section?.visible) return false;
-  return section.fields.find((field) => field.key === fieldKey)?.visible === true;
-}
-
-export function hasVisibleFields(
-  config: DocumentTemplateConfig,
-  sectionKey: DocumentSectionKey,
-): boolean {
-  const section = config.sections.find((candidate) => candidate.key === sectionKey);
-  return Boolean(section?.visible && section.fields.some((field) => field.visible));
 }
 
 export function templateSectionField(

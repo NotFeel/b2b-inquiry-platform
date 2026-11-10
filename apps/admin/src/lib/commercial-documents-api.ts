@@ -1,5 +1,6 @@
 'use client';
 
+import type { DocumentTemplateConfig as SharedDocumentTemplateConfig } from '@b2b/commercial-documents';
 import {
   adminApi,
   downloadAdminFileGet,
@@ -222,6 +223,29 @@ export type DocumentTotals = {
   totalAmount: string;
 };
 
+export type MissingFieldSource = 'BUSINESS_RULE' | 'TEMPLATE_REQUIRED' | 'CI_ITEM_RULE';
+
+export type MissingFieldEntry = {
+  key: string;
+  label: string;
+  source: MissingFieldSource;
+  sectionKey?: string;
+  lineNo?: number;
+};
+
+export type MissingFieldReport = {
+  businessRequired: MissingFieldEntry[];
+  templateRequired: MissingFieldEntry[];
+  itemLineMissing: Array<{ lineNo: number; fields: MissingFieldEntry[] }>;
+  templateVisibilityConflicts: Array<{
+    key: string;
+    label: string;
+    reason: 'REQUIRED_BUT_HIDDEN';
+  }>;
+  missing: string[];
+  missingItemLines: Array<{ lineNo: number; fields: string[] }>;
+};
+
 export type CommercialDocumentSummary = {
   id: string;
   type: 'PI' | 'CI';
@@ -245,44 +269,7 @@ export type CommercialDocumentSummary = {
   updatedAt: string;
 };
 
-export type DocumentTemplateConfig = {
-  schemaVersion: 1;
-  page: {
-    size: 'A4' | 'Letter';
-    orientation: 'portrait' | 'landscape';
-    marginMm: { top: number; right: number; bottom: number; left: number };
-  };
-  theme: {
-    primaryColor: string;
-    accentColor: string;
-    fontFamily: string;
-    fontSizePt: number;
-  };
-  header: {
-    title: string;
-    subtitle?: string;
-    showLogo: boolean;
-    showStamp: boolean;
-    showDocumentType: boolean;
-  };
-  sections: Array<{
-    key: string;
-    visible: boolean;
-    title?: string;
-    fields: Array<{ key: string; visible: boolean; required: boolean; label?: string }>;
-  }>;
-  itemColumns: Array<{ key: string; visible: boolean; label?: string; width?: number }>;
-  footer: { text?: string; showText: boolean; showPageNumbers: boolean };
-  terms: {
-    paymentNotice?: string;
-    shipmentNotice?: string;
-    authenticityDeclaration?: string;
-    showPaymentNotice: boolean;
-    showShipmentNotice: boolean;
-    showAuthenticityDeclaration: boolean;
-  };
-  notes: { visible: boolean; title?: string };
-};
+export type DocumentTemplateConfig = SharedDocumentTemplateConfig;
 
 export type CommercialDocumentDetail = {
   id: string;
@@ -297,6 +284,7 @@ export type CommercialDocumentDetail = {
   version: number;
   orderId: string | null;
   orderNo: string | null;
+  orderDate: string | null;
   companyProfileId: string | null;
   bankAccountId: string | null;
   buyerReference: string | null;
@@ -324,6 +312,7 @@ export type CommercialDocumentDetail = {
   missingFields: string[];
   missingFieldLabels: Array<{ key: string; label: string }>;
   missingItemLines: Array<{ lineNo: number; fields: string[] }>;
+  missingReport: MissingFieldReport;
   pdf: {
     available: boolean;
     generatedAt: string | null;
@@ -365,21 +354,42 @@ export type DocumentPrefill = {
   declaration: DocumentDeclaration;
   items: CommercialDocumentItem[];
   totals: DocumentTotals;
-  template: { id: string; versionId: string; version: number; name: string; locale: string };
-  templateOptions: Array<{
+  resolvedTemplate: {
     id: string;
-    name: string;
-    documentType: 'PI' | 'CI';
-    locale: string;
-    paperSize: string;
-    orientation: string;
-    isDefault: boolean;
     versionId: string;
     version: number;
-  }>;
+    name: string;
+    locale: string;
+    checksum: string;
+  };
+  /** Compatibility alias; use resolvedTemplate for new UI code. */
+  template: {
+    id: string;
+    versionId: string;
+    version: number;
+    name: string;
+    locale: string;
+    checksum: string;
+  };
+  templateOptions: DocumentTemplateOption[];
   missingFields: string[];
   missingFieldLabels: Array<{ key: string; label: string }>;
   missingItemLines: Array<{ lineNo: number; fields: string[] }>;
+  missingReport: MissingFieldReport;
+};
+
+export type DocumentTemplateOption = {
+  id: string;
+  name: string;
+  documentType: 'PI' | 'CI';
+  locale: string;
+  paperSize: string;
+  orientation: string;
+  isDefault: boolean;
+  versionId: string;
+  version: number;
+  config: DocumentTemplateConfig;
+  hasUnpublishedChanges: boolean;
 };
 
 export type DocumentTemplateSummary = {
@@ -394,6 +404,7 @@ export type DocumentTemplateSummary = {
   status: 'DRAFT' | 'ACTIVE' | 'DISABLED';
   isDefault: boolean;
   draftConfig: DocumentTemplateConfig;
+  hasUnpublishedChanges: boolean;
   currentVersion: {
     id: string;
     version: number;
@@ -401,6 +412,7 @@ export type DocumentTemplateSummary = {
     publishedAt: string;
   } | null;
   versionCount: number;
+  canDelete: boolean;
   updatedAt: string;
 };
 
@@ -499,10 +511,16 @@ export const commercialDocumentsApi = {
       version,
       confirm: true,
     }),
-  prefill: async (orderId: string, type: 'PI' | 'CI') =>
+  prefill: async (
+    orderId: string,
+    type: 'PI' | 'CI',
+    options: { templateVersionId?: string; locale?: string } = {},
+  ) =>
     (
       await adminApi.get<{ data: DocumentPrefill }>(`/admin/orders/${orderId}/document-prefill`, {
         type,
+        templateVersionId: options.templateVersionId,
+        locale: options.locale,
       })
     ).data,
   createFromOrder: async (orderId: string, payload: Record<string, unknown>) =>
@@ -530,6 +548,7 @@ export const commercialDocumentsApi = {
         data: {
           html: string;
           missingFields: string[];
+          missingReport: MissingFieldReport;
           documentNo: string;
           revisionNo: number;
         };
@@ -538,7 +557,7 @@ export const commercialDocumentsApi = {
   renderDocument: async (id: string) =>
     (
       await adminApi.post<{
-        data: { id: string; status: string; errorCode: string | null };
+        data: NonNullable<CommercialDocumentDetail['renderJob']>;
       }>(`/admin/commercial-documents/${id}/render`)
     ).data,
   issueDocument: async (id: string, version: number) =>
@@ -561,6 +580,12 @@ export const commercialDocumentsApi = {
         { reason: reason ?? null },
       )
     ).data,
+  deleteDocument: async (id: string) =>
+    (
+      await adminApi.delete<{
+        data: { deleted: true; deletionJobIds: string[] };
+      }>(`/admin/commercial-documents/${id}`)
+    ).data,
   downloadDocument: (id: string, filename: string) =>
     downloadAdminFileGet(`/admin/commercial-documents/${id}/download`, filename),
 
@@ -570,19 +595,9 @@ export const commercialDocumentsApi = {
     (await adminApi.get<{ data: DocumentTemplateDetail }>(`/admin/document-templates/${id}`)).data,
   activeTemplateOptions: async () =>
     (
-      await adminApi.get<{
-        data: Array<{
-          id: string;
-          name: string;
-          documentType: 'PI' | 'CI';
-          locale: string;
-          paperSize: string;
-          orientation: string;
-          isDefault: boolean;
-          versionId: string;
-          version: number;
-        }>;
-      }>('/admin/document-templates/active-options')
+      await adminApi.get<{ data: DocumentTemplateOption[] }>(
+        '/admin/document-templates/active-options',
+      )
     ).data,
   createTemplate: async (payload: Record<string, unknown>) =>
     (await adminApi.post<{ data: DocumentTemplateDetail }>('/admin/document-templates', payload))

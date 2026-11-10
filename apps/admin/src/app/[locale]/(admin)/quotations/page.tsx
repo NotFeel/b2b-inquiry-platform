@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import { Button, PageHeader, Select, useToast } from '@b2b/ui';
+import { Button, ConfirmDialog, PageHeader, Select, useToast } from '@b2b/ui';
 import { useBreadcrumb } from '../../../../components/use-breadcrumb';
 import { useSession } from '../../../../components/session-provider';
 import { localeHref } from '../../../../lib/i18n';
@@ -30,10 +30,12 @@ export default function QuotationsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState('');
+  const [pendingDeletion, setPendingDeletion] = useState<Row | null>(null);
   const [exportBusyId, setExportBusyId] = useState('');
   const [templates, setTemplates] = useState<CalculatorExcelTemplateOption[]>([]);
   const [templateId, setTemplateId] = useState('');
   const [templateLoading, setTemplateLoading] = useState(false);
+  const canEditDraft = can('quotation.update') && can('quotation.cost.read');
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
@@ -109,6 +111,23 @@ export default function QuotationsPage() {
       );
     } finally {
       setExportBusyId('');
+    }
+  };
+  const deleteDraft = async (row: Row) => {
+    setBusyId(row.id);
+    try {
+      await quotationOrderApi.deleteQuotation(row.id);
+      toast.success(t('quotationCenter.draftDeleted'));
+      await load();
+    } catch (cause) {
+      toast.error(
+        cause instanceof AdminApiError
+          ? translateError(locale, cause.code)
+          : t('quotationCenter.draftDeleteFailed'),
+      );
+    } finally {
+      setBusyId('');
+      setPendingDeletion(null);
     }
   };
   return (
@@ -187,27 +206,47 @@ export default function QuotationsPage() {
                   </td>
                   <td>{new Date(row.createdAt).toLocaleDateString()}</td>
                   <td>
-                    {can('quotation.convert_to_order') && row.status === 'DRAFT' ? (
-                      <Button
-                        size="sm"
-                        loading={busyId === row.id}
-                        disabled={Boolean(busyId)}
-                        onClick={() => void convert(row)}
-                      >
-                        {t('quotationCenter.convertToOrder')}
-                      </Button>
-                    ) : null}
-                    {can('quotation.read') ? (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        loading={exportBusyId === row.id}
-                        disabled={Boolean(busyId || exportBusyId) || !templateId}
-                        onClick={() => void exportExcel(row)}
-                      >
-                        {t('quotationCenter.exportExcel')}
-                      </Button>
-                    ) : null}
+                    <div className="row-actions">
+                      {canEditDraft && row.status === 'DRAFT' ? (
+                        <Link
+                          className="btn btn-secondary btn-sm"
+                          href={`${localeHref(locale, '/quotation-calculator')}?${new URLSearchParams({ quotationId: row.id }).toString()}`}
+                        >
+                          {t('quotationCenter.editDraft')}
+                        </Link>
+                      ) : null}
+                      {can('quotation.convert_to_order') && row.status === 'DRAFT' ? (
+                        <Button
+                          size="sm"
+                          loading={busyId === row.id}
+                          disabled={Boolean(busyId)}
+                          onClick={() => void convert(row)}
+                        >
+                          {t('quotationCenter.convertToOrder')}
+                        </Button>
+                      ) : null}
+                      {can('quotation.read') ? (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          loading={exportBusyId === row.id}
+                          disabled={Boolean(busyId || exportBusyId) || !templateId}
+                          onClick={() => void exportExcel(row)}
+                        >
+                          {t('quotationCenter.exportExcel')}
+                        </Button>
+                      ) : null}
+                      {can('quotation.delete') && row.status === 'DRAFT' ? (
+                        <Button
+                          size="sm"
+                          variant="danger"
+                          disabled={Boolean(busyId || exportBusyId)}
+                          onClick={() => setPendingDeletion(row)}
+                        >
+                          {t('quotationCenter.deleteDraft')}
+                        </Button>
+                      ) : null}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -215,6 +254,22 @@ export default function QuotationsPage() {
           </table>
         )}
       </section>
+      <ConfirmDialog
+        open={pendingDeletion !== null}
+        title={t('quotationCenter.deleteDraftTitle')}
+        description={t('quotationCenter.deleteDraftConfirm', {
+          number: pendingDeletion?.quotationNo ?? '',
+          title: pendingDeletion?.title ?? '',
+        })}
+        confirmLabel={t('quotationCenter.deleteDraft')}
+        cancelLabel={t('common.cancel')}
+        destructive
+        loading={pendingDeletion !== null && busyId === pendingDeletion.id}
+        onCancel={() => setPendingDeletion(null)}
+        onConfirm={() => {
+          if (pendingDeletion) void deleteDraft(pendingDeletion);
+        }}
+      />
     </div>
   );
 }

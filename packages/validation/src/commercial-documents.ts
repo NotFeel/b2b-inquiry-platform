@@ -73,7 +73,9 @@ export const documentShippingSchema = z.object({
   cartonCount: z.coerce.number().int().min(0).max(1_000_000).nullable().optional(),
   netWeightKg: decimalStringSchema().nullable().optional(),
   grossWeightKg: decimalStringSchema().nullable().optional(),
-  cbm: decimalStringSchema().nullable().optional(),
+  // Orders store total CBM at 15 fractional digits (Decimal(30,15)); the
+  // document shipping snapshot must accept the same precision.
+  cbm: decimalStringSchema({ scale: 15 }).nullable().optional(),
   marks: optionalText(500),
 });
 
@@ -154,6 +156,8 @@ export type SyncOrderCustomerProfileInput = z.infer<typeof syncOrderCustomerProf
 
 export const orderDocumentPrefillQuerySchema = z.object({
   type: z.enum(COMMERCIAL_DOCUMENT_TYPES),
+  templateVersionId: uuidSchema.optional(),
+  locale: localeSchema.optional(),
 });
 export type OrderDocumentPrefillQuery = z.infer<typeof orderDocumentPrefillQuerySchema>;
 
@@ -185,7 +189,7 @@ const documentItemInputSchema = z.object({
   unitsPerCarton: z.coerce.number().int().min(0).max(1_000_000).nullable().optional(),
   netWeightKg: decimalStringSchema().nullable().optional(),
   grossWeightKg: decimalStringSchema().nullable().optional(),
-  cbm: decimalStringSchema().nullable().optional(),
+  cbm: decimalStringSchema({ scale: 15 }).nullable().optional(),
   packaging: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 export type CommercialDocumentItemInput = z.infer<typeof documentItemInputSchema>;

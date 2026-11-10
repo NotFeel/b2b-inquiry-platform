@@ -1,8 +1,9 @@
-import { constants as fsConstants, promises as fs } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { promises as fs } from 'node:fs';
+import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { ERROR_CODES } from '@b2b/contracts';
+import { resolveExecutablePath } from '../resolve-executable';
 import { ExcelPdfProcessingError } from './excel-pdf-errors';
 
 export interface LibreOfficeConversionInput {
@@ -21,9 +22,8 @@ export interface LibreOfficeConversionResult {
 export async function convertWorkbookWithLibreOffice(
   input: LibreOfficeConversionInput,
 ): Promise<LibreOfficeConversionResult> {
-  try {
-    await fs.access(input.executable, fsConstants.X_OK);
-  } catch {
+  const executable = await resolveExecutablePath(input.executable);
+  if (!executable) {
     throw new ExcelPdfProcessingError(
       ERROR_CODES.excelPdfConverterUnavailable,
       'The configured PDF converter is unavailable.',
@@ -32,10 +32,16 @@ export async function convertWorkbookWithLibreOffice(
   }
 
   const startedAt = Date.now();
-  const expectedOutput = join(input.outputDir, `${basename(input.inputPath, '.xlsx')}.pdf`);
-  const binaryDir = dirname(input.executable);
+  // The converter process uses the output directory as cwd. Resolve every
+  // configured workspace path before spawning so a relative
+  // WORKER_TMP_DIR cannot make the input workbook disappear from its view.
+  const inputPath = resolve(input.inputPath);
+  const outputDir = resolve(input.outputDir);
+  const profileDir = resolve(input.profileDir);
+  const expectedOutput = join(outputDir, `${basename(inputPath, '.xlsx')}.pdf`);
+  const binaryDir = dirname(executable);
   const args = [
-    `-env:UserInstallation=${pathToFileURL(input.profileDir).href}`,
+    `-env:UserInstallation=${pathToFileURL(profileDir).href}`,
     '--headless',
     '--nologo',
     '--nodefault',
@@ -43,22 +49,24 @@ export async function convertWorkbookWithLibreOffice(
     '--convert-to',
     'pdf:calc_pdf_Export',
     '--outdir',
-    input.outputDir,
-    input.inputPath,
+    outputDir,
+    inputPath,
   ];
 
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(input.executable, args, {
-      cwd: input.outputDir,
+    const child = spawn(executable, args, {
+      cwd: outputDir,
       shell: false,
       detached: process.platform !== 'win32',
       stdio: ['ignore', 'ignore', 'pipe'],
       env: {
-        HOME: input.profileDir,
-        TMPDIR: input.outputDir,
+        HOME: profileDir,
+        TMPDIR: outputDir,
         LANG: 'C.UTF-8',
         LC_ALL: 'C.UTF-8',
-        PATH: `${binaryDir}:/usr/local/bin:/usr/bin:/bin`,
+        PATH: [binaryDir, process.env.PATH, '/usr/local/bin', '/usr/bin', '/bin']
+          .filter((entry): entry is string => Boolean(entry))
+          .join(delimiter),
         SAL_USE_VCLPLUGIN: 'svp',
       },
     });

@@ -13,12 +13,25 @@ import {
   Textarea,
   useToast,
 } from '@b2b/ui';
+import { isCommercialDocumentDownloadable } from '@b2b/contracts';
 import { AdminApiError } from '../../../../../lib/admin-api';
 import { commercialDocumentsApi } from '../../../../../lib/commercial-documents-api';
+import { commercialDocumentLocaleLabel } from '../../../../../lib/commercial-document-labels';
 import {
-  commercialDocumentFieldLabel,
-  commercialDocumentLocaleLabel,
-} from '../../../../../lib/commercial-document-labels';
+  isTemplateFieldVisible,
+  isTemplateSectionVisible,
+  visibleItemEditorColumns,
+  visibleNotes,
+  visiblePartyFields,
+  visibleShippingFields,
+  visibleTotalsFields,
+  SHIPPING_FIELD_KEYS,
+  TOTALS_FIELD_KEYS,
+  type PartyEditorField,
+  type ShippingEditorField,
+  type TotalsEditorField,
+} from '../../../../../lib/commercial-document-editor-config';
+import { CommercialDocumentMissingFields } from '../../../../../components/commercial-document-missing-fields';
 import type {
   CommercialDocumentDetail,
   CommercialDocumentItem,
@@ -61,6 +74,69 @@ interface ItemState {
   grossWeightKg: string;
   cbm: string;
 }
+
+type EditableItemField =
+  | 'sku'
+  | 'description'
+  | 'hsCode'
+  | 'originCountryCode'
+  | 'quantity'
+  | 'unit'
+  | 'unitPrice'
+  | 'cartons'
+  | 'netWeightKg'
+  | 'grossWeightKg'
+  | 'cbm';
+
+const ITEM_COLUMN_INPUT_FIELDS: Partial<Record<string, EditableItemField>> = {
+  'items.sku': 'sku',
+  'items.description': 'description',
+  'items.hsCode': 'hsCode',
+  'items.originCountryCode': 'originCountryCode',
+  'items.quantity': 'quantity',
+  'items.unit': 'unit',
+  'items.unitPrice': 'unitPrice',
+  'items.cartons': 'cartons',
+  'items.netWeightKg': 'netWeightKg',
+  'items.grossWeightKg': 'grossWeightKg',
+  'items.cbm': 'cbm',
+};
+
+const ITEM_COLUMN_LABEL_KEYS: Record<string, string> = {
+  'items.lineNo': 'lineNo',
+  'items.sku': 'sku',
+  'items.description': 'description',
+  'items.hsCode': 'hsCode',
+  'items.originCountryCode': 'origin',
+  'items.quantity': 'quantity',
+  'items.unit': 'unit',
+  'items.unitPrice': 'unitPrice',
+  'items.cartons': 'cartons',
+  'items.netWeightKg': 'netWeight',
+  'items.grossWeightKg': 'grossWeight',
+  'items.cbm': 'cbm',
+  'items.amount': 'amount',
+};
+
+const SHIPPING_LABEL_KEYS: Record<ShippingEditorField, string> = {
+  method: 'shippingMethod',
+  portOfLoading: 'portOfLoading',
+  portOfDischarge: 'portOfDischarge',
+  route: 'route',
+  transitTime: 'transitTime',
+  cartonCount: 'cartonCount',
+  netWeightKg: 'netWeightKg',
+  grossWeightKg: 'grossWeightKg',
+  cbm: 'cbm',
+  marks: 'marks',
+};
+
+const TOTALS_LABEL_KEYS: Record<TotalsEditorField, string> = {
+  discountAmount: 'discount',
+  freightAmount: 'freight',
+  insuranceAmount: 'insurance',
+  otherCharges: 'otherCharges',
+};
 
 interface FormState {
   locale: string;
@@ -334,7 +410,7 @@ export default function CommercialDocumentEditorPage() {
   const [previewHtml, setPreviewHtml] = useState('');
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [confirmAction, setConfirmAction] = useState<'issue' | 'cancel' | null>(null);
+  const [confirmAction, setConfirmAction] = useState<'issue' | 'cancel' | 'delete' | null>(null);
 
   const editable = detail ? detail.status === 'DRAFT' || detail.status === 'REVIEW' : false;
   const canUpdate = can('commercial_document.update');
@@ -343,6 +419,7 @@ export default function CommercialDocumentEditorPage() {
   const canDownload = can('commercial_document.download');
   const canRevise = can('commercial_document.revision.create');
   const canCancel = can('commercial_document.cancel');
+  const canDelete = can('commercial_document.delete');
 
   const applyDetail = useCallback((next: CommercialDocumentDetail) => {
     setDetail(next);
@@ -393,6 +470,43 @@ export default function CommercialDocumentEditorPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // A render request is asynchronous. Keep the visible status current without
+  // replacing the editor form, which may have changed while the Worker runs.
+  useEffect(() => {
+    const job = detail?.renderJob;
+    if (!job || (job.status !== 'QUEUED' && job.status !== 'PROCESSING')) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const next = await commercialDocumentsApi.document(id);
+        if (cancelled) return;
+        setDetail((current) =>
+          current
+            ? {
+                ...current,
+                renderJob: next.renderJob,
+                pdf: next.pdf,
+                updatedAt: next.updatedAt,
+              }
+            : current,
+        );
+        if (next.renderJob?.status === 'QUEUED' || next.renderJob?.status === 'PROCESSING') {
+          timer = setTimeout(() => void poll(), 1_500);
+        }
+      } catch {
+        // A transient refresh failure must not discard editor state. The
+        // manual Reload action remains available for recovery.
+      }
+    };
+    timer = setTimeout(() => void poll(), 1_000);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [detail?.renderJob?.id, detail?.renderJob?.status, id]);
 
   const updateForm = (updater: (current: FormState) => FormState) => {
     setForm((current) => (current ? updater(current) : current));
@@ -556,12 +670,14 @@ export default function CommercialDocumentEditorPage() {
   const doRender = async () => {
     if (!detail) return;
     setBusy(true);
+    setError(null);
     try {
-      await commercialDocumentsApi.renderDocument(detail.id);
+      if (editable && dirty) await persist();
+      const job = await commercialDocumentsApi.renderDocument(detail.id);
+      setDetail((current) => (current ? { ...current, renderJob: job } : current));
       toast.success(t('commercialDocuments.editor.rendered'));
-      await load();
     } catch (cause) {
-      toast.error(
+      setError(
         cause instanceof AdminApiError
           ? translateError(locale, cause.code)
           : t('errors.INTERNAL_ERROR'),
@@ -632,10 +748,31 @@ export default function CommercialDocumentEditorPage() {
     }
   };
 
+  const doDelete = async () => {
+    if (!detail) return;
+    setBusy(true);
+    try {
+      await commercialDocumentsApi.deleteDocument(detail.id);
+      setConfirmAction(null);
+      toast.success(t('commercialDocuments.editor.deleted'));
+      router.push(localeHref(locale, '/commercial-documents'));
+    } catch (cause) {
+      toast.error(
+        cause instanceof AdminApiError
+          ? translateError(locale, cause.code)
+          : t('errors.INTERNAL_ERROR'),
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const missingLabels = useMemo(() => (detail ? detail.missingFieldLabels : []), [detail]);
   const missingItemLines = useMemo(() => (detail ? detail.missingItemLines : []), [detail]);
+  const templateSelectionChanged = Boolean(
+    detail && templateVersionId && templateVersionId !== detail.template.versionId,
+  );
 
-  const config: DocumentTemplateConfig | null = detail?.config ?? null;
   if (loading) {
     return (
       <div className="stack">
@@ -659,6 +796,10 @@ export default function CommercialDocumentEditorPage() {
 
   if (!detail || !form) return null;
 
+  const selectedTemplateOption =
+    templateOptions.find((option) => option.versionId === templateVersionId) ?? null;
+  const config: DocumentTemplateConfig =
+    (templateSelectionChanged ? selectedTemplateOption?.config : null) ?? detail.config;
   const selectedCompany = profiles.find((profile) => profile.id === companyProfileId) ?? null;
   const availableBankAccounts =
     selectedCompany?.bankAccounts.filter((account) => account.currencyCode === detail.currency) ??
@@ -666,6 +807,58 @@ export default function CommercialDocumentEditorPage() {
   const selectedBankAccount =
     availableBankAccounts.find((account) => account.id === bankSelection) ?? null;
   const existingPayment = detail.payment ?? null;
+  const sellerFields = visiblePartyFields(config, 'seller');
+  const buyerFields = visiblePartyFields(config, 'buyer');
+  const consigneeFields = visiblePartyFields(config, 'consignee');
+  const notifyFields = visiblePartyFields(config, 'notifyParty');
+  const shippingFields = visibleShippingFields(config);
+  const totalsFields = visibleTotalsFields(config);
+  const itemColumns = visibleItemEditorColumns(config);
+  const renderErrorCode =
+    detail.renderJob?.status === 'FAILED'
+      ? (detail.renderJob.errorCode ?? 'COMMERCIAL_DOCUMENT_RENDER_FAILED')
+      : null;
+  const showField = (section: Parameters<typeof isTemplateFieldVisible>[1], key: string) =>
+    isTemplateFieldVisible(config, section, key);
+  const showTradeSection =
+    isTemplateSectionVisible(config, 'trade') &&
+    (['trade.incoterm', 'trade.namedPlace', 'trade.paymentTerms'].some((key) =>
+      showField('trade', key),
+    ) ||
+      showField('invoice', 'order.contractNo') ||
+      showField('invoice', 'order.buyerReference'));
+  const showInvoiceValues = ['document.number', 'document.issueDate', 'document.validUntil'].some(
+    (key) => showField('invoice', key),
+  );
+  const showOrderReferences =
+    showField('invoice', 'order.number') ||
+    showField('invoice', 'order.date') ||
+    showField('invoice', 'order.contractNo') ||
+    showField('invoice', 'order.buyerReference');
+  const showPaymentSection =
+    isTemplateSectionVisible(config, 'payment') &&
+    [
+      'payment.accountHolder',
+      'payment.bankName',
+      'payment.bankAddress',
+      'payment.accountNumber',
+      'payment.swift',
+      'payment.wireRoutingNumber',
+      'payment.achRoutingNumber',
+    ].some((key) => showField('payment', key));
+  const showTotalsSection =
+    isTemplateSectionVisible(config, 'totals') &&
+    (totalsFields.size > 0 ||
+      showField('totals', 'totals.subtotal') ||
+      showField('totals', 'totals.grandTotal'));
+  const showSignatureFields = showField('signature', 'signature.seller');
+  const showNotes = visibleNotes(config);
+  const showDeclarationSection =
+    showField('declaration', 'declaration.countryOfOrigin') ||
+    showField('declaration', 'declaration.text') ||
+    showField('declaration', 'declaration.authenticity') ||
+    showSignatureFields ||
+    showNotes;
 
   const changeSellerCompany = (nextId: string) => {
     const profile = profiles.find((candidate) => candidate.id === nextId) ?? null;
@@ -729,26 +922,21 @@ export default function CommercialDocumentEditorPage() {
       {dirty && editable ? (
         <div className="alert alert-warning">{t('commercialDocuments.editor.unsaved')}</div>
       ) : null}
-      {missingLabels.length > 0 || missingItemLines.length > 0 ? (
-        <div className="alert alert-warning">
-          <strong>{t('commercialDocuments.editor.missingTitle')}</strong>
-          <ul>
-            {missingLabels.map((field) => (
-              <li key={field.key}>{commercialDocumentFieldLabel(field.key, t)}</li>
-            ))}
-            {missingItemLines.map((line) => (
-              <li key={`line-${line.lineNo}`}>
-                {t('commercialDocuments.editor.missingItemLine', {
-                  line: line.lineNo,
-                  fields: line.fields
-                    .map((field) => commercialDocumentFieldLabel(field, t))
-                    .join(', '),
-                })}
-              </li>
-            ))}
-          </ul>
+      {templateSelectionChanged ? (
+        <div className="alert alert-warning" role="status">
+          {t('commercialDocuments.editor.templateValidationPending')}
         </div>
-      ) : null}
+      ) : (
+        <CommercialDocumentMissingFields
+          report={detail.missingReport}
+          missingFields={missingLabels.map((field) => field.key)}
+          missingItemLines={missingItemLines}
+          templateName={
+            detail.template.name ? `${detail.template.name} v${detail.template.version ?? 1}` : null
+          }
+          t={t}
+        />
+      )}
 
       <div className="row-actions">
         {editable && canUpdate ? (
@@ -768,13 +956,19 @@ export default function CommercialDocumentEditorPage() {
         ) : null}
         {canPreview ? (
           <Button variant="secondary" loading={busy} onClick={() => void doRender()}>
-            {t('commercialDocuments.editor.render')}
+            {t(
+              detail.renderJob?.status === 'FAILED'
+                ? 'commercialDocuments.actions.retryRender'
+                : 'commercialDocuments.editor.render',
+            )}
           </Button>
         ) : null}
         {canDownload ? (
           <Button
             variant="secondary"
-            disabled={!detail.pdf.available}
+            disabled={
+              !detail.pdf.available || !isCommercialDocumentDownloadable(detail.status)
+            }
             onClick={() => void doDownload()}
           >
             {t('commercialDocuments.editor.download')}
@@ -790,563 +984,645 @@ export default function CommercialDocumentEditorPage() {
             {t('commercialDocuments.editor.cancel')}
           </Button>
         ) : null}
+        {detail.status === 'DRAFT' && canDelete ? (
+          <Button variant="danger" onClick={() => setConfirmAction('delete')}>
+            {t('commercialDocuments.editor.delete')}
+          </Button>
+        ) : null}
       </div>
 
       <div className="document-workbench">
         <div className="stack">
           <section className="panel stack-sm document-section">
             <h2>{t('commercialDocuments.editor.sections.document')}</h2>
+            <p className="field-help">{t('commercialDocuments.editor.templateFieldsHint')}</p>
             <div className="form-grid">
-              <TextField
-                label={t('commercialDocuments.editor.fields.documentNo')}
-                value={detail.documentNo}
-                disabled
-                onChange={() => undefined}
-              />
-              <SelectField
-                label={t('commercialDocuments.editor.fields.template')}
-                value={templateVersionId}
-                options={(() => {
-                  const options = new Map<string, string>();
-                  if (detail.template.versionId) {
-                    options.set(
-                      detail.template.versionId,
-                      `${detail.template.name ?? t('commercialDocuments.editor.fields.template')} v${detail.template.version ?? 1} · ${commercialDocumentLocaleLabel(form.locale, t)}`,
-                    );
-                  }
-                  for (const option of templateOptions.filter(
-                    (candidate) => candidate.documentType === detail.type,
-                  )) {
-                    options.set(
-                      option.versionId,
-                      `${option.name} v${option.version} · ${commercialDocumentLocaleLabel(option.locale, t)}`,
-                    );
-                  }
-                  return [...options].map(([value, label]) => ({ value, label }));
-                })()}
-                disabled={!editable}
-                onChange={(value) => {
-                  setTemplateVersionId(value);
-                  setDirty(true);
-                }}
-              />
-              <SelectField
-                label={t('commercialDocuments.editor.fields.locale')}
-                value={form.locale}
-                options={[
-                  { value: 'en-US', label: commercialDocumentLocaleLabel('en-US', t) },
-                  { value: 'zh-CN', label: commercialDocumentLocaleLabel('zh-CN', t) },
-                ]}
-                disabled={!editable}
-                onChange={(value) => updateForm((current) => ({ ...current, locale: value }))}
-              />
-              <TextField
-                label={t('commercialDocuments.editor.fields.issueDate')}
-                type="date"
-                value={form.issueDate}
-                disabled={!editable}
-                onChange={(value) => updateForm((current) => ({ ...current, issueDate: value }))}
-              />
-              <TextField
-                label={t('commercialDocuments.editor.fields.validUntil')}
-                type="date"
-                value={form.validUntil}
-                disabled={!editable}
-                onChange={(value) => updateForm((current) => ({ ...current, validUntil: value }))}
-              />
-              <TextField
-                label={t('commercialDocuments.editor.fields.currency')}
-                value={detail.currency}
-                disabled
-                onChange={() => undefined}
-              />
-            </div>
-          </section>
-
-          <section className="panel stack-sm document-section">
-            <h2>{t('commercialDocuments.editor.sections.seller')}</h2>
-            <PartyEditor
-              form={form.seller}
-              disabled={!editable}
-              onChange={(next) => updateForm((current) => ({ ...current, seller: next }))}
-              t={t}
-            />
-          </section>
-
-          <section className="panel stack-sm document-section">
-            <h2>{t('commercialDocuments.editor.sections.buyer')}</h2>
-            <PartyEditor
-              form={form.buyer}
-              disabled={!editable}
-              onChange={(next) => updateForm((current) => ({ ...current, buyer: next }))}
-              t={t}
-            />
-          </section>
-
-          <section className="panel stack-sm document-section">
-            <h2>{t('commercialDocuments.editor.sections.consignee')}</h2>
-            <PartyEditor
-              form={form.consignee}
-              disabled={!editable}
-              onChange={(next) => updateForm((current) => ({ ...current, consignee: next }))}
-              t={t}
-            />
-          </section>
-
-          <section className="panel stack-sm document-section">
-            <div className="row-between">
-              <h2>{t('commercialDocuments.editor.sections.notifyParty')}</h2>
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={form.notifyEnabled}
+              <div>
+                <SelectField
+                  label={t('commercialDocuments.editor.fields.template')}
+                  value={templateVersionId}
+                  options={(() => {
+                    const options = new Map<string, string>();
+                    if (detail.template.versionId) {
+                      options.set(
+                        detail.template.versionId,
+                        `${detail.template.name ?? t('commercialDocuments.editor.fields.template')} v${detail.template.version ?? 1} · ${commercialDocumentLocaleLabel(form.locale, t)}`,
+                      );
+                    }
+                    for (const option of templateOptions.filter(
+                      (candidate) => candidate.documentType === detail.type,
+                    )) {
+                      options.set(
+                        option.versionId,
+                        `${option.name} v${option.version} · ${commercialDocumentLocaleLabel(option.locale, t)}${option.hasUnpublishedChanges ? ` · ${t('documentTemplates.pendingPublish')}` : ''}`,
+                      );
+                    }
+                    return [...options].map(([value, label]) => ({ value, label }));
+                  })()}
                   disabled={!editable}
-                  onChange={(event) =>
-                    updateForm((current) => ({ ...current, notifyEnabled: event.target.checked }))
-                  }
+                  onChange={(value) => {
+                    setTemplateVersionId(value);
+                    const option = templateOptions.find(
+                      (candidate) => candidate.versionId === value,
+                    );
+                    const nextLocale =
+                      value === detail.template.versionId
+                        ? detail.locale
+                        : (option?.locale ?? form.locale);
+                    updateForm((current) => ({ ...current, locale: nextLocale }));
+                    setDirty(true);
+                  }}
                 />
-                <span>{t('common.yes')}</span>
-              </label>
+                {selectedTemplateOption?.hasUnpublishedChanges ? (
+                  <p className="notice notice-warning" role="status">
+                    {t('commercialDocuments.editor.templateDraftPending', {
+                      version: selectedTemplateOption.version,
+                    })}
+                  </p>
+                ) : null}
+              </div>
+              <div>
+                <SelectField
+                  label={t('commercialDocuments.editor.fields.locale')}
+                  value={form.locale}
+                  options={[
+                    { value: 'en-US', label: commercialDocumentLocaleLabel('en-US', t) },
+                    { value: 'zh-CN', label: commercialDocumentLocaleLabel('zh-CN', t) },
+                  ]}
+                  disabled
+                  onChange={() => undefined}
+                />
+                <p className="muted">{t('commercialDocuments.editor.localeFollowsTemplate')}</p>
+              </div>
+              {showInvoiceValues && showField('invoice', 'document.number') ? (
+                <TextField
+                  label={t('commercialDocuments.editor.fields.documentNo')}
+                  value={detail.documentNo}
+                  disabled
+                  onChange={() => undefined}
+                />
+              ) : null}
+              {showInvoiceValues && showField('invoice', 'document.issueDate') ? (
+                <TextField
+                  label={t('commercialDocuments.editor.fields.issueDate')}
+                  type="date"
+                  value={form.issueDate}
+                  disabled={!editable}
+                  onChange={(value) => updateForm((current) => ({ ...current, issueDate: value }))}
+                />
+              ) : null}
+              {showInvoiceValues && showField('invoice', 'document.validUntil') ? (
+                <TextField
+                  label={t('commercialDocuments.editor.fields.validUntil')}
+                  type="date"
+                  value={form.validUntil}
+                  disabled={!editable}
+                  onChange={(value) => updateForm((current) => ({ ...current, validUntil: value }))}
+                />
+              ) : null}
+              {showField('trade', 'trade.currency') ? (
+                <TextField
+                  label={t('commercialDocuments.editor.fields.currency')}
+                  value={detail.currency}
+                  disabled
+                  onChange={() => undefined}
+                />
+              ) : null}
+              {showOrderReferences && showField('invoice', 'order.number') ? (
+                <TextField
+                  label={t('commercialDocuments.orderDetail.orderNo')}
+                  value={detail.orderNo ?? '—'}
+                  disabled
+                  onChange={() => undefined}
+                />
+              ) : null}
+              {showOrderReferences && showField('invoice', 'order.date') ? (
+                <TextField
+                  label={t('commercialDocuments.orderDetail.orderDate')}
+                  type="date"
+                  value={detail.orderDate ?? ''}
+                  disabled
+                  onChange={() => undefined}
+                />
+              ) : null}
             </div>
-            {form.notifyEnabled ? (
+          </section>
+
+          {sellerFields.size > 0 ? (
+            <section className="panel stack-sm document-section">
+              <h2>{t('commercialDocuments.editor.sections.seller')}</h2>
               <PartyEditor
-                form={form.notify}
+                form={form.seller}
+                visibleFields={sellerFields}
                 disabled={!editable}
-                onChange={(next) => updateForm((current) => ({ ...current, notify: next }))}
+                onChange={(next) => updateForm((current) => ({ ...current, seller: next }))}
                 t={t}
               />
-            ) : null}
-          </section>
+            </section>
+          ) : null}
 
-          <section className="panel stack-sm document-section">
-            <h2>{t('commercialDocuments.editor.sections.trade')}</h2>
-            <div className="form-grid">
-              <TextField
-                label={t('commercialDocuments.editor.fields.incoterm')}
-                value={form.trade.incotermCode}
+          {buyerFields.size > 0 ? (
+            <section className="panel stack-sm document-section">
+              <h2>{t('commercialDocuments.editor.sections.buyer')}</h2>
+              <PartyEditor
+                form={form.buyer}
+                visibleFields={buyerFields}
                 disabled={!editable}
-                onChange={(value) =>
-                  updateForm((current) => ({
-                    ...current,
-                    trade: { ...current.trade, incotermCode: value },
-                  }))
-                }
+                onChange={(next) => updateForm((current) => ({ ...current, buyer: next }))}
+                t={t}
               />
-              <TextField
-                label={t('commercialDocuments.editor.fields.namedPlace')}
-                value={form.trade.namedPlace}
-                disabled={!editable}
-                onChange={(value) =>
-                  updateForm((current) => ({
-                    ...current,
-                    trade: { ...current.trade, namedPlace: value },
-                  }))
-                }
-              />
-              <TextField
-                label={t('commercialDocuments.editor.fields.paymentTerms')}
-                value={form.trade.paymentTerms}
-                disabled={!editable}
-                onChange={(value) =>
-                  updateForm((current) => ({
-                    ...current,
-                    trade: { ...current.trade, paymentTerms: value },
-                  }))
-                }
-              />
-              <TextField
-                label={t('commercialDocuments.orderDetail.buyerReference')}
-                value={form.trade.buyerReference}
-                disabled={!editable}
-                onChange={(value) =>
-                  updateForm((current) => ({
-                    ...current,
-                    trade: { ...current.trade, buyerReference: value },
-                  }))
-                }
-              />
-              <TextField
-                label={t('commercialDocuments.orderDetail.contractNo')}
-                value={form.trade.contractNo}
-                disabled={!editable}
-                onChange={(value) =>
-                  updateForm((current) => ({
-                    ...current,
-                    trade: { ...current.trade, contractNo: value },
-                  }))
-                }
-              />
-              <TextField
-                label={t('commercialDocuments.editor.fields.exchangeRate')}
-                value={String(
-                  (detail.trade as Record<string, unknown> | null)?.exchangeRateText ?? '—',
-                )}
-                disabled
-                onChange={() => undefined}
-              />
-            </div>
-          </section>
+            </section>
+          ) : null}
 
-          <section className="panel stack-sm document-section">
-            <h2>{t('commercialDocuments.editor.sections.shipping')}</h2>
-            <div className="form-grid">
-              {(
-                [
-                  ['method', 'shippingMethod'],
-                  ['portOfLoading', 'portOfLoading'],
-                  ['portOfDischarge', 'portOfDischarge'],
-                  ['route', 'route'],
-                  ['transitTime', 'transitTime'],
-                  ['cartonCount', 'cartonCount'],
-                  ['netWeightKg', 'netWeightKg'],
-                  ['grossWeightKg', 'grossWeightKg'],
-                  ['cbm', 'cbm'],
-                  ['marks', 'marks'],
-                ] as const
-              ).map(([field, label]) => (
-                <TextField
-                  key={field}
-                  label={t(`commercialDocuments.editor.fields.${label}`)}
-                  value={form.shipping[field]}
+          {consigneeFields.size > 0 ? (
+            <section className="panel stack-sm document-section">
+              <h2>{t('commercialDocuments.editor.sections.consignee')}</h2>
+              <PartyEditor
+                form={form.consignee}
+                visibleFields={consigneeFields}
+                disabled={!editable}
+                onChange={(next) => updateForm((current) => ({ ...current, consignee: next }))}
+                t={t}
+              />
+            </section>
+          ) : null}
+
+          {notifyFields.size > 0 ? (
+            <section className="panel stack-sm document-section">
+              <div className="row-between">
+                <h2>{t('commercialDocuments.editor.sections.notifyParty')}</h2>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={form.notifyEnabled}
+                    disabled={!editable}
+                    onChange={(event) =>
+                      updateForm((current) => ({ ...current, notifyEnabled: event.target.checked }))
+                    }
+                  />
+                  <span>{t('common.yes')}</span>
+                </label>
+              </div>
+              {form.notifyEnabled ? (
+                <PartyEditor
+                  form={form.notify}
+                  visibleFields={notifyFields}
+                  disabled={!editable}
+                  onChange={(next) => updateForm((current) => ({ ...current, notify: next }))}
+                  t={t}
+                />
+              ) : null}
+            </section>
+          ) : null}
+
+          {showTradeSection ? (
+            <section className="panel stack-sm document-section">
+              <h2>{t('commercialDocuments.editor.sections.trade')}</h2>
+              <div className="form-grid">
+                {showField('trade', 'trade.incoterm') ? (
+                  <TextField
+                    label={t('commercialDocuments.editor.fields.incoterm')}
+                    value={form.trade.incotermCode}
+                    disabled={!editable}
+                    onChange={(value) =>
+                      updateForm((current) => ({
+                        ...current,
+                        trade: { ...current.trade, incotermCode: value },
+                      }))
+                    }
+                  />
+                ) : null}
+                {showField('trade', 'trade.namedPlace') ? (
+                  <TextField
+                    label={t('commercialDocuments.editor.fields.namedPlace')}
+                    value={form.trade.namedPlace}
+                    disabled={!editable}
+                    onChange={(value) =>
+                      updateForm((current) => ({
+                        ...current,
+                        trade: { ...current.trade, namedPlace: value },
+                      }))
+                    }
+                  />
+                ) : null}
+                {showField('trade', 'trade.paymentTerms') ? (
+                  <TextField
+                    label={t('commercialDocuments.editor.fields.paymentTerms')}
+                    value={form.trade.paymentTerms}
+                    disabled={!editable}
+                    onChange={(value) =>
+                      updateForm((current) => ({
+                        ...current,
+                        trade: { ...current.trade, paymentTerms: value },
+                      }))
+                    }
+                  />
+                ) : null}
+                {showField('invoice', 'order.buyerReference') ? (
+                  <TextField
+                    label={t('commercialDocuments.orderDetail.buyerReference')}
+                    value={form.trade.buyerReference}
+                    disabled={!editable}
+                    onChange={(value) =>
+                      updateForm((current) => ({
+                        ...current,
+                        trade: { ...current.trade, buyerReference: value },
+                      }))
+                    }
+                  />
+                ) : null}
+                {showField('invoice', 'order.contractNo') ? (
+                  <TextField
+                    label={t('commercialDocuments.orderDetail.contractNo')}
+                    value={form.trade.contractNo}
+                    disabled={!editable}
+                    onChange={(value) =>
+                      updateForm((current) => ({
+                        ...current,
+                        trade: { ...current.trade, contractNo: value },
+                      }))
+                    }
+                  />
+                ) : null}
+                {showField('trade', 'trade.exchangeRate') ? (
+                  <TextField
+                    label={t('commercialDocuments.editor.fields.exchangeRate')}
+                    value={String(
+                      (detail.trade as Record<string, unknown> | null)?.exchangeRateText ?? '—',
+                    )}
+                    disabled
+                    onChange={() => undefined}
+                  />
+                ) : null}
+              </div>
+            </section>
+          ) : null}
+
+          {shippingFields.size > 0 ? (
+            <section className="panel stack-sm document-section">
+              <h2>{t('commercialDocuments.editor.sections.shipping')}</h2>
+              <div className="form-grid">
+                {(Object.entries(SHIPPING_FIELD_KEYS) as Array<[ShippingEditorField, string]>)
+                  .filter(([field]) => shippingFields.has(field))
+                  .map(([field]) => (
+                    <TextField
+                      key={field}
+                      label={t(`commercialDocuments.editor.fields.${SHIPPING_LABEL_KEYS[field]}`)}
+                      value={form.shipping[field]}
+                      disabled={!editable}
+                      onChange={(value) =>
+                        updateForm((current) => ({
+                          ...current,
+                          shipping: { ...current.shipping, [field]: value },
+                        }))
+                      }
+                    />
+                  ))}
+              </div>
+            </section>
+          ) : null}
+
+          {showPaymentSection ? (
+            <section className="panel stack-sm document-section">
+              <h2>{t('commercialDocuments.editor.sections.payment')}</h2>
+              <div className="form-grid">
+                <Field label={t('commercialDocuments.editor.sellerCompany')}>
+                  {({ inputId, describedBy }) => (
+                    <Select
+                      inputId={inputId}
+                      describedBy={describedBy}
+                      value={companyProfileId}
+                      disabled={!editable || profiles.length === 0}
+                      placeholder={t('commercialDocuments.editor.selectCompany')}
+                      options={profiles.map((profile) => ({
+                        value: profile.id,
+                        label: `${profile.companyName}${profile.isDefault ? ' · ' + t('companyProfile.default') : ''}`,
+                      }))}
+                      onChange={(event) => changeSellerCompany(event.target.value)}
+                    />
+                  )}
+                </Field>
+                <Field
+                  label={t('commercialDocuments.editor.bankAccount')}
+                  help={
+                    availableBankAccounts.length === 0
+                      ? t('commercialDocuments.editor.noBankAccountForCurrency', {
+                          currency: detail.currency,
+                        })
+                      : !bankSelection
+                        ? t('commercialDocuments.editor.selectBankAccountHint')
+                        : undefined
+                  }
+                >
+                  {({ inputId, describedBy }) => (
+                    <Select
+                      inputId={inputId}
+                      describedBy={describedBy}
+                      value={bankSelection}
+                      disabled={!editable || availableBankAccounts.length === 0}
+                      placeholder={t('commercialDocuments.editor.selectBankAccount')}
+                      options={availableBankAccounts.map((account) => ({
+                        value: account.id,
+                        label: `${account.label} · ${account.bankName}${account.isDefault ? ' · ' + t('companyProfile.bank.default') : ''}`,
+                      }))}
+                      onChange={(event) => {
+                        setBankSelection(event.target.value);
+                        setBankSelectionDirty(true);
+                      }}
+                    />
+                  )}
+                </Field>
+              </div>
+
+              {availableBankAccounts.length === 0 ? (
+                <div className="alert alert-warning" role="alert">
+                  {t('commercialDocuments.editor.noBankAccountForCurrency', {
+                    currency: detail.currency,
+                  })}
+                </div>
+              ) : !bankSelection ? (
+                <div className="alert alert-warning" role="status">
+                  {t('commercialDocuments.editor.selectBankAccountHint')}
+                </div>
+              ) : null}
+
+              <h3>{t('commercialDocuments.editor.paymentDetails')}</h3>
+              {selectedBankAccount ? (
+                <div className="payment-summary">
+                  <dl className="definition-list">
+                    {showField('payment', 'payment.accountHolder') ? (
+                      <>
+                        <dt>{t('companyProfile.bank.label')}</dt>
+                        <dd>{selectedBankAccount.label}</dd>
+                      </>
+                    ) : null}
+                    {showField('payment', 'payment.bankName') ? (
+                      <>
+                        <dt>{t('companyProfile.bank.bankName')}</dt>
+                        <dd>{selectedBankAccount.bankName}</dd>
+                      </>
+                    ) : null}
+                    {showField('payment', 'payment.accountNumber') ? (
+                      <>
+                        <dt>{t('companyProfile.bank.accountNumber')}</dt>
+                        <dd className="mono">{selectedBankAccount.maskedAccountNumber}</dd>
+                      </>
+                    ) : null}
+                    {showField('payment', 'payment.swift') ? (
+                      <>
+                        <dt>{t('companyProfile.bank.swiftCode')}</dt>
+                        <dd>
+                          {selectedBankAccount.hasSwift
+                            ? t('companyProfile.bank.swiftConfigured')
+                            : t('companyProfile.bank.swiftNotConfigured')}
+                        </dd>
+                      </>
+                    ) : null}
+                  </dl>
+                  {selectedBankAccount.isDefault ? (
+                    <Badge tone="success">{t('companyProfile.bank.default')}</Badge>
+                  ) : null}
+                </div>
+              ) : existingPayment ? (
+                <div className="payment-summary">
+                  <p className="muted">{t('commercialDocuments.editor.legacyPayment')}</p>
+                  <dl className="definition-list">
+                    {showField('payment', 'payment.accountHolder') ? (
+                      <>
+                        <dt>{t('commercialDocuments.editor.fields.accountHolder')}</dt>
+                        <dd>{existingPayment.accountHolder || t('companyProfile.notProvided')}</dd>
+                      </>
+                    ) : null}
+                    {showField('payment', 'payment.bankName') ? (
+                      <>
+                        <dt>{t('commercialDocuments.editor.fields.bankName')}</dt>
+                        <dd>{existingPayment.bankName || t('companyProfile.notProvided')}</dd>
+                      </>
+                    ) : null}
+                    {showField('payment', 'payment.accountNumber') ? (
+                      <>
+                        <dt>{t('commercialDocuments.editor.fields.accountNumber')}</dt>
+                        <dd className="mono">{maskBankAccount(existingPayment.accountNumber)}</dd>
+                      </>
+                    ) : null}
+                  </dl>
+                </div>
+              ) : (
+                <p className="muted">{t('companyProfile.bank.empty')}</p>
+              )}
+              <p className="field-help">{t('commercialDocuments.editor.paymentServerHint')}</p>
+            </section>
+          ) : null}
+
+          {itemColumns.length > 0 ? (
+            <section className="panel stack-sm document-section">
+              <h2>{t('commercialDocuments.editor.sections.items')}</h2>
+              <div className="table-scroll">
+                <table className="data-table document-items-table">
+                  <thead>
+                    <tr>
+                      {itemColumns.map((column) => (
+                        <th key={column}>
+                          {t(`commercialDocuments.editor.items.${ITEM_COLUMN_LABEL_KEYS[column]}`)}
+                        </th>
+                      ))}
+                      <th>{t('common.actions')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map((item, index) => (
+                      <tr key={`${item.lineNo}-${index}`}>
+                        {itemColumns.map((column) => {
+                          const field = ITEM_COLUMN_INPUT_FIELDS[column];
+                          const label = t(
+                            `commercialDocuments.editor.items.${ITEM_COLUMN_LABEL_KEYS[column]}`,
+                          );
+                          if (column === 'items.lineNo') {
+                            return <td key={column}>{index + 1}</td>;
+                          }
+                          if (column === 'items.amount') {
+                            const quantity = Number(item.quantity || '0');
+                            const unitPrice = Number(item.unitPrice || '0');
+                            const discount = Number(item.discountAmount || '0');
+                            const value = quantity * unitPrice - discount;
+                            return (
+                              <td key={column} className="mono">
+                                {Number.isFinite(value) ? value.toFixed(2) : '—'}
+                              </td>
+                            );
+                          }
+                          return (
+                            <td key={column}>
+                              {field ? (
+                                <Input
+                                  value={item[field]}
+                                  disabled={!editable}
+                                  aria-label={`${label} ${index + 1}`}
+                                  onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                                    updateItem(index, field, event.target.value)
+                                  }
+                                  maxLength={field === 'description' ? 2000 : 80}
+                                />
+                              ) : null}
+                            </td>
+                          );
+                        })}
+                        <td>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={!editable || items.length <= 1}
+                            onClick={() => {
+                              setItems((current) =>
+                                current.filter((_, itemIndex) => itemIndex !== index),
+                              );
+                              setDirty(true);
+                            }}
+                          >
+                            {t('commercialDocuments.editor.items.remove')}
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {editable ? (
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setItems((current) => [...current, blankItem(current.length + 1)]);
+                    setDirty(true);
+                  }}
+                >
+                  {t('commercialDocuments.editor.items.add')}
+                </Button>
+              ) : null}
+            </section>
+          ) : null}
+
+          {showTotalsSection ? (
+            <section className="panel stack-sm document-section">
+              <h2>{t('commercialDocuments.editor.sections.totals')}</h2>
+              {totalsFields.size > 0 ? (
+                <div className="form-grid">
+                  {(Object.entries(TOTALS_FIELD_KEYS) as Array<[TotalsEditorField, string]>)
+                    .filter(([field]) => totalsFields.has(field))
+                    .map(([field]) => (
+                      <TextField
+                        key={field}
+                        label={t(`commercialDocuments.editor.fields.${TOTALS_LABEL_KEYS[field]}`)}
+                        value={form[field]}
+                        disabled={!editable}
+                        onChange={(value) =>
+                          updateForm((current) => ({ ...current, [field]: value }))
+                        }
+                      />
+                    ))}
+                </div>
+              ) : null}
+              <dl className="definition-list">
+                {showField('totals', 'totals.subtotal') ? (
+                  <>
+                    <dt>{t('commercialDocuments.editor.fields.subtotal')}</dt>
+                    <dd className="mono">{detail.totals.subtotal}</dd>
+                  </>
+                ) : null}
+                {showField('totals', 'totals.grandTotal') ? (
+                  <>
+                    <dt>{t('commercialDocuments.editor.fields.total')}</dt>
+                    <dd className="mono">
+                      {detail.totals.totalAmount} {detail.currency}
+                    </dd>
+                  </>
+                ) : null}
+              </dl>
+            </section>
+          ) : null}
+
+          {showDeclarationSection ? (
+            <section className="panel stack-sm document-section">
+              <h2>{t('commercialDocuments.editor.sections.declaration')}</h2>
+              <div className="form-grid">
+                {showField('declaration', 'declaration.countryOfOrigin') ? (
+                  <TextField
+                    label={t('commercialDocuments.editor.fields.originCountry')}
+                    value={form.declaration.countryOfOrigin}
+                    disabled={!editable}
+                    onChange={(value) =>
+                      updateForm((current) => ({
+                        ...current,
+                        declaration: {
+                          ...current.declaration,
+                          countryOfOrigin: value.toUpperCase().slice(0, 2),
+                        },
+                      }))
+                    }
+                  />
+                ) : null}
+                {showSignatureFields ? (
+                  <>
+                    <TextField
+                      label={t('commercialDocuments.editor.fields.sellerName')}
+                      value={form.signature.sellerName}
+                      disabled={!editable}
+                      onChange={(value) =>
+                        updateForm((current) => ({
+                          ...current,
+                          signature: { ...current.signature, sellerName: value },
+                        }))
+                      }
+                    />
+                    <TextField
+                      label={t('commercialDocuments.editor.fields.sellerTitle')}
+                      value={form.signature.sellerTitle}
+                      disabled={!editable}
+                      onChange={(value) =>
+                        updateForm((current) => ({
+                          ...current,
+                          signature: { ...current.signature, sellerTitle: value },
+                        }))
+                      }
+                    />
+                  </>
+                ) : null}
+              </div>
+              {showField('declaration', 'declaration.text') ? (
+                <AreaField
+                  label={t('commercialDocuments.editor.fields.declarationText')}
+                  value={form.declaration.text}
                   disabled={!editable}
                   onChange={(value) =>
                     updateForm((current) => ({
                       ...current,
-                      shipping: { ...current.shipping, [field]: value },
+                      declaration: { ...current.declaration, text: value },
                     }))
                   }
                 />
-              ))}
-            </div>
-          </section>
-
-          <section className="panel stack-sm document-section">
-            <h2>{t('commercialDocuments.editor.sections.payment')}</h2>
-            <div className="form-grid">
-              <Field label={t('commercialDocuments.editor.sellerCompany')}>
-                {({ inputId, describedBy }) => (
-                  <Select
-                    inputId={inputId}
-                    describedBy={describedBy}
-                    value={companyProfileId}
-                    disabled={!editable || profiles.length === 0}
-                    placeholder={t('commercialDocuments.editor.selectCompany')}
-                    options={profiles.map((profile) => ({
-                      value: profile.id,
-                      label: `${profile.companyName}${profile.isDefault ? ' · ' + t('companyProfile.default') : ''}`,
-                    }))}
-                    onChange={(event) => changeSellerCompany(event.target.value)}
-                  />
-                )}
-              </Field>
-              <Field label={t('commercialDocuments.editor.documentCurrency')}>
-                {({ inputId, describedBy }) => (
-                  <Input
-                    inputId={inputId}
-                    describedBy={describedBy}
-                    value={detail.currency}
-                    readOnly
-                    disabled
-                  />
-                )}
-              </Field>
-              <Field
-                label={t('commercialDocuments.editor.bankAccount')}
-                help={
-                  availableBankAccounts.length === 0
-                    ? t('commercialDocuments.editor.noBankAccountForCurrency', {
-                        currency: detail.currency,
-                      })
-                    : !bankSelection
-                      ? t('commercialDocuments.editor.selectBankAccountHint')
-                      : undefined
-                }
-              >
-                {({ inputId, describedBy }) => (
-                  <Select
-                    inputId={inputId}
-                    describedBy={describedBy}
-                    value={bankSelection}
-                    disabled={!editable || availableBankAccounts.length === 0}
-                    placeholder={t('commercialDocuments.editor.selectBankAccount')}
-                    options={availableBankAccounts.map((account) => ({
-                      value: account.id,
-                      label: `${account.label} · ${account.bankName}${account.isDefault ? ' · ' + t('companyProfile.bank.default') : ''}`,
-                    }))}
-                    onChange={(event) => {
-                      setBankSelection(event.target.value);
-                      setBankSelectionDirty(true);
-                    }}
-                  />
-                )}
-              </Field>
-            </div>
-
-            {availableBankAccounts.length === 0 ? (
-              <div className="alert alert-warning" role="alert">
-                {t('commercialDocuments.editor.noBankAccountForCurrency', {
-                  currency: detail.currency,
-                })}
-              </div>
-            ) : !bankSelection ? (
-              <div className="alert alert-warning" role="status">
-                {t('commercialDocuments.editor.selectBankAccountHint')}
-              </div>
-            ) : null}
-
-            <h3>{t('commercialDocuments.editor.paymentDetails')}</h3>
-            {selectedBankAccount ? (
-              <div className="payment-summary">
-                <dl className="definition-list">
-                  <dt>{t('companyProfile.bank.label')}</dt>
-                  <dd>{selectedBankAccount.label}</dd>
-                  <dt>{t('companyProfile.bank.bankName')}</dt>
-                  <dd>{selectedBankAccount.bankName}</dd>
-                  <dt>{t('companyProfile.bank.currencyCode')}</dt>
-                  <dd>{selectedBankAccount.currencyCode}</dd>
-                  <dt>{t('companyProfile.bank.bankCountryCode')}</dt>
-                  <dd>{selectedBankAccount.bankCountryCode || t('companyProfile.notProvided')}</dd>
-                  <dt>{t('companyProfile.bank.accountNumber')}</dt>
-                  <dd className="mono">{selectedBankAccount.maskedAccountNumber}</dd>
-                  <dt>{t('companyProfile.bank.swiftCode')}</dt>
-                  <dd>
-                    {selectedBankAccount.hasSwift
-                      ? t('companyProfile.bank.swiftConfigured')
-                      : t('companyProfile.bank.swiftNotConfigured')}
-                  </dd>
-                </dl>
-                {selectedBankAccount.isDefault ? (
-                  <Badge tone="success">{t('companyProfile.bank.default')}</Badge>
-                ) : null}
-              </div>
-            ) : existingPayment ? (
-              <div className="payment-summary">
-                <p className="muted">{t('commercialDocuments.editor.legacyPayment')}</p>
-                <dl className="definition-list">
-                  <dt>{t('commercialDocuments.editor.fields.accountHolder')}</dt>
-                  <dd>{existingPayment.accountHolder || t('companyProfile.notProvided')}</dd>
-                  <dt>{t('commercialDocuments.editor.fields.bankName')}</dt>
-                  <dd>{existingPayment.bankName || t('companyProfile.notProvided')}</dd>
-                  <dt>{t('commercialDocuments.editor.fields.accountNumber')}</dt>
-                  <dd className="mono">{maskBankAccount(existingPayment.accountNumber)}</dd>
-                  <dt>{t('companyProfile.bank.bankCountryCode')}</dt>
-                  <dd>{existingPayment.bankCountryCode || t('companyProfile.notProvided')}</dd>
-                </dl>
-              </div>
-            ) : (
-              <p className="muted">{t('companyProfile.bank.empty')}</p>
-            )}
-            <p className="field-help">{t('commercialDocuments.editor.paymentServerHint')}</p>
-          </section>
-
-          <section className="panel stack-sm document-section">
-            <h2>{t('commercialDocuments.editor.sections.items')}</h2>
-            <div className="table-scroll">
-              <table className="data-table document-items-table" style={{ minWidth: '1400px' }}>
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>{t('commercialDocuments.editor.items.sku')}</th>
-                    <th>{t('commercialDocuments.editor.items.description')}</th>
-                    <th>{t('commercialDocuments.editor.items.hsCode')}</th>
-                    <th>{t('commercialDocuments.editor.items.origin')}</th>
-                    <th>{t('commercialDocuments.editor.items.quantity')}</th>
-                    <th>{t('commercialDocuments.editor.items.unit')}</th>
-                    <th>{t('commercialDocuments.editor.items.unitPrice')}</th>
-                    <th>{t('commercialDocuments.editor.items.discount')}</th>
-                    <th>{t('commercialDocuments.editor.items.amount')}</th>
-                    <th>{t('commercialDocuments.editor.items.cartons')}</th>
-                    <th>{t('commercialDocuments.editor.items.grossWeight')}</th>
-                    <th>{t('commercialDocuments.editor.items.cbm')}</th>
-                    <th>{t('common.actions')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((item, index) => (
-                    <tr key={`${item.lineNo}-${index}`}>
-                      <td>{index + 1}</td>
-                      {(
-                        [
-                          'sku',
-                          'description',
-                          'hsCode',
-                          'originCountryCode',
-                          'quantity',
-                          'unit',
-                          'unitPrice',
-                          'discountAmount',
-                          'cartons',
-                          'grossWeightKg',
-                          'cbm',
-                        ] as const
-                      ).map((field) => (
-                        <td key={field}>
-                          <Input
-                            value={item[field]}
-                            disabled={!editable}
-                            aria-label={`${itemFieldLabel(field, t)} ${index + 1}`}
-                            onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                              updateItem(index, field, event.target.value)
-                            }
-                            maxLength={field === 'description' ? 2000 : 80}
-                          />
-                        </td>
-                      ))}
-                      <td className="mono">
-                        {(() => {
-                          const quantity = Number(item.quantity || '0');
-                          const unitPrice = Number(item.unitPrice || '0');
-                          const discount = Number(item.discountAmount || '0');
-                          const value = quantity * unitPrice - discount;
-                          return Number.isFinite(value) ? value.toFixed(2) : '—';
-                        })()}
-                      </td>
-                      <td>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={!editable || items.length <= 1}
-                          onClick={() => {
-                            setItems((current) =>
-                              current.filter((_, itemIndex) => itemIndex !== index),
-                            );
-                            setDirty(true);
-                          }}
-                        >
-                          {t('commercialDocuments.editor.items.remove')}
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {editable ? (
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  setItems((current) => [...current, blankItem(current.length + 1)]);
-                  setDirty(true);
-                }}
-              >
-                {t('commercialDocuments.editor.items.add')}
-              </Button>
-            ) : null}
-          </section>
-
-          <section className="panel stack-sm document-section">
-            <h2>{t('commercialDocuments.editor.sections.totals')}</h2>
-            <div className="form-grid">
-              <TextField
-                label={t('commercialDocuments.editor.fields.discount')}
-                value={form.discountAmount}
-                disabled={!editable}
-                onChange={(value) =>
-                  updateForm((current) => ({ ...current, discountAmount: value }))
-                }
-              />
-              <TextField
-                label={t('commercialDocuments.editor.fields.freight')}
-                value={form.freightAmount}
-                disabled={!editable}
-                onChange={(value) =>
-                  updateForm((current) => ({ ...current, freightAmount: value }))
-                }
-              />
-              <TextField
-                label={t('commercialDocuments.editor.fields.insurance')}
-                value={form.insuranceAmount}
-                disabled={!editable}
-                onChange={(value) =>
-                  updateForm((current) => ({ ...current, insuranceAmount: value }))
-                }
-              />
-              <TextField
-                label={t('commercialDocuments.editor.fields.otherCharges')}
-                value={form.otherCharges}
-                disabled={!editable}
-                onChange={(value) => updateForm((current) => ({ ...current, otherCharges: value }))}
-              />
-            </div>
-            <dl className="definition-list">
-              <dt>{t('commercialDocuments.editor.fields.subtotal')}</dt>
-              <dd className="mono">{detail.totals.subtotal}</dd>
-              <dt>{t('commercialDocuments.editor.fields.total')}</dt>
-              <dd className="mono">
-                {detail.totals.totalAmount} {detail.currency}
-              </dd>
-            </dl>
-          </section>
-
-          <section className="panel stack-sm document-section">
-            <h2>{t('commercialDocuments.editor.sections.declaration')}</h2>
-            <div className="form-grid">
-              <TextField
-                label={t('commercialDocuments.editor.fields.originCountry')}
-                value={form.declaration.countryOfOrigin}
-                disabled={!editable}
-                onChange={(value) =>
-                  updateForm((current) => ({
-                    ...current,
-                    declaration: {
-                      ...current.declaration,
-                      countryOfOrigin: value.toUpperCase().slice(0, 2),
-                    },
-                  }))
-                }
-              />
-              <TextField
-                label={t('commercialDocuments.editor.fields.sellerName')}
-                value={form.signature.sellerName}
-                disabled={!editable}
-                onChange={(value) =>
-                  updateForm((current) => ({
-                    ...current,
-                    signature: { ...current.signature, sellerName: value },
-                  }))
-                }
-              />
-              <TextField
-                label={t('commercialDocuments.editor.fields.sellerTitle')}
-                value={form.signature.sellerTitle}
-                disabled={!editable}
-                onChange={(value) =>
-                  updateForm((current) => ({
-                    ...current,
-                    signature: { ...current.signature, sellerTitle: value },
-                  }))
-                }
-              />
-            </div>
-            <AreaField
-              label={t('commercialDocuments.editor.fields.declarationText')}
-              value={form.declaration.text}
-              disabled={!editable}
-              onChange={(value) =>
-                updateForm((current) => ({
-                  ...current,
-                  declaration: { ...current.declaration, text: value },
-                }))
-              }
-            />
-            <AreaField
-              label={t('commercialDocuments.editor.fields.authenticity')}
-              value={form.declaration.authenticityText}
-              disabled={!editable}
-              onChange={(value) =>
-                updateForm((current) => ({
-                  ...current,
-                  declaration: { ...current.declaration, authenticityText: value },
-                }))
-              }
-            />
-            <AreaField
-              label={t('commercialDocuments.editor.fields.notes')}
-              value={form.notes}
-              disabled={!editable}
-              onChange={(value) => updateForm((current) => ({ ...current, notes: value }))}
-            />
-          </section>
+              ) : null}
+              {showField('declaration', 'declaration.authenticity') ? (
+                <AreaField
+                  label={t('commercialDocuments.editor.fields.authenticity')}
+                  value={form.declaration.authenticityText}
+                  disabled={!editable}
+                  onChange={(value) =>
+                    updateForm((current) => ({
+                      ...current,
+                      declaration: { ...current.declaration, authenticityText: value },
+                    }))
+                  }
+                />
+              ) : null}
+              {showNotes ? (
+                <AreaField
+                  label={t('commercialDocuments.editor.fields.notes')}
+                  value={form.notes}
+                  disabled={!editable}
+                  onChange={(value) => updateForm((current) => ({ ...current, notes: value }))}
+                />
+              ) : null}
+            </section>
+          ) : null}
         </div>
 
         <div className="stack document-preview-sticky">
@@ -1397,6 +1673,18 @@ export default function CommercialDocumentEditorPage() {
                 {detail.totals.totalAmount} {detail.currency}
               </dd>
             </dl>
+            {renderErrorCode ? (
+              <div className="alert alert-error stack-sm" role="alert">
+                <strong>{t('commercialDocuments.renderFailure.title')}</strong>
+                <span>{translateError(locale, renderErrorCode)}</span>
+                <span className="small muted mono">
+                  {t('commercialDocuments.renderFailure.diagnostic', {
+                    code: renderErrorCode,
+                    jobId: detail.renderJob?.id ?? '—',
+                  })}
+                </span>
+              </div>
+            ) : null}
             {config ? (
               <p className="muted">
                 {config.page.size} · {config.page.orientation} · {config.theme.fontFamily}
@@ -1424,6 +1712,17 @@ export default function CommercialDocumentEditorPage() {
         cancelLabel={t('common.cancel')}
         loading={busy}
         onConfirm={() => void doCancel()}
+        onCancel={() => setConfirmAction(null)}
+      />
+      <ConfirmDialog
+        open={confirmAction === 'delete'}
+        title={t('commercialDocuments.editor.delete')}
+        description={t('commercialDocuments.editor.deleteConfirm')}
+        confirmLabel={t('commercialDocuments.editor.delete')}
+        cancelLabel={t('common.cancel')}
+        destructive
+        loading={busy}
+        onConfirm={() => void doDelete()}
         onCancel={() => setConfirmAction(null)}
       />
     </div>
@@ -1515,39 +1814,15 @@ function SelectField({
   );
 }
 
-function itemFieldLabel(
-  field:
-    | 'sku'
-    | 'description'
-    | 'hsCode'
-    | 'originCountryCode'
-    | 'quantity'
-    | 'unit'
-    | 'unitPrice'
-    | 'discountAmount'
-    | 'cartons'
-    | 'grossWeightKg'
-    | 'cbm',
-  t: (key: string) => string,
-): string {
-  const key =
-    field === 'originCountryCode'
-      ? 'origin'
-      : field === 'discountAmount'
-        ? 'discount'
-        : field === 'grossWeightKg'
-          ? 'grossWeight'
-          : field;
-  return t(`commercialDocuments.editor.items.${key}`);
-}
-
 function PartyEditor({
   form,
+  visibleFields,
   onChange,
   disabled,
   t,
 }: {
   form: PartyState;
+  visibleFields: ReadonlySet<PartyEditorField>;
   onChange: (next: PartyState) => void;
   disabled?: boolean;
   t: (key: string) => string;
@@ -1555,72 +1830,88 @@ function PartyEditor({
   const update = (key: keyof PartyState) => (value: string) => onChange({ ...form, [key]: value });
   return (
     <div className="form-grid">
-      <TextField
-        label={t('commercialDocuments.editor.fields.companyName')}
-        value={form.companyName}
-        onChange={update('companyName')}
-        disabled={disabled}
-      />
-      <TextField
-        label={t('commercialDocuments.editor.fields.contactName')}
-        value={form.contactName}
-        onChange={update('contactName')}
-        disabled={disabled}
-      />
-      <TextField
-        label={t('commercialDocuments.editor.fields.phone')}
-        value={form.phone}
-        onChange={update('phone')}
-        disabled={disabled}
-      />
-      <TextField
-        label={t('commercialDocuments.editor.fields.email')}
-        value={form.email}
-        onChange={update('email')}
-        disabled={disabled}
-      />
-      <TextField
-        label={t('commercialDocuments.editor.fields.taxId')}
-        value={form.taxId}
-        onChange={update('taxId')}
-        disabled={disabled}
-      />
-      <TextField
-        label={t('commercialDocuments.editor.fields.addressLine1')}
-        value={form.line1}
-        onChange={update('line1')}
-        disabled={disabled}
-      />
-      <TextField
-        label={t('commercialDocuments.editor.fields.addressLine2')}
-        value={form.line2}
-        onChange={update('line2')}
-        disabled={disabled}
-      />
-      <TextField
-        label={t('commercialDocuments.editor.fields.city')}
-        value={form.city}
-        onChange={update('city')}
-        disabled={disabled}
-      />
-      <TextField
-        label={t('commercialDocuments.editor.fields.state')}
-        value={form.state}
-        onChange={update('state')}
-        disabled={disabled}
-      />
-      <TextField
-        label={t('commercialDocuments.editor.fields.postalCode')}
-        value={form.postalCode}
-        onChange={update('postalCode')}
-        disabled={disabled}
-      />
-      <TextField
-        label={t('commercialDocuments.editor.fields.countryCode')}
-        value={form.countryCode}
-        onChange={(value) => onChange({ ...form, countryCode: value.toUpperCase().slice(0, 2) })}
-        disabled={disabled}
-      />
+      {visibleFields.has('companyName') ? (
+        <TextField
+          label={t('commercialDocuments.editor.fields.companyName')}
+          value={form.companyName}
+          onChange={update('companyName')}
+          disabled={disabled}
+        />
+      ) : null}
+      {visibleFields.has('contactName') ? (
+        <TextField
+          label={t('commercialDocuments.editor.fields.contactName')}
+          value={form.contactName}
+          onChange={update('contactName')}
+          disabled={disabled}
+        />
+      ) : null}
+      {visibleFields.has('phone') ? (
+        <TextField
+          label={t('commercialDocuments.editor.fields.phone')}
+          value={form.phone}
+          onChange={update('phone')}
+          disabled={disabled}
+        />
+      ) : null}
+      {visibleFields.has('email') ? (
+        <TextField
+          label={t('commercialDocuments.editor.fields.email')}
+          value={form.email}
+          onChange={update('email')}
+          disabled={disabled}
+        />
+      ) : null}
+      {visibleFields.has('taxId') ? (
+        <TextField
+          label={t('commercialDocuments.editor.fields.taxId')}
+          value={form.taxId}
+          onChange={update('taxId')}
+          disabled={disabled}
+        />
+      ) : null}
+      {visibleFields.has('address') ? (
+        <>
+          <TextField
+            label={t('commercialDocuments.editor.fields.addressLine1')}
+            value={form.line1}
+            onChange={update('line1')}
+            disabled={disabled}
+          />
+          <TextField
+            label={t('commercialDocuments.editor.fields.addressLine2')}
+            value={form.line2}
+            onChange={update('line2')}
+            disabled={disabled}
+          />
+          <TextField
+            label={t('commercialDocuments.editor.fields.city')}
+            value={form.city}
+            onChange={update('city')}
+            disabled={disabled}
+          />
+          <TextField
+            label={t('commercialDocuments.editor.fields.state')}
+            value={form.state}
+            onChange={update('state')}
+            disabled={disabled}
+          />
+          <TextField
+            label={t('commercialDocuments.editor.fields.postalCode')}
+            value={form.postalCode}
+            onChange={update('postalCode')}
+            disabled={disabled}
+          />
+          <TextField
+            label={t('commercialDocuments.editor.fields.countryCode')}
+            value={form.countryCode}
+            onChange={(value) =>
+              onChange({ ...form, countryCode: value.toUpperCase().slice(0, 2) })
+            }
+            disabled={disabled}
+          />
+        </>
+      ) : null}
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import {
   Badge,
   Button,
+  ConfirmDialog,
   Field,
   Input,
   PageHeader,
@@ -12,6 +13,7 @@ import {
   Select,
   useToast,
 } from '@b2b/ui';
+import { isCommercialDocumentDownloadable } from '@b2b/contracts';
 import type { PaginatedResponse } from '../../../../lib/admin-api';
 import { AdminApiError } from '../../../../lib/admin-api';
 import { commercialDocumentsApi } from '../../../../lib/commercial-documents-api';
@@ -59,6 +61,8 @@ export default function CommercialDocumentsPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [downloadBusy, setDownloadBusy] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<CommercialDocumentSummary | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -119,6 +123,30 @@ export default function CommercialDocumentsPage() {
       );
     } finally {
       setDownloadBusy('');
+    }
+  };
+
+  const removeDocument = async () => {
+    if (!deleteTarget || !can('commercial_document.delete')) return;
+    setDeleteBusy(true);
+    try {
+      await commercialDocumentsApi.deleteDocument(deleteTarget.id);
+      const lastRowOnPage = rows.length === 1;
+      setDeleteTarget(null);
+      toast.success(t('commercialDocuments.actions.deleted'));
+      if (lastRowOnPage && page > 1) {
+        setPage((current) => Math.max(1, current - 1));
+      } else {
+        await load();
+      }
+    } catch (cause) {
+      toast.error(
+        cause instanceof AdminApiError
+          ? translateError(locale, cause.code)
+          : t('errors.INTERNAL_ERROR'),
+      );
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
@@ -319,10 +347,23 @@ export default function CommercialDocumentsPage() {
                           size="sm"
                           variant="ghost"
                           loading={downloadBusy === row.id}
-                          disabled={!row.hasPdf || Boolean(downloadBusy)}
+                          disabled={
+                            !row.hasPdf ||
+                            !isCommercialDocumentDownloadable(row.status) ||
+                            Boolean(downloadBusy)
+                          }
                           onClick={() => void download(row)}
                         >
                           {t('commercialDocuments.actions.download')}
+                        </Button>
+                      ) : null}
+                      {row.status === 'DRAFT' && can('commercial_document.delete') ? (
+                        <Button
+                          size="sm"
+                          variant="danger"
+                          onClick={() => setDeleteTarget(row)}
+                        >
+                          {t('commercialDocuments.actions.delete')}
                         </Button>
                       ) : null}
                     </div>
@@ -354,6 +395,30 @@ export default function CommercialDocumentsPage() {
           }}
         />
       </section>
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title={t('commercialDocuments.actions.deleteTitle')}
+        description={
+          deleteTarget ? (
+            <div className="stack-sm">
+              <p>
+                {t('commercialDocuments.actions.deleteConfirm', {
+                  documentNo: deleteTarget.documentNo,
+                  revision: deleteTarget.revisionNo,
+                })}
+              </p>
+              <p className="muted">{t('commercialDocuments.actions.deleteImpact')}</p>
+            </div>
+          ) : null
+        }
+        confirmLabel={t('commercialDocuments.actions.delete')}
+        cancelLabel={t('common.cancel')}
+        destructive
+        loading={deleteBusy}
+        onConfirm={() => void removeDocument()}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 }

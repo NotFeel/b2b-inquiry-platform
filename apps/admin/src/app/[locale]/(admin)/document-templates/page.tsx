@@ -28,7 +28,7 @@ import { translateError } from '../../../../lib/i18n';
 import {
   documentTemplateListQuery,
   documentTemplateSignature,
-  isDocumentTemplateDraftDeletable,
+  isDocumentTemplateDeletable,
   type DocumentTemplateListFilters as TemplateFilters,
   type DocumentTemplateMeta as TemplateMeta,
 } from '../../../../lib/document-template-page';
@@ -326,7 +326,7 @@ export default function DocumentTemplatesPage() {
     setError(null);
     try {
       await persistTemplate();
-      toast.success(t('documentTemplates.saved'));
+      toast.success(t('documentTemplates.savedPendingPublish'));
       await load();
     } catch (cause) {
       const message = errorMessage(cause);
@@ -425,7 +425,7 @@ export default function DocumentTemplatesPage() {
     }
   };
 
-  const removeDraft = async () => {
+  const removeTemplate = async () => {
     if (!deleteTarget || !canDelete) return;
     setAction('delete');
     try {
@@ -730,7 +730,18 @@ export default function DocumentTemplatesPage() {
                           </Badge>
                         </td>
                         <td>{row.isDefault ? t('common.yes') : '—'}</td>
-                        <td>{row.currentVersion ? `v${row.currentVersion.version}` : '—'}</td>
+                        <td>
+                          <div className="stack-xs">
+                            <span>
+                              {row.currentVersion ? `v${row.currentVersion.version}` : '—'}
+                            </span>
+                            {row.currentVersion && row.hasUnpublishedChanges ? (
+                              <small className="muted">
+                                {t('documentTemplates.pendingPublish')}
+                              </small>
+                            ) : null}
+                          </div>
+                        </td>
                         <td>{new Date(row.updatedAt).toLocaleDateString(locale)}</td>
                         <td>
                           <div className="row-actions template-row-actions">
@@ -752,13 +763,13 @@ export default function DocumentTemplatesPage() {
                                 {t('documentTemplates.copy')}
                               </Button>
                             ) : null}
-                            {canDelete && isDocumentTemplateDraftDeletable(row) ? (
+                            {canDelete && isDocumentTemplateDeletable(row) ? (
                               <Button
                                 size="sm"
                                 variant="danger"
                                 onClick={() => setDeleteTarget(row)}
                               >
-                                {t('documentTemplates.deleteDraft')}
+                                {t('documentTemplates.delete')}
                               </Button>
                             ) : null}
                           </div>
@@ -819,6 +830,16 @@ export default function DocumentTemplatesPage() {
                   {documentTypeLabel(selected.documentType)} · {localeLabel(meta.locale)} ·{' '}
                   {paperSizeLabel(meta.paperSize)} · {orientationLabel(meta.orientation)}
                 </span>
+                {selected.currentVersion ? (
+                  <span className="muted">
+                    {t('documentTemplates.publishedVersion', {
+                      version: selected.currentVersion.version,
+                    })}
+                  </span>
+                ) : null}
+                {selected.hasUnpublishedChanges ? (
+                  <Badge tone="warning">{t('documentTemplates.pendingPublish')}</Badge>
+                ) : null}
                 {dirty ? (
                   <span className="notice notice-warning" role="status">
                     {t('documentTemplates.unsaved')}
@@ -1111,7 +1132,8 @@ export default function DocumentTemplatesPage() {
                           ].map((font) => ({ value: font, label: font }))}
                           onChange={(event) =>
                             mutateConfig((draft) => {
-                              draft.theme.fontFamily = event.target.value;
+                              draft.theme.fontFamily = event.target
+                                .value as DocumentTemplateConfig['theme']['fontFamily'];
                             })
                           }
                         />
@@ -1431,33 +1453,71 @@ export default function DocumentTemplatesPage() {
                     <h3>{t('documentTemplates.columns.column')}</h3>
                     <p className="muted">{t('documentTemplates.columnsHint')}</p>
                   </div>
-                  <div className="template-field-list">
-                    {config.itemColumns.map((column, columnIndex) => (
-                      <article className="template-field-card" key={column.key}>
-                        <div className="template-field-card-head">
-                          <label className="checkbox-row">
-                            <input
-                              type="checkbox"
-                              checked={column.visible}
-                              aria-label={t('documentTemplates.accessibility.columnVisible', {
-                                name: columnLabel(column.key),
-                              })}
-                              onChange={(event) =>
-                                mutateConfig((draft) => {
-                                  draft.itemColumns[columnIndex]!.visible = event.target.checked;
-                                })
-                              }
-                            />
-                            <strong>{columnLabel(column.key)}</strong>
-                          </label>
-                          <small className="muted mono">{column.key}</small>
-                        </div>
-                        <div className="form-grid compact-form-grid">
-                          <Field label={t('documentTemplates.columns.label')}>
-                            {({ inputId, describedBy }) => (
+                  <div className="table-wrap">
+                    <table className="data-table template-columns-table">
+                      <caption className="visually-hidden">
+                        {t('documentTemplates.columns.tableLabel')}
+                      </caption>
+                      <thead>
+                        <tr>
+                          <th scope="col">{t('documentTemplates.columns.show')}</th>
+                          <th scope="col">{t('documentTemplates.columns.column')}</th>
+                          <th scope="col">{t('documentTemplates.sections.required')}</th>
+                          <th scope="col">{t('documentTemplates.columns.label')}</th>
+                          <th scope="col">{t('documentTemplates.columns.width')}</th>
+                          <th scope="col">{t('documentTemplates.columns.order')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {config.itemColumns.map((column, columnIndex) => (
+                          <tr key={column.key}>
+                            <td>
+                              <label className="template-column-checkbox">
+                                <input
+                                  type="checkbox"
+                                  checked={column.visible}
+                                  aria-label={t('documentTemplates.accessibility.columnVisible', {
+                                    name: columnLabel(column.key),
+                                  })}
+                                  onChange={(event) =>
+                                    mutateConfig((draft) => {
+                                      draft.itemColumns[columnIndex]!.visible =
+                                        event.target.checked;
+                                      if (!event.target.checked) {
+                                        draft.itemColumns[columnIndex]!.required = false;
+                                      }
+                                    })
+                                  }
+                                />
+                              </label>
+                            </td>
+                            <td>
+                              <div className="template-column-name">
+                                <strong>{columnLabel(column.key)}</strong>
+                                <span className="muted mono">{column.key}</span>
+                              </div>
+                            </td>
+                            <td>
+                              <label className="template-column-checkbox">
+                                <input
+                                  type="checkbox"
+                                  checked={column.required}
+                                  disabled={!column.visible}
+                                  aria-label={t('documentTemplates.accessibility.fieldRequired', {
+                                    name: columnLabel(column.key),
+                                  })}
+                                  onChange={(event) =>
+                                    mutateConfig((draft) => {
+                                      draft.itemColumns[columnIndex]!.required =
+                                        event.target.checked;
+                                    })
+                                  }
+                                />
+                              </label>
+                            </td>
+                            <td>
                               <Input
-                                inputId={inputId}
-                                describedBy={describedBy}
+                                className="template-column-label-input"
                                 value={column.label ?? ''}
                                 aria-label={t('documentTemplates.accessibility.columnLabel', {
                                   name: columnLabel(column.key),
@@ -1468,13 +1528,10 @@ export default function DocumentTemplatesPage() {
                                   })
                                 }
                               />
-                            )}
-                          </Field>
-                          <Field label={t('documentTemplates.columns.width')}>
-                            {({ inputId, describedBy }) => (
+                            </td>
+                            <td>
                               <Input
-                                inputId={inputId}
-                                describedBy={describedBy}
+                                className="template-column-width-input"
                                 type="number"
                                 min={4}
                                 max={40}
@@ -1490,43 +1547,53 @@ export default function DocumentTemplatesPage() {
                                   })
                                 }
                               />
-                            )}
-                          </Field>
-                        </div>
-                        <div className="row-actions">
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={columnIndex === 0}
-                            aria-label={t('documentTemplates.accessibility.moveColumnUp', {
-                              name: columnLabel(column.key),
-                            })}
-                            onClick={() =>
-                              mutateConfig((draft) => {
-                                draft.itemColumns = moveItem(draft.itemColumns, columnIndex, -1);
-                              })
-                            }
-                          >
-                            ↑
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={columnIndex === config.itemColumns.length - 1}
-                            aria-label={t('documentTemplates.accessibility.moveColumnDown', {
-                              name: columnLabel(column.key),
-                            })}
-                            onClick={() =>
-                              mutateConfig((draft) => {
-                                draft.itemColumns = moveItem(draft.itemColumns, columnIndex, 1);
-                              })
-                            }
-                          >
-                            ↓
-                          </Button>
-                        </div>
-                      </article>
-                    ))}
+                            </td>
+                            <td>
+                              <div className="row-actions template-column-actions">
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  disabled={columnIndex === 0}
+                                  aria-label={t('documentTemplates.accessibility.moveColumnUp', {
+                                    name: columnLabel(column.key),
+                                  })}
+                                  onClick={() =>
+                                    mutateConfig((draft) => {
+                                      draft.itemColumns = moveItem(
+                                        draft.itemColumns,
+                                        columnIndex,
+                                        -1,
+                                      );
+                                    })
+                                  }
+                                >
+                                  ↑
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  disabled={columnIndex === config.itemColumns.length - 1}
+                                  aria-label={t('documentTemplates.accessibility.moveColumnDown', {
+                                    name: columnLabel(column.key),
+                                  })}
+                                  onClick={() =>
+                                    mutateConfig((draft) => {
+                                      draft.itemColumns = moveItem(
+                                        draft.itemColumns,
+                                        columnIndex,
+                                        1,
+                                      );
+                                    })
+                                  }
+                                >
+                                  ↓
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               </TabPanel>
@@ -1750,13 +1817,13 @@ export default function DocumentTemplatesPage() {
                             : t('documentTemplates.disable')}
                         </Button>
                       ) : null}
-                      {canDelete && isDocumentTemplateDraftDeletable(selected) ? (
+                      {canDelete && isDocumentTemplateDeletable(selected) ? (
                         <Button
                           variant="danger"
                           disabled={Boolean(action)}
                           onClick={() => setDeleteTarget(selected)}
                         >
-                          {t('documentTemplates.deleteDraft')}
+                          {t('documentTemplates.delete')}
                         </Button>
                       ) : null}
                     </div>
@@ -2004,7 +2071,7 @@ export default function DocumentTemplatesPage() {
 
       <ConfirmDialog
         open={deleteTarget !== null}
-        title={t('documentTemplates.deleteDraft')}
+        title={t('documentTemplates.delete')}
         description={
           deleteTarget ? (
             <div className="stack-sm">
@@ -2031,11 +2098,11 @@ export default function DocumentTemplatesPage() {
             </div>
           ) : null
         }
-        confirmLabel={t('documentTemplates.deleteDraft')}
+        confirmLabel={t('documentTemplates.delete')}
         cancelLabel={t('common.cancel')}
         destructive
         loading={action === 'delete'}
-        onConfirm={() => void removeDraft()}
+        onConfirm={() => void removeTemplate()}
         onCancel={() => setDeleteTarget(null)}
       />
 

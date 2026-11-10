@@ -87,6 +87,42 @@ describe('DocumentTemplatesService.resolveVersion', () => {
   });
 });
 
+describe('DocumentTemplatesService.activeOptions', () => {
+  it('returns the selected version config so the editor can render its visible fields immediately', async () => {
+    const row = template();
+    row.versions[0]!.config.sections.find((section) => section.key === 'notifyParty')!.visible =
+      false;
+    const service = new DocumentTemplatesService(
+      {
+        documentTemplate: { findMany: vi.fn(async () => [row]) },
+      } as unknown as PrismaService,
+      { record: vi.fn() } as unknown as AuditService,
+    );
+
+    const options = await service.activeOptions('CI');
+
+    expect(options[0]?.versionId).toBe(VERSION_ID);
+    expect(
+      options[0]?.config.sections.find((section) => section.key === 'notifyParty')?.visible,
+    ).toBe(false);
+    expect(options[0]?.hasUnpublishedChanges).toBe(true);
+  });
+
+  it('reports when the draft matches the published configuration', async () => {
+    const row = template();
+    const service = new DocumentTemplatesService(
+      {
+        documentTemplate: { findMany: vi.fn(async () => [row]) },
+      } as unknown as PrismaService,
+      { record: vi.fn() } as unknown as AuditService,
+    );
+
+    const options = await service.activeOptions('CI');
+
+    expect(options[0]?.hasUnpublishedChanges).toBe(false);
+  });
+});
+
 describe('DocumentTemplatesService.publish', () => {
   it('creates the next immutable version and points the template at it', async () => {
     const templateRow = template();
@@ -133,11 +169,22 @@ describe('DocumentTemplatesService.publish', () => {
 });
 
 describe('DocumentTemplatesService.remove', () => {
-  function serviceFor(row: Record<string, unknown> | null, deleteFn = vi.fn()) {
+  function serviceFor(
+    row: Record<string, unknown> | null,
+    options: { versionIds?: string[]; renderJobCount?: number } = {},
+  ) {
     const findUnique = vi.fn(async () => row);
+    const findManyVersions = vi.fn(async () =>
+      (options.versionIds ?? []).map((id) => ({ id })),
+    );
+    const renderJobCount = vi.fn(async () => options.renderJobCount ?? 0);
+    const deleteVersions = vi.fn(async () => ({ count: options.versionIds?.length ?? 0 }));
+    const deleteFn = vi.fn();
     const transaction = vi.fn(async (callback: (tx: unknown) => unknown) =>
       callback({
         documentTemplate: { findUnique, delete: deleteFn },
+        documentTemplateVersion: { findMany: findManyVersions, deleteMany: deleteVersions },
+        documentRenderJob: { count: renderJobCount },
       }),
     );
     const audit = { record: vi.fn() };
@@ -145,7 +192,7 @@ describe('DocumentTemplatesService.remove', () => {
       { $transaction: transaction } as unknown as PrismaService,
       audit as unknown as AuditService,
     );
-    return { service, findUnique, deleteFn, audit };
+    return { service, findUnique, deleteFn, deleteVersions, audit };
   }
 
   it('deletes an unused draft and audits only safe metadata', async () => {
@@ -156,6 +203,7 @@ describe('DocumentTemplatesService.remove', () => {
       documentType: 'CI',
       locale: 'en-US',
       status: 'DRAFT',
+      isDefault: false,
       _count: { versions: 0, documents: 0 },
     });
 
@@ -176,9 +224,40 @@ describe('DocumentTemplatesService.remove', () => {
     );
   });
 
+  it('deletes a disabled, non-default template with its unreferenced version history', async () => {
+    const { service, deleteFn, deleteVersions, audit } = serviceFor(
+      {
+        id: TEMPLATE_ID,
+        code: 'ci-disabled',
+        name: 'Old CI template',
+        documentType: 'CI',
+        locale: 'en-US',
+        status: 'DISABLED',
+        isDefault: false,
+        _count: { versions: 1, documents: 0 },
+      },
+      { versionIds: [VERSION_ID] },
+    );
+
+    await expect(service.remove(TEMPLATE_ID, 'actor-1', 'request-1')).resolves.toEqual({
+      deleted: true,
+    });
+    expect(deleteVersions).toHaveBeenCalledWith({ where: { templateId: TEMPLATE_ID } });
+    expect(deleteFn).toHaveBeenCalledWith({ where: { id: TEMPLATE_ID } });
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'document_template.deleted',
+        metadata: expect.objectContaining({
+          statusBeforeDelete: 'DISABLED',
+          versionCount: 1,
+        }),
+      }),
+    );
+  });
+
   it.each([
-    ['published or disabled', { status: 'ACTIVE', _count: { versions: 0, documents: 0 } }],
-    ['has a version', { status: 'DRAFT', _count: { versions: 1, documents: 0 } }],
+    ['active', { status: 'ACTIVE', isDefault: false, _count: { versions: 0, documents: 0 } }],
+    ['default', { status: 'DRAFT', isDefault: true, _count: { versions: 0, documents: 0 } }],
   ])('refuses deletion when the template is %s', async (_case, overrides) => {
     const { service, deleteFn } = serviceFor({
       id: TEMPLATE_ID,
@@ -202,11 +281,33 @@ describe('DocumentTemplatesService.remove', () => {
       documentType: 'CI',
       locale: 'en-US',
       status: 'DRAFT',
+      isDefault: false,
       _count: { versions: 0, documents: 1 },
     });
     await expect(service.remove(TEMPLATE_ID, 'actor-1', 'request-1')).rejects.toMatchObject({
       code: ERROR_CODES.documentTemplateInUse,
     });
+    expect(deleteFn).not.toHaveBeenCalled();
+  });
+
+  it('refuses deletion when a PDF render job references a template version', async () => {
+    const { service, deleteFn, deleteVersions } = serviceFor(
+      {
+        id: TEMPLATE_ID,
+        code: 'ci-disabled',
+        name: 'Old CI template',
+        documentType: 'CI',
+        locale: 'en-US',
+        status: 'DISABLED',
+        isDefault: false,
+        _count: { versions: 1, documents: 0 },
+      },
+      { versionIds: [VERSION_ID], renderJobCount: 1 },
+    );
+    await expect(service.remove(TEMPLATE_ID, 'actor-1', 'request-1')).rejects.toMatchObject({
+      code: ERROR_CODES.documentTemplateInUse,
+    });
+    expect(deleteVersions).not.toHaveBeenCalled();
     expect(deleteFn).not.toHaveBeenCalled();
   });
 

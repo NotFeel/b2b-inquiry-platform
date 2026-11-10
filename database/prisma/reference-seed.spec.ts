@@ -41,6 +41,15 @@ describe('reference authorization and navigation seed', () => {
     }
   });
 
+  it('does not grant commercial-document deletion to ordinary roles by default', () => {
+    expect(REFERENCE_PERMISSIONS.map((permission) => permission.code)).toContain(
+      'commercial_document.delete',
+    );
+    for (const role of REFERENCE_ROLES.filter((candidate) => candidate.permissions !== 'all')) {
+      expect(role.permissions).not.toContain('commercial_document.delete');
+    }
+  });
+
   it('acquires the transaction advisory lock before touching reference tables', async () => {
     const sentinel = new Error('permission query reached');
     const tx = {

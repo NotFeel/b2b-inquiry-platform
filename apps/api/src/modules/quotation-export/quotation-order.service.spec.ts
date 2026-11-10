@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Decimal from 'decimal.js';
+import { ERROR_CODES } from '@b2b/contracts';
 import { Prisma } from '@b2b/database';
 import type { AuditService } from '../../common/services/audit.service';
 import type { JsonLogger } from '../../common/logger.service';
@@ -190,6 +191,205 @@ describe('order list aggregation', () => {
       },
     });
     expect(result.data[0]?.updatedAt).toBe(now.toISOString());
+  });
+});
+
+describe('quotation draft lifecycle', () => {
+  const quotationId = '11111111-2222-4333-8444-555555555555';
+  const productId = '66666666-7777-4888-9999-aaaaaaaaaaaa';
+
+  function createService(prisma: PrismaService, storage = {} as StorageService) {
+    return new QuotationOrderService(
+      prisma,
+      { record: vi.fn() } as unknown as AuditService,
+      storage,
+      {} as CategoriesService,
+      { error: vi.fn(), warn: vi.fn() } as unknown as JsonLogger,
+    );
+  }
+
+  it('lists only drafts by default so converted orders do not remain in the draft centre', async () => {
+    const findMany = vi.fn(async () => []);
+    const count = vi.fn(async () => 0);
+    const prisma = {
+      quotation: { findMany, count },
+      $transaction: async (operations: Promise<unknown>[]) => Promise.all(operations),
+    } as unknown as PrismaService;
+    const service = createService(prisma);
+
+    await service.listQuotations({ page: 1, pageSize: 20 } as never);
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ status: 'DRAFT' }) }),
+    );
+    expect(count).toHaveBeenCalledWith({
+      where: expect.objectContaining({ status: 'DRAFT' }),
+    });
+  });
+
+  it('loads a draft snapshot with current product data for calculator editing', async () => {
+    const findQuotation = vi.fn(async () => ({
+      id: quotationId,
+      quotationNo: 'Q-20261110-AAAAAA',
+      title: 'Editable draft',
+      revision: 3,
+      status: 'DRAFT',
+      calculationSnapshot: {
+        input: {
+          title: 'Editable draft',
+          items: [{ productId }],
+          fees: [],
+        },
+      },
+    }));
+    const findProducts = vi.fn(async () => [
+      {
+        id: productId,
+        sku: 'SKU-1',
+        priceCny: new Decimal('12.3400'),
+        cartonLengthCm: new Decimal('50.000'),
+        cartonWidthCm: new Decimal('40.000'),
+        cartonHeightCm: new Decimal('30.000'),
+        cartonWeightKg: new Decimal('18.500'),
+        cartonQuantity: 24,
+        publishStatus: 'PUBLISHED',
+        lifecycleStatus: 'AVAILABLE',
+        translations: [{ name: 'Product one' }],
+        images: [],
+      },
+    ]);
+    const prisma = {
+      quotation: { findUnique: findQuotation },
+      product: { findMany: findProducts },
+    } as unknown as PrismaService;
+    const service = createService(prisma);
+
+    const result = await service.quotationEditData(quotationId);
+
+    expect(result.quotation).toEqual({
+      id: quotationId,
+      quotationNo: 'Q-20261110-AAAAAA',
+      title: 'Editable draft',
+      revision: 3,
+    });
+    expect(result.products[0]).toMatchObject({
+      id: productId,
+      sku: 'SKU-1',
+      costCny: '12.34',
+      packaging: { unitsPerCarton: 24 },
+    });
+  });
+
+  it('does not allow a converted quotation to re-enter the calculator editor', async () => {
+    const findProducts = vi.fn();
+    const prisma = {
+      quotation: {
+        findUnique: vi.fn(async () => ({
+          id: quotationId,
+          quotationNo: 'Q-1',
+          title: 'Converted draft',
+          revision: 1,
+          status: 'CONVERTED',
+          calculationSnapshot: null,
+        })),
+      },
+      product: { findMany: findProducts },
+    } as unknown as PrismaService;
+    const service = createService(prisma);
+
+    await expect(service.quotationEditData(quotationId)).rejects.toMatchObject({
+      code: ERROR_CODES.conflict,
+    });
+    expect(findProducts).not.toHaveBeenCalled();
+  });
+
+  it('does not update a quotation after it has been converted', async () => {
+    const prisma = {
+      quotation: {
+        findUnique: vi.fn(async () => ({ id: quotationId, status: 'CONVERTED', items: [] })),
+      },
+    } as unknown as PrismaService;
+    const service = createService(prisma);
+
+    await expect(
+      service.updateQuotation(quotationId, {} as never, 'actor-id', 'request-id'),
+    ).rejects.toMatchObject({ code: ERROR_CODES.conflict });
+  });
+
+  it('deletes an unlinked draft and cleans its quotation image snapshots', async () => {
+    const deleteQuotation = vi.fn(async () => ({ id: quotationId }));
+    const deleteFileAsset = vi.fn(async () => ({ count: 1 }));
+    const storage = { delete: vi.fn(async () => undefined) } as unknown as StorageService;
+    const prisma = {
+      quotation: {
+        findUnique: vi.fn(async () => ({
+          id: quotationId,
+          quotationNo: 'Q-20261110-BBBBBB',
+          status: 'DRAFT',
+          items: [
+            {
+              productDataSnapshot: {
+                imageSnapshotAssetId: '88888888-9999-4aaa-8bbb-cccccccccccc',
+              },
+            },
+          ],
+        })),
+        delete: deleteQuotation,
+      },
+      order: { findUnique: vi.fn(async () => null) },
+      fileAsset: {
+        findMany: vi.fn(async () => [
+          {
+            id: '88888888-9999-4aaa-8bbb-cccccccccccc',
+            storageKey: 'private/quotation-snapshots/product.jpg',
+          },
+        ]),
+        deleteMany: deleteFileAsset,
+      },
+    } as unknown as PrismaService;
+    const service = createService(prisma, storage);
+
+    await expect(service.deleteQuotation(quotationId, 'actor-id', 'request-id')).resolves.toEqual({
+      id: quotationId,
+      deleted: true,
+    });
+    expect(deleteQuotation).toHaveBeenCalledWith({ where: { id: quotationId } });
+    expect(storage.delete).toHaveBeenCalledWith('private/quotation-snapshots/product.jpg');
+    expect(deleteFileAsset).toHaveBeenCalledWith({
+      where: { id: '88888888-9999-4aaa-8bbb-cccccccccccc' },
+    });
+  });
+
+  it.each([
+    ['converted', { status: 'CONVERTED', linkedOrder: null }, ERROR_CODES.conflict],
+    [
+      'linked to an order',
+      { status: 'DRAFT', linkedOrder: { id: 'order-id' } },
+      ERROR_CODES.conflict,
+    ],
+  ])('refuses to delete a quotation that is %s', async (_label, scenario, code) => {
+    const deleteQuotation = vi.fn();
+    const prisma = {
+      quotation: {
+        findUnique: vi.fn(async () => ({
+          id: quotationId,
+          quotationNo: 'Q-1',
+          status: scenario.status,
+          items: [],
+        })),
+        delete: deleteQuotation,
+      },
+      order: { findUnique: vi.fn(async () => scenario.linkedOrder) },
+      fileAsset: { findMany: vi.fn(async () => []), deleteMany: vi.fn() },
+    } as unknown as PrismaService;
+    const service = createService(prisma);
+
+    await expect(
+      service.deleteQuotation(quotationId, 'actor-id', 'request-id'),
+    ).rejects.toMatchObject({
+      code,
+    });
+    expect(deleteQuotation).not.toHaveBeenCalled();
   });
 });
 

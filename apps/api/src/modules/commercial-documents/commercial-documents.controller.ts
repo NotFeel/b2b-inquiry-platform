@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import {
   cancelCommercialDocumentSchema,
@@ -30,7 +30,9 @@ export class CommercialDocumentsController {
 
   @RequirePermissions(Permission.commercialDocumentRead)
   @Get('commercial-documents')
-  async list(@Query(zodPipe(commercialDocumentListQuerySchema)) query: CommercialDocumentListQuery) {
+  async list(
+    @Query(zodPipe(commercialDocumentListQuerySchema)) query: CommercialDocumentListQuery,
+  ) {
     return this.documents.list(query);
   }
 
@@ -48,11 +50,10 @@ export class CommercialDocumentsController {
     @CurrentActor() actor: AuthenticatedActor,
   ) {
     return {
-      data: await this.documents.prefill(
-        idParamSchema.parse({ id }).id,
-        query.type,
-        actor.id,
-      ),
+      data: await this.documents.prefill(idParamSchema.parse({ id }).id, query.type, actor.id, {
+        templateVersionId: query.templateVersionId,
+        locale: query.locale,
+      }),
     };
   }
 
@@ -83,12 +84,7 @@ export class CommercialDocumentsController {
     @RequestId() requestId: string,
   ) {
     return {
-      data: await this.documents.update(
-        idParamSchema.parse({ id }).id,
-        body,
-        actor.id,
-        requestId,
-      ),
+      data: await this.documents.update(idParamSchema.parse({ id }).id, body, actor.id, requestId),
     };
   }
 
@@ -151,12 +147,19 @@ export class CommercialDocumentsController {
     @RequestId() requestId: string,
   ) {
     return {
-      data: await this.documents.cancel(
-        idParamSchema.parse({ id }).id,
-        body,
-        actor.id,
-        requestId,
-      ),
+      data: await this.documents.cancel(idParamSchema.parse({ id }).id, body, actor.id, requestId),
+    };
+  }
+
+  @RequirePermissions(Permission.commercialDocumentDelete)
+  @Delete('commercial-documents/:id')
+  async remove(
+    @Param('id') id: string,
+    @CurrentActor() actor: AuthenticatedActor,
+    @RequestId() requestId: string,
+  ) {
+    return {
+      data: await this.documents.remove(idParamSchema.parse({ id }).id, actor.id, requestId),
     };
   }
 
@@ -168,11 +171,7 @@ export class CommercialDocumentsController {
     @RequestId() requestId: string,
     @Res() response: Response,
   ): Promise<void> {
-    const file = await this.documents.download(
-      idParamSchema.parse({ id }).id,
-      actor.id,
-      requestId,
-    );
+    const file = await this.documents.download(idParamSchema.parse({ id }).id, actor.id, requestId);
     const ascii = file.filename.replace(/[^A-Za-z0-9._-]/g, '_') || 'commercial-document.pdf';
     response.setHeader('Content-Type', 'application/pdf');
     response.setHeader('Content-Length', String(file.sizeBytes));

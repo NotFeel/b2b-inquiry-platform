@@ -1,13 +1,21 @@
 'use client';
 
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import Image from 'next/image';
+import { useSearchParams } from 'next/navigation';
 import { Button, Input, PageHeader, Select, useToast } from '@b2b/ui';
 import { useBreadcrumb } from '../../../../components/use-breadcrumb';
 import { QuotationProductPickerDialog } from '../../../../components/quotation-product-picker-dialog';
 import { CountrySelect, CurrencySelect } from '../../../../components/reference-selects';
 import { useSession } from '../../../../components/session-provider';
 import { AdminApiError } from '../../../../lib/admin-api';
+import {
+  calculatorProductsById,
+  quotationFeeDrafts,
+  quotationItemDrafts,
+  type QuotationFeeDraft,
+  type QuotationItemDraft,
+} from '../../../../lib/quotation-draft-form';
 import { translateError } from '../../../../lib/i18n';
 import {
   quotationOrderApi,
@@ -16,6 +24,7 @@ import {
   type CalculatorProduct,
   type CalculationResult,
   type QuotationConfig,
+  type QuotationDraftEditData,
 } from '../../../../lib/quotation-order-api';
 
 function SimpleField({ label, children }: { label: string; children: ReactNode }) {
@@ -27,17 +36,7 @@ function SimpleField({ label, children }: { label: string; children: ReactNode }
   );
 }
 
-type ItemDraft = {
-  productId: string;
-  markupPercent: string;
-  cartonCount: string;
-  cartonLengthCm: string;
-  cartonWidthCm: string;
-  cartonHeightCm: string;
-  cartonGrossWeightKg: string;
-};
-type FeeDraft = { feeTypeCode: string; name: string; amountCny: string };
-const blankItem = (): ItemDraft => ({
+const blankItem = (): QuotationItemDraft => ({
   productId: '',
   markupPercent: '20',
   cartonCount: '',
@@ -91,8 +90,11 @@ export default function QuotationCalculatorPage() {
   const { t, locale, can } = useSession();
   const breadcrumb = useBreadcrumb();
   const toast = useToast();
+  const searchParams = useSearchParams();
+  const quotationId = searchParams.get('quotationId') ?? '';
   const [config, setConfig] = useState<QuotationConfig | null>(null);
   const [chosenProducts, setChosenProducts] = useState<Record<string, CalculatorProduct>>({});
+  const [draftEditData, setDraftEditData] = useState<QuotationDraftEditData | null>(null);
   const [productPickerOpen, setProductPickerOpen] = useState(false);
   const [customers, setCustomers] = useState<
     {
@@ -155,31 +157,46 @@ export default function QuotationCalculatorPage() {
   const [region, setRegion] = useState('');
   const [postalCode, setPostalCode] = useState('');
   const [addressLine, setAddressLine] = useState('');
-  const [items, setItems] = useState<ItemDraft[]>([]);
-  const [fees, setFees] = useState<FeeDraft[]>([]);
+  const [items, setItems] = useState<QuotationItemDraft[]>([]);
+  const [fees, setFees] = useState<QuotationFeeDraft[]>([]);
   const [customerId, setCustomerId] = useState('');
   const [draggedProductId, setDraggedProductId] = useState<string | null>(null);
   const [dragOverProductId, setDragOverProductId] = useState<string | null>(null);
   const [previewRatesInvalid, setPreviewRatesInvalid] = useState(false);
+  const hydratedQuotationId = useRef('');
 
   const canCalculate = can('quotation.calculate');
-  const canSave = can('quotation.create');
-  const canCreateOrder = can('order.create');
-  const canReadFreightAllocation = can('quotation.cost.read') || can('product.cost.read');
+  const canReadCost = can('quotation.cost.read') || can('product.cost.read');
+  const canSaveNewDraft = can('quotation.create');
+  const canUpdateDraft = can('quotation.update') && can('quotation.cost.read');
+  const isEditingDraft = Boolean(quotationId);
+  const canSave = isEditingDraft ? canUpdateDraft : canSaveNewDraft;
+  // An edited quotation is intentionally saved back to the same draft. The
+  // draft centre then remains the single place that converts a reviewed
+  // revision into an immutable formal order.
+  const canCreateOrder = !isEditingDraft && can('order.create');
+  const canReadFreightAllocation = canReadCost;
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const [nextConfig, nextCustomers, nextExcelTemplates] = await Promise.all([
+      const [nextConfig, nextCustomers, nextExcelTemplates, nextDraft] = await Promise.all([
         quotationOrderApi.config(locale),
         can('customer.read') ? quotationOrderApi.customers() : Promise.resolve({ data: [] }),
         canCalculate ? quotationOrderApi.calculatorExcelTemplates() : Promise.resolve([]),
+        quotationId && canUpdateDraft
+          ? quotationOrderApi.quotationEditData(quotationId)
+          : Promise.resolve(null),
       ]);
       setConfig(nextConfig);
       setVolumetricDivisorItemId(
         (current) => current || nextConfig.volumetricDivisors[0]?.id || '',
       );
       setCustomers(nextCustomers.data);
+      setDraftEditData(nextDraft);
+      if (quotationId && !canUpdateDraft) {
+        setError(t('quotationCenter.editPermissionDenied'));
+      }
       setExcelTemplates(nextExcelTemplates);
       setExcelTemplateId((current) =>
         nextExcelTemplates.some((template) => template.id === current)
@@ -196,13 +213,75 @@ export default function QuotationCalculatorPage() {
     } finally {
       setLoading(false);
     }
-  }, [can, canCalculate, locale, t]);
+  }, [can, canCalculate, canUpdateDraft, locale, quotationId, t]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const changeItem = (index: number, key: keyof ItemDraft, value: string) => {
+  useEffect(() => {
+    if (!draftEditData || hydratedQuotationId.current === draftEditData.quotation.id) return;
+    const input = draftEditData.calculation;
+    const customer = input.customer;
+    const billing = customer.billingAddress;
+    const shipping = customer.shippingAddress;
+
+    setTitle(input.title);
+    setCurrencyCode(input.currencyCode);
+    setExchangeRate(input.exchangeRate);
+    setExchangeRateDate(input.exchangeRateDate);
+    setFreightBillingMethod(input.freightBillingMethod);
+    setVolumetricDivisorItemId(input.volumetricDivisorItemId);
+    setCbmRatePerCbm(input.cbmRatePerCbm);
+    setKgRatePerKg(input.kgRatePerKg);
+    setDeliveryFee(input.deliveryFeeCny);
+    setOrderDate(input.orderDate ?? '');
+    setCompanyName(customer.companyName);
+    setContactName(customer.contactName);
+    setPhone(customer.phoneE164);
+    setEmail(customer.email ?? '');
+    setCountryCode(customer.countryCode ?? '');
+    setCustomerType(customer.customerType ?? 'COMPANY');
+    setLegalCompanyName(customer.legalCompanyName ?? '');
+    setTaxId(customer.taxId ?? '');
+    setPreferredLanguage(customer.preferredLanguage ?? 'en-US');
+    setBuyerReference(input.buyerReference ?? '');
+    setIncotermCode(input.trade?.incotermCode ?? '');
+    setNamedPlace(input.trade?.namedPlace ?? '');
+    setPaymentTerms(input.trade?.paymentTerms ?? '');
+    setCustomerId(input.customerId ?? '');
+    setBillingSameAsShipping(
+      !billing || !shipping || JSON.stringify(billing) === JSON.stringify(shipping),
+    );
+    setBillingAddressLine(billing?.line1 ?? '');
+    setBillingCity(billing?.city ?? '');
+    setBillingRegion(billing?.region ?? '');
+    setBillingPostalCode(billing?.postalCode ?? '');
+    setBillingCountryCode(billing?.countryCode ?? '');
+    setRecipient(shipping?.recipient ?? '');
+    setShippingCompany(shipping?.companyName ?? '');
+    setShippingPhone(shipping?.phoneE164 ?? '');
+    setShippingCountryCode(shipping?.countryCode ?? '');
+    setCity(shipping?.city ?? '');
+    setRegion(shipping?.region ?? '');
+    setPostalCode(shipping?.postalCode ?? '');
+    setAddressLine(shipping?.line1 ?? '');
+    setChosenProducts(calculatorProductsById(draftEditData.products));
+    setItems(quotationItemDrafts(input));
+    setFees(quotationFeeDrafts(input));
+    setResult(null);
+    setPreviewSignature('');
+    hydratedQuotationId.current = draftEditData.quotation.id;
+  }, [draftEditData]);
+
+  const refresh = () => {
+    // An explicit refresh in edit mode must reload the server snapshot even
+    // when the quotation ID is unchanged.
+    hydratedQuotationId.current = '';
+    void load();
+  };
+
+  const changeItem = (index: number, key: keyof QuotationItemDraft, value: string) => {
     setResult(null);
     setItems((current) =>
       current.map((item, itemIndex) => {
@@ -414,6 +493,10 @@ export default function QuotationCalculatorPage() {
   };
 
   const saveDraft = async () => {
+    if (isEditingDraft && (!quotationId || !canUpdateDraft)) {
+      setError(t('quotationCenter.editPermissionDenied'));
+      return;
+    }
     if (!validateItemQuantities()) return;
     if (currencyCode !== 'CNY' && !isValidExchangeRate(exchangeRate)) {
       setError(t('quotationCenter.exchangeRateRequired'));
@@ -423,15 +506,40 @@ export default function QuotationCalculatorPage() {
     setSaving(true);
     setError('');
     try {
-      const saved = await quotationOrderApi.saveDraft(buildInput());
-      toast.success(t('quotationCenter.draftSaved', { number: saved.quotationNo }));
+      const input = buildInput();
+      if (isEditingDraft) {
+        const saved = await quotationOrderApi.updateDraft(quotationId, input);
+        setDraftEditData((current) =>
+          current
+            ? {
+                ...current,
+                quotation: {
+                  ...current.quotation,
+                  title: input.title,
+                  revision: saved.revision,
+                },
+              }
+            : current,
+        );
+        toast.success(
+          t('quotationCenter.draftUpdated', {
+            number: saved.quotationNo,
+            revision: saved.revision,
+          }),
+        );
+      } else {
+        const saved = await quotationOrderApi.saveDraft(input);
+        toast.success(t('quotationCenter.draftSaved', { number: saved.quotationNo }));
+      }
     } catch (cause) {
       setError(
         cause instanceof AdminApiError
           ? translateError(locale, cause.code)
           : cause instanceof Error
             ? cause.message
-            : t('quotationCenter.saveError'),
+            : isEditingDraft
+              ? t('quotationCenter.draftUpdateFailed')
+              : t('quotationCenter.saveError'),
       );
     } finally {
       setSaving(false);
@@ -593,7 +701,7 @@ export default function QuotationCalculatorPage() {
         title={t('quotationCenter.title')}
         description={t('quotationCenter.description')}
         actions={
-          <Button variant="secondary" onClick={() => void load()}>
+          <Button variant="secondary" onClick={refresh}>
             {t('quotationCenter.refresh')}
           </Button>
         }
@@ -617,6 +725,14 @@ export default function QuotationCalculatorPage() {
       {error ? (
         <div className="alert alert-error" role="alert">
           {error}
+        </div>
+      ) : null}
+      {isEditingDraft && draftEditData ? (
+        <div className="notice" role="status">
+          {t('quotationCenter.editDraftHint', {
+            number: draftEditData.quotation.quotationNo,
+            revision: draftEditData.quotation.revision,
+          })}
         </div>
       ) : null}
       {!config ? (
@@ -1562,7 +1678,9 @@ export default function QuotationCalculatorPage() {
                   disabled={saving || !title.trim() || items.every((item) => !item.productId)}
                   onClick={() => void saveDraft()}
                 >
-                  {t('quotationCenter.saveDraft')}
+                  {isEditingDraft
+                    ? t('quotationCenter.updateDraft')
+                    : t('quotationCenter.saveDraft')}
                 </Button>
               ) : null}
               {canCreateOrder ? (

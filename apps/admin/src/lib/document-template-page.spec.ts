@@ -3,7 +3,7 @@ import type { DocumentTemplateConfig } from './commercial-documents-api';
 import {
   documentTemplateListQuery,
   documentTemplateSignature,
-  isDocumentTemplateDraftDeletable,
+  isDocumentTemplateDeletable,
 } from './document-template-page';
 
 const config = {
@@ -27,8 +27,8 @@ const config = {
   },
   sections: [],
   itemColumns: [
-    { key: 'items.description', visible: true, label: 'Description', width: 28 },
-    { key: 'items.amount', visible: true, label: 'Amount', width: 12 },
+    { key: 'items.description', visible: true, required: false, label: 'Description', width: 28 },
+    { key: 'items.amount', visible: true, required: false, label: 'Amount', width: 12 },
   ],
   footer: { showText: true, showPageNumbers: true },
   terms: {
@@ -59,10 +59,9 @@ describe('document template page helpers', () => {
     ).toMatchObject({ locale: 'zh-CN', page: 1, pageSize: 50 });
   });
 
-  it('marks only drafts without versions as UI-deletable', () => {
-    expect(isDocumentTemplateDraftDeletable({ status: 'DRAFT', versionCount: 0 })).toBe(true);
-    expect(isDocumentTemplateDraftDeletable({ status: 'DRAFT', versionCount: 1 })).toBe(false);
-    expect(isDocumentTemplateDraftDeletable({ status: 'ACTIVE', versionCount: 1 })).toBe(false);
+  it('uses the server eligibility flag for template deletion', () => {
+    expect(isDocumentTemplateDeletable({ canDelete: true })).toBe(true);
+    expect(isDocumentTemplateDeletable({ canDelete: false })).toBe(false);
   });
 
   it('changes the signature when a field visibility setting changes', () => {

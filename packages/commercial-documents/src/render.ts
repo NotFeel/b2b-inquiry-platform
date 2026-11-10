@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { amountInWords as generateAmountInWords } from './amount-in-words';
 import { documentCurrencyScale, formatDocumentAmount } from './totals';
 import {
@@ -156,6 +157,21 @@ function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function sellerSignatureOverlayDataUri(
+  label: string,
+  sellerName: string,
+  stampDataUri: string,
+  fontFamily: string,
+): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="80mm" height="34mm" viewBox="0 0 80 34">
+  <line x1="0" y1="0" x2="80" y2="0" stroke="#111827" stroke-width="0.18" />
+  <text x="0" y="6" font-family="${escapeHtml(fontFamily)}, Arial, sans-serif" font-size="3.2" fill="#374151">${escapeHtml(label)}</text>
+  <text x="0" y="12" font-family="${escapeHtml(fontFamily)}, Arial, sans-serif" font-size="3.5" fill="#111827">${escapeHtml(sellerName)}</text>
+  <image href="${escapeHtml(stampDataUri)}" x="14" y="3" width="40" height="24" preserveAspectRatio="xMinYMin meet" />
+</svg>`;
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
 }
 
 function text(value: unknown): string {
@@ -380,11 +396,12 @@ export function renderCommercialDocumentHtml(
   const headerCells = columns
     .map((column) => {
       const width = column.width ? ` style="width:${column.width}%"` : '';
+      const numeric = column.key === 'items.amount' || column.key === 'items.unitPrice';
       const label =
         column.label ||
         DOCUMENT_ITEM_COLUMN_LABELS[column.key][locale] ||
         defaultFieldLabel(column.key, locale);
-      return `<th${width}>${escapeHtml(label)}</th>`;
+      return `<th${numeric ? ' class="numeric"' : ''}${width}>${escapeHtml(label)}</th>`;
     })
     .join('');
   const itemRows = data.items
@@ -486,19 +503,28 @@ export function renderCommercialDocumentHtml(
     isFieldVisible(config, 'signature', 'signature.seller') &&
     config.header.showStamp &&
     assets.stampDataUri
-      ? `<img class="stamp" src="${escapeHtml(assets.stampDataUri)}" alt="" />`
+      ? `<img class="stamp-overlay" src="${escapeHtml(
+          sellerSignatureOverlayDataUri(
+            configuredFieldLabel(config, 'signature', 'signature.seller', locale),
+            values['signature.seller'] ?? '',
+            assets.stampDataUri,
+            config.theme.fontFamily.replace(/["']/g, ''),
+          ),
+        )}" alt="${escapeHtml(values['signature.seller'] ?? '')}" />`
       : '';
   const logo =
     config.header.showLogo && assets.logoDataUri
       ? `<img class="logo" src="${escapeHtml(assets.logoDataUri)}" alt="" />`
       : '';
   const sellerSignature = isFieldVisible(config, 'signature', 'signature.seller')
-    ? `<div class="signature-cell">
-          <div class="signature-line">${escapeHtml(
-            configuredFieldLabel(config, 'signature', 'signature.seller', locale),
-          )}</div>
-          ${stamp}
-          <div class="signature-name">${escapeHtml(values['signature.seller'] ?? '')}</div>
+    ? `<div class="signature-cell${stamp ? ' has-stamp' : ''}">
+          ${
+            stamp ||
+            `<div class="signature-line">${escapeHtml(
+              configuredFieldLabel(config, 'signature', 'signature.seller', locale),
+            )}</div>
+          <div class="signature-name">${escapeHtml(values['signature.seller'] ?? '')}</div>`
+          }
         </div>`
     : '';
   const buyerSignature = isFieldVisible(config, 'signature', 'signature.buyer')
@@ -577,11 +603,13 @@ export function renderCommercialDocumentHtml(
   .detail-row { display: flex; justify-content: space-between; gap: 3mm; border-bottom: 0.3pt dotted #e5e7eb; padding: 0.6mm 0; }
   .detail-row .label { flex: 0 0 38%; }
   .detail-row .pre { flex: 1; text-align: right; word-break: break-word; }
-  table.items { width: 100%; border-collapse: collapse; margin: 2mm 0 3mm; table-layout: fixed; }
+  table.items { width: 100%; border: 0.4pt solid #d1d5db; border-collapse: collapse; margin: 2mm 0 3mm; table-layout: fixed; }
   table.items thead { display: table-header-group; }
   table.items tr { page-break-inside: avoid; }
-  table.items th { background: ${config.theme.primaryColor}; color: #ffffff; font-size: 8pt; padding: 1.6mm 1.2mm; text-align: left; word-break: break-word; }
-  table.items td { border-bottom: 0.4pt solid #e5e7eb; padding: 1.4mm 1.2mm; font-size: 8.5pt; vertical-align: top; word-break: break-word; }
+  table.items th, table.items td { border: 0.4pt solid #d1d5db; padding: 1.4mm 1.2mm; vertical-align: top; word-break: break-word; }
+  table.items th { background: ${config.theme.primaryColor}; color: #ffffff; font-size: 8pt; padding-block: 1.6mm; }
+  table.items td { font-size: 8.5pt; }
+  table.items th:not(.numeric) { text-align: left; }
   td.numeric, th.numeric { text-align: right; }
   table.totals { width: 78mm; margin-left: auto; border-collapse: collapse; }
   table.totals td { padding: 1.2mm 1.5mm; border-bottom: 0.4pt solid #e5e7eb; font-size: 9pt; }
@@ -593,7 +621,7 @@ export function renderCommercialDocumentHtml(
   .signature-cell { flex: 1; min-height: 24mm; }
   .signature-line { border-top: 0.5pt solid #111827; padding-top: 1.5mm; font-size: 8.5pt; color: #374151; }
   .signature-name { margin-top: 1mm; font-size: 9pt; }
-  .stamp { display: block; max-height: 22mm; max-width: 40mm; margin-top: 1mm; }
+  .stamp-overlay { display: block; width: 80mm; max-width: 100%; height: 34mm; }
   .footer-text { margin-top: 6mm; padding-top: 2mm; border-top: 0.4pt solid #d1d5db; font-size: 7.5pt; color: #6b7280; }
   .confidential { font-size: 7.5pt; color: #9ca3af; }
 </style>

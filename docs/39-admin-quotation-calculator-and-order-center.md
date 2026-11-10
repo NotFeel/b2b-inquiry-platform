@@ -102,6 +102,17 @@
 - CBM 运费按订单总 CBM × CNY/CBM 单价计算，CNY 结果和换算后的目标币种金额均向上进位到两位；KG 运费舍入规则保持原样。
 - 单箱 CBM、商品总 CBM 和订单总 CBM 在页面最多展示 8 位小数，超出部分四舍五入，尾部 0 不补齐。数据库和计算快照仍保存完整 Decimal 精度。无需数据库迁移。
 
+### 1.2 报价草稿生命周期与可编辑性（2026-11-10）
+
+- 报价草稿列表默认只查询 `DRAFT`。报价转为正式订单后仍保留 `Quotation` 行及其 `CONVERTED` 状态，用于 `Order.sourceQuotationId` 来源追踪、审计和历史关联，但不再作为可操作草稿显示。
+- 草稿中心支持进入报价计算器重新编辑。`GET /admin/quotations/:id/edit-data` 仅在草稿状态下返回持久化计算快照和当前商品数据；保存通过 `PATCH /admin/quotations/:id` 原子替换明细与费用、重新由服务端计算、递增 `revision`，并更新原报价，不创建重复草稿。
+- 计算器编辑模式只提供“更新报价草稿”，避免从旧草稿直接创建另一张正式订单后留下无法解释的草稿；更新后回到草稿中心执行 `convert-to-order`。
+- 草稿中心支持受 `quotation.delete` 保护的删除。服务端只允许删除未关联正式订单的 `DRAFT`；`CONVERTED`、`EXPIRED`、`ARCHIVED` 或已有 `sourceQuotationId` 订单引用的报价必须拒绝删除。正式订单使用独立快照，后续更新或删除草稿不会改变订单。
+- 草稿更新或删除时，旧报价商品图片快照由服务层清理；对象存储删除失败继续进入既有 `FileDeletionJob` 重试，不静默遗留文件。
+- 权限：加载计算器编辑数据要求 `quotation.update + quotation.cost.read`；更新要求 `quotation.update`；删除要求 `quotation.delete`；转换订单仍要求 `quotation.convert_to_order`。按钮隐藏不能替代这些服务端校验。
+- 数据库：复用现有 `Quotation.status`、`revision` 和 `sourceQuotationId` 关系，无 schema migration。
+- 回滚：回退 Admin/API 后，`CONVERTED` 报价仍可由旧代码作为历史记录读取；已删除的无订单草稿无法自动恢复，应按数据库备份或审计记录处置。不得为回滚而批量删除或改回已转订单的来源报价。
+
 ---
 
 ## 1. 产品目标与业务术语
@@ -532,7 +543,9 @@ QuotationModule
 | POST | `/admin/quotations` | 保存报价草稿 |
 | GET | `/admin/quotations` | 报价草稿列表 |
 | GET | `/admin/quotations/:id` | 报价详情 |
-| PATCH | `/admin/quotations/:id` | 更新未转订单草稿，使用 revision/updatedAt 乐观锁 |
+| GET | `/admin/quotations/:id/edit-data` | 读取未转订单草稿并回填报价计算器 |
+| PATCH | `/admin/quotations/:id` | 更新未转订单草稿并递增 revision；并发转单后拒绝写入 |
+| DELETE | `/admin/quotations/:id` | 删除未关联正式订单的报价草稿 |
 | POST | `/admin/quotations/:id/convert-to-order` | 报价转订单 |
 | POST | `/admin/orders` | 直接创建订单（提交计算输入，不接受最终金额） |
 | GET | `/admin/orders` | 订单列表 |

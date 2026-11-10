@@ -27,8 +27,16 @@ import { AuditService } from '../../common/services/audit.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
 type TemplateWithVersions = DocumentTemplate & {
-  versions?: DocumentTemplateVersion[];
+  versions?: Array<DocumentTemplateVersion & { _count?: { renderJobs: number } }>;
+  _count?: { documents: number };
 };
+
+function templateConfigsEqual(draftConfig: unknown, publishedConfig: unknown): boolean {
+  return (
+    JSON.stringify(parseTemplateConfig(draftConfig)) ===
+    JSON.stringify(parseTemplateConfig(publishedConfig))
+  );
+}
 
 // Templates are versioned configuration. The editable draft can change at any
 // time, but published versions are immutable and documents keep pointing at the
@@ -61,7 +69,13 @@ export class DocumentTemplatesService {
         orderBy: [{ documentType: 'asc' }, { updatedAt: 'desc' }, { id: 'asc' }],
         skip: (query.page - 1) * query.pageSize,
         take: query.pageSize,
-        include: { versions: { orderBy: { version: 'desc' }, take: 20 } },
+        include: {
+          versions: {
+            orderBy: { version: 'desc' },
+            include: { _count: { select: { renderJobs: true } } },
+          },
+          _count: { select: { documents: true } },
+        },
       }),
     ]);
     return {
@@ -99,6 +113,8 @@ export class DocumentTemplatesService {
         isDefault: row.isDefault,
         versionId: row.versions[0]!.id,
         version: row.versions[0]!.version,
+        config: parseTemplateConfig(row.versions[0]!.config),
+        hasUnpublishedChanges: !templateConfigsEqual(row.draftConfig, row.versions[0]!.config),
       }));
   }
 
@@ -106,7 +122,11 @@ export class DocumentTemplatesService {
     const template = await this.prisma.documentTemplate.findUnique({
       where: { id },
       include: {
-        versions: { orderBy: { version: 'desc' } },
+        versions: {
+          orderBy: { version: 'desc' },
+          include: { _count: { select: { renderJobs: true } } },
+        },
+        _count: { select: { documents: true } },
         createdBy: { select: { displayName: true } },
         updatedBy: { select: { displayName: true } },
       },
@@ -241,8 +261,9 @@ export class DocumentTemplatesService {
   }
 
   /**
-   * Permanently removes a mistaken draft only. Published history and issued
-   * documents are protected by both this transaction and RESTRICT foreign keys.
+   * Permanently removes a draft or disabled template that has no document or
+   * render-job references. Active/default templates must first be disabled in
+   * the editor. Issued history remains protected by RESTRICT foreign keys.
    */
   async remove(id: string, actorId: string, requestId: string) {
     let deleted: {
@@ -251,6 +272,8 @@ export class DocumentTemplatesService {
       name: string;
       documentType: CommercialDocumentType;
       locale: string;
+      status: string;
+      versionCount: number;
     };
     try {
       deleted = await this.prisma.$transaction(async (transaction) => {
@@ -263,16 +286,20 @@ export class DocumentTemplatesService {
             documentType: true,
             locale: true,
             status: true,
+            isDefault: true,
             _count: { select: { versions: true, documents: true } },
           },
         });
         if (!template) {
           throw new ApiError(ERROR_CODES.documentTemplateNotFound, 'Document template not found.');
         }
-        if (template.status !== 'DRAFT' || template._count.versions > 0) {
+        if (
+          (template.status !== 'DRAFT' && template.status !== 'DISABLED') ||
+          template.isDefault
+        ) {
           throw new ApiError(
             ERROR_CODES.documentTemplateNotDeletable,
-            'Only an unpublished draft without version history can be deleted.',
+            'Only a non-default draft or disabled template can be deleted.',
           );
         }
         if (template._count.documents > 0) {
@@ -281,8 +308,24 @@ export class DocumentTemplatesService {
             'This template is referenced by a PI/CI document and cannot be deleted.',
           );
         }
+        const versions = await transaction.documentTemplateVersion.findMany({
+          where: { templateId: id },
+          select: { id: true },
+        });
+        if (versions.length > 0) {
+          const renderJobCount = await transaction.documentRenderJob.count({
+            where: { templateVersionId: { in: versions.map((version) => version.id) } },
+          });
+          if (renderJobCount > 0) {
+            throw new ApiError(
+              ERROR_CODES.documentTemplateInUse,
+              'This template has PDF render history and cannot be deleted.',
+            );
+          }
+          await transaction.documentTemplateVersion.deleteMany({ where: { templateId: id } });
+        }
         await transaction.documentTemplate.delete({ where: { id } });
-        return template;
+        return { ...template, versionCount: template._count.versions };
       });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -311,6 +354,8 @@ export class DocumentTemplatesService {
         name: deleted.name,
         documentType: deleted.documentType,
         locale: deleted.locale,
+        statusBeforeDelete: deleted.status,
+        versionCount: deleted.versionCount,
       },
     });
     return { deleted: true as const };
@@ -437,7 +482,10 @@ export class DocumentTemplatesService {
       include: { template: true },
     });
     if (!version) {
-      throw ApiError.validation('The selected document template version does not exist.');
+      throw new ApiError(
+        ERROR_CODES.documentTemplateNotFound,
+        'The selected document template version does not exist.',
+      );
     }
     if (version.status !== 'PUBLISHED') {
       throw new ApiError(
@@ -741,6 +789,9 @@ export class DocumentTemplatesService {
       status: template.status,
       isDefault: template.isDefault,
       draftConfig: parseTemplateConfig(template.draftConfig),
+      hasUnpublishedChanges: current
+        ? !templateConfigsEqual(template.draftConfig, current.config)
+        : true,
       currentVersion: current
         ? {
             id: current.id,
@@ -750,6 +801,11 @@ export class DocumentTemplatesService {
           }
         : null,
       versionCount: versions.length,
+      canDelete:
+        !template.isDefault &&
+        (template.status === 'DRAFT' || template.status === 'DISABLED') &&
+        (template._count?.documents ?? 0) === 0 &&
+        versions.every((version) => (version._count?.renderJobs ?? 0) === 0),
       updatedAt: template.updatedAt.toISOString(),
     };
   }

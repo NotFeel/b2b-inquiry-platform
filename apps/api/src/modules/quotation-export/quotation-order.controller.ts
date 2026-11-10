@@ -1,4 +1,15 @@
-import { Body, Controller, Get, Headers, Param, Patch, Post, Query, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Headers,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Res,
+} from '@nestjs/common';
 import {
   quotationCalculatorExcelExportSchema,
   quotationHistoryExcelExportSchema,
@@ -176,6 +187,41 @@ export class QuotationOrderController {
   async quotationDetail(@Param('id') id: string, @CurrentActor() actor: AuthenticatedActor) {
     const data = await this.service.quotationDetail(idParamSchema.parse({ id }).id);
     return { data: this.canReadCost(actor) ? data : this.withoutCost(data) };
+  }
+
+  @RequirePermissions(Permission.quotationUpdate, Permission.quotationCostRead)
+  @Get('quotations/:id/edit-data')
+  async quotationEditData(@Param('id') id: string) {
+    return { data: await this.service.quotationEditData(idParamSchema.parse({ id }).id) };
+  }
+
+  @RequirePermissions(Permission.quotationUpdate)
+  @Patch('quotations/:id')
+  async updateQuotation(
+    @Param('id') id: string,
+    @Body(zodPipe(quotationCalculationSchema)) body: QuotationCalculationInput,
+    @CurrentActor() actor: AuthenticatedActor,
+    @RequestId() requestId: string,
+  ) {
+    const data = await this.service.updateQuotation(
+      idParamSchema.parse({ id }).id,
+      body,
+      actor.id,
+      requestId,
+    );
+    return { data: this.canReadCost(actor) ? data : this.withoutCost(data) };
+  }
+
+  @RequirePermissions(Permission.quotationDelete)
+  @Delete('quotations/:id')
+  async deleteQuotation(
+    @Param('id') id: string,
+    @CurrentActor() actor: AuthenticatedActor,
+    @RequestId() requestId: string,
+  ) {
+    return {
+      data: await this.service.deleteQuotation(idParamSchema.parse({ id }).id, actor.id, requestId),
+    };
   }
 
   @RequirePermissions(Permission.quotationConvertToOrder)

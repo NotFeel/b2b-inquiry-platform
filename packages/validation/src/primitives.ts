@@ -63,19 +63,35 @@ export const isoDateTimeSchema = z
 export const optionalIsoDateTimeSchema = isoDateTimeSchema.nullable().optional();
 
 // Currency amounts travel as decimal strings so no float rounding is introduced.
-export const decimalStringSchema = (options?: { allowNegative?: boolean }) =>
-  z
+export const decimalStringSchema = (options?: {
+  allowNegative?: boolean;
+  /** Maximum fractional digits. Defaults to six for money and weights. */
+  scale?: number;
+}) => {
+  const scale = options?.scale ?? 6;
+  if (!Number.isInteger(scale) || scale < 0 || scale > 15) {
+    throw new Error('decimalStringSchema scale must be an integer between 0 and 15.');
+  }
+  const decimalPattern =
+    scale === 0 ? /^-?\d{1,15}$/ : new RegExp(`^-?\\d{1,15}(?:\\.\\d{1,${scale}})?$`);
+  return z
     .union([z.string(), z.number()])
     .transform((value) => (typeof value === 'number' ? value.toString() : value.trim()))
-    .refine((value) => /^-?\d{1,15}(\.\d{1,6})?$/.test(value), 'validation.decimal.invalid')
+    .refine((value) => decimalPattern.test(value), 'validation.decimal.invalid')
     .refine(
       (value) => (options?.allowNegative ? true : !value.startsWith('-')),
       'validation.decimal.negative',
     )
     .refine((value) => Number(value) <= 1_000_000_000, 'validation.decimal.tooLarge');
+};
 
 export const positiveIntSchema = (max = 1_000_000) =>
-  z.coerce.number().int().min(0).max(max).transform((value) => Math.trunc(value));
+  z.coerce
+    .number()
+    .int()
+    .min(0)
+    .max(max)
+    .transform((value) => Math.trunc(value));
 
 export const emailSchema = z
   .string()

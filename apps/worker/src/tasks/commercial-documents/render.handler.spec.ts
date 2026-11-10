@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultTemplateConfig } from '@b2b/commercial-documents';
+import { ERROR_CODES } from '@b2b/contracts';
 import type { PrismaClient } from '@b2b/database';
 import { processCommercialDocumentRender } from './render.handler';
 
@@ -116,5 +117,44 @@ describe('processCommercialDocumentRender', () => {
       }),
     );
     await fs.rm(workspace, { recursive: true, force: true });
+  });
+
+  it('persists a converter failure code for the document status UI', async () => {
+    const prisma = prismaMock();
+    const { convertHtmlWithLibreOffice } = await import('./libreoffice-html.runner');
+    vi.mocked(convertHtmlWithLibreOffice).mockRejectedValueOnce(
+      new Error(ERROR_CODES.commercialDocumentConverterUnavailable),
+    );
+
+    await expect(
+      processCommercialDocumentRender(
+        { jobId: JOB_ID, attemptId: ATTEMPT_ID },
+        {
+          prisma,
+          storage: { put, get: vi.fn(), delete: vi.fn(), exists: vi.fn(), readStream: vi.fn() },
+          env: {
+            WORKER_TMP_DIR: tmpdir(),
+            EXCEL_PDF_CONVERTER_PATH: '/definitely/missing/soffice',
+            EXCEL_PDF_PDFINFO_PATH: '/usr/bin/pdfinfo',
+            COMMERCIAL_DOCUMENT_RENDER_TIMEOUT_MS: 10_000,
+            COMMERCIAL_DOCUMENT_PDF_MAX_BYTES: 1_000_000,
+            COMMERCIAL_DOCUMENT_PDF_MAX_PAGES: 10,
+          },
+          logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+        } as never,
+      ),
+    ).rejects.toThrow(ERROR_CODES.commercialDocumentConverterUnavailable);
+
+    expect(prisma.documentRenderJob.updateMany).toHaveBeenLastCalledWith({
+      where: {
+        id: JOB_ID,
+        attemptId: ATTEMPT_ID,
+        status: { in: ['QUEUED', 'PROCESSING', 'FAILED'] },
+      },
+      data: expect.objectContaining({
+        status: 'FAILED',
+        errorCode: ERROR_CODES.commercialDocumentConverterUnavailable,
+      }),
+    });
   });
 });

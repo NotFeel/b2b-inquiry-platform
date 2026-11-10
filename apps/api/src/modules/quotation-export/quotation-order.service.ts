@@ -510,7 +510,10 @@ export class QuotationOrderService {
 
   async listQuotations(query: QuotationListQuery) {
     const where: Prisma.QuotationWhereInput = {
-      ...(query.status ? { status: query.status } : {}),
+      // The quotation centre is a working queue for actionable drafts. A
+      // converted quotation remains linked to its immutable order for history,
+      // but it is no longer a draft and must not stay in this list.
+      status: query.status ?? 'DRAFT',
       ...(query.q
         ? {
             OR: [
@@ -547,6 +550,227 @@ export class QuotationOrderService {
     });
     if (!row) throw ApiError.notFound('Quotation not found.');
     return this.quotationDto(row);
+  }
+
+  async quotationEditData(id: string) {
+    const row = await this.prisma.quotation.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        quotationNo: true,
+        title: true,
+        revision: true,
+        status: true,
+        calculationSnapshot: true,
+      },
+    });
+    if (!row) throw ApiError.notFound('Quotation not found.');
+    if (row.status !== 'DRAFT') {
+      throw ApiError.conflict(ERROR_CODES.conflict, 'Only draft quotations can be edited.');
+    }
+    const snapshot = row.calculationSnapshot as { input?: unknown } | null;
+    const input = snapshot?.input as QuotationCalculationInput | undefined;
+    if (!input || !Array.isArray(input.items)) {
+      throw ApiError.validation('This quotation cannot be loaded into the calculator.');
+    }
+    const productIds = [...new Set(input.items.map((item) => item.productId))];
+    const products = await this.prisma.product.findMany({
+      where: {
+        id: { in: productIds },
+        lifecycleStatus: { not: 'DISCONTINUED' },
+        priceCny: { not: null },
+      },
+      orderBy: [{ sku: 'asc' }],
+      select: {
+        id: true,
+        sku: true,
+        priceCny: true,
+        cartonLengthCm: true,
+        cartonWidthCm: true,
+        cartonHeightCm: true,
+        cartonWeightKg: true,
+        cartonQuantity: true,
+        publishStatus: true,
+        lifecycleStatus: true,
+        translations: { where: { locale: 'en-US' }, select: { name: true } },
+        images: {
+          where: { deleteState: 'READY' },
+          orderBy: [{ isCover: 'desc' }, { sortOrder: 'asc' }, { id: 'asc' }],
+          take: 1,
+          select: { fileAssetId: true, altText: true },
+        },
+      },
+    });
+    if (products.length !== productIds.length) {
+      throw ApiError.conflict(
+        ERROR_CODES.conflict,
+        'One or more products in this quotation are no longer editable. Delete the stale draft and create a new one.',
+      );
+    }
+    return {
+      quotation: {
+        id: row.id,
+        quotationNo: row.quotationNo,
+        title: row.title,
+        revision: row.revision,
+      },
+      calculation: input,
+      products: products.map((product) => ({
+        id: product.id,
+        sku: product.sku,
+        name: product.translations[0]?.name ?? product.sku,
+        imageUrl: product.images[0]?.fileAssetId
+          ? this.storage.adminProductImageUrl(product.images[0].fileAssetId)
+          : null,
+        imageAlt: product.images[0]?.altText ?? product.translations[0]?.name ?? product.sku,
+        publishStatus: product.publishStatus.toLowerCase(),
+        lifecycleStatus: product.lifecycleStatus.toLowerCase(),
+        costCny: product.priceCny?.toString() ?? null,
+        packaging: {
+          cartonLengthCm: product.cartonLengthCm?.toString() ?? null,
+          cartonWidthCm: product.cartonWidthCm?.toString() ?? null,
+          cartonHeightCm: product.cartonHeightCm?.toString() ?? null,
+          cartonGrossWeightKg: product.cartonWeightKg?.toString() ?? null,
+          unitsPerCarton: product.cartonQuantity,
+        },
+      })),
+    };
+  }
+
+  async updateQuotation(
+    id: string,
+    input: QuotationCalculationInput,
+    actorId: string,
+    requestId: string,
+  ) {
+    const existing = await this.prisma.quotation.findUnique({
+      where: { id },
+      include: { items: true },
+    });
+    if (!existing) throw ApiError.notFound('Quotation not found.');
+    if (existing.status !== 'DRAFT') {
+      throw ApiError.conflict(ERROR_CODES.conflict, 'Only draft quotations can be edited.');
+    }
+    const previousAssets = await this.quotationSnapshotAssets(existing.items);
+    const prepared = await this.prepare(input);
+    const result = this.calculate(prepared);
+    const customerSnapshot = this.customerSnapshot(input);
+    const historySnapshots = await this.snapshotProductHistory(prepared, actorId);
+
+    let quotation: Prisma.QuotationGetPayload<{
+      include: { items: true; fees: true };
+    }>;
+    try {
+      quotation = await this.prisma.$transaction(async (tx) => {
+        const current = await tx.quotation.findUnique({
+          where: { id },
+          select: { status: true },
+        });
+        if (!current) throw ApiError.notFound('Quotation not found.');
+        if (current.status !== 'DRAFT') {
+          throw ApiError.conflict(ERROR_CODES.conflict, 'Only draft quotations can be edited.');
+        }
+
+        const customerId = await this.ensureCustomer(tx, input);
+        // Replace the persisted snapshot atomically so a failed edit cannot
+        // leave a mix of old and new line items.
+        await tx.quotationItem.deleteMany({ where: { quotationId: id } });
+        await tx.quotationFee.deleteMany({ where: { quotationId: id } });
+        return tx.quotation.update({
+          // Repeat the draft guard in the write so a concurrent conversion
+          // cannot turn this response into a later revision of a formal
+          // order's source quotation.
+          where: { id, status: 'DRAFT' },
+          data: {
+            title: input.title,
+            customerId,
+            quotedAt: input.quotedAt ? new Date(input.quotedAt) : new Date(),
+            validUntil: input.validUntil ? new Date(input.validUntil) : null,
+            currencyCode: input.currencyCode,
+            exchangeRate: input.exchangeRate,
+            exchangeRateDate: this.date(input.exchangeRateDate),
+            exchangeRateEnteredById: actorId,
+            ...this.freightFields(prepared, result),
+            subtotalCny: result.totals.subtotalCny,
+            freightCny: result.totals.freightCny,
+            deliveryFeeCny: result.totals.deliveryFeeCny,
+            otherFeesCny: result.totals.otherFeesCny,
+            totalAmountCny: result.totals.totalAmountCny,
+            totalAmountForeignExact: result.totals.totalAmountForeignExact,
+            totalAmountForeign: result.totals.totalAmountForeign,
+            customerSnapshot: customerSnapshot as Prisma.InputJsonValue,
+            calculationSnapshot: { input, result } as unknown as Prisma.InputJsonValue,
+            revision: { increment: 1 },
+            items: {
+              create: this.persistableItems(prepared, result, historySnapshots.byProductId),
+            },
+            fees: {
+              create: result.fees.map((fee, lineNo) => ({
+                lineNo: lineNo + 1,
+                feeTypeCode: fee.typeCode,
+                nameSnapshot: fee.name,
+                amountCny: fee.amountCny,
+                amountForeign: fee.amountForeign,
+                isFreight: fee.isFreight,
+                notes: null,
+              })),
+            },
+          },
+          include: { items: true, fees: true },
+        });
+      });
+    } catch (error) {
+      await this.discardSnapshotAssets(historySnapshots.stagedAssets);
+      throw error;
+    }
+
+    await this.discardSnapshotAssets(previousAssets);
+    await this.audit.record({
+      actorId,
+      action: 'quotation.updated',
+      entityType: 'Quotation',
+      entityId: id,
+      requestId,
+      metadata: {
+        quotationNo: quotation.quotationNo,
+        revision: quotation.revision,
+        itemCount: quotation.items.length,
+      },
+    });
+    return this.quotationDto(quotation);
+  }
+
+  async deleteQuotation(id: string, actorId: string, requestId: string) {
+    const quotation = await this.prisma.quotation.findUnique({
+      where: { id },
+      include: { items: true },
+    });
+    if (!quotation) throw ApiError.notFound('Quotation not found.');
+    if (quotation.status !== 'DRAFT') {
+      throw ApiError.conflict(ERROR_CODES.conflict, 'Only draft quotations can be deleted.');
+    }
+    const linkedOrder = await this.prisma.order.findUnique({
+      where: { sourceQuotationId: id },
+      select: { id: true },
+    });
+    if (linkedOrder) {
+      throw ApiError.conflict(
+        ERROR_CODES.conflict,
+        'A quotation linked to a formal order cannot be deleted.',
+      );
+    }
+    const snapshotAssets = await this.quotationSnapshotAssets(quotation.items);
+    await this.prisma.quotation.delete({ where: { id } });
+    await this.discardSnapshotAssets(snapshotAssets);
+    await this.audit.record({
+      actorId,
+      action: 'quotation.deleted',
+      entityType: 'Quotation',
+      entityId: id,
+      requestId,
+      metadata: { quotationNo: quotation.quotationNo, itemCount: quotation.items.length },
+    });
+    return { id, deleted: true as const };
   }
 
   async convertQuotation(id: string, actorId: string, requestId: string) {
@@ -1505,6 +1729,26 @@ export class QuotationOrderService {
       await this.discardSnapshotAssets(stagedAssets);
       throw error;
     }
+  }
+
+  private async quotationSnapshotAssets(
+    items: Array<{ productDataSnapshot: Prisma.JsonValue }>,
+  ): Promise<StagedSnapshotAsset[]> {
+    const assetIds = new Set<string>();
+    for (const item of items) {
+      const snapshot = item.productDataSnapshot as { imageSnapshotAssetId?: unknown } | null;
+      if (typeof snapshot?.imageSnapshotAssetId === 'string') {
+        assetIds.add(snapshot.imageSnapshotAssetId);
+      }
+    }
+    if (assetIds.size === 0) return [];
+    return this.prisma.fileAsset.findMany({
+      where: {
+        id: { in: [...assetIds] },
+        purpose: 'quotation-snapshot-image',
+      },
+      select: { id: true, storageKey: true },
+    });
   }
 
   private async discardSnapshotAssets(assets: StagedSnapshotAsset[]): Promise<void> {
