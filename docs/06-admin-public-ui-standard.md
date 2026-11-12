@@ -45,7 +45,7 @@
 
 ### 首页
 - 顶部：Logo、品类/导航、全局搜索、询盘清单入口（仅代表选品列表，不显示结算金额）。
-- 内容：Hero 广告、主要品类入口、Featured Products、New Arrivals、Pre-order Products、公司能力/CTA、FAQ/Contact 链接。
+- 内容：Hero 广告、Featured Products、New Arrivals、Pre-order Products、公司能力/CTA、FAQ/Contact 链接；不在首页展示 “Browse by product family” 品类区块。
 - 产品卡片：统一图片比例、英文名称、SKU（可配置）、标签（Featured/New/Pre-order 等）、详情链接；任何位置不显示价格或“From $...”等价格暗示。
 
 ### 产品列表

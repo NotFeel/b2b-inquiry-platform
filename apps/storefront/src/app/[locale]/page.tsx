@@ -1,7 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { CategoryArt, IconArrowRight, IconCheck, MediaFrame } from '@b2b/ui';
-import { CategoryGrid } from '../../components/category-grid';
 import { ProductCard } from '../../components/product-card';
 import { WhatsAppCta } from '../../components/whatsapp-cta';
 import { storefrontApi } from '../../lib/api';
@@ -38,10 +37,9 @@ export default async function HomePage({ params }: Props) {
   const { locale } = await params;
   const t = getTranslator(locale).t;
 
-  const [config, categories, heroAds, featured, newArrivals, preorder, contentPages, homeSections] =
+  const [config, heroAds, featured, newArrivals, preorder, contentPages, homeSections] =
     await Promise.all([
       storefrontApi.getSiteConfig(),
-      storefrontApi.getCategoryTree(locale),
       storefrontApi.getAds('home-hero', locale),
       storefrontApi.getProducts({ locale, featured: true, pageSize: 12 }),
       storefrontApi.getProducts({ locale, isNew: true, pageSize: 12 }),
@@ -102,7 +100,6 @@ export default async function HomePage({ params }: Props) {
     },
   ].filter((section) => section.products.length > 0);
 
-  const visibleCategories = categories.data.filter((category) => category.productCount > 0);
   // The factory preview only uses factory content; no About fallback remains
   // now that the public About page has been removed.
   const factoryPage = factory?.data ?? null;
@@ -194,23 +191,6 @@ export default async function HomePage({ params }: Props) {
           </div>
         </div>
       </section>
-
-      {visibleCategories.length > 0 ? (
-        <section className="section">
-          <div className="section-head">
-            <div>
-              <span className="section-kicker">{t('home.categoriesKicker')}</span>
-              <h2 className="section-title">{t('home.categoriesTitle')}</h2>
-              <p className="section-subtitle">{t('home.categoriesSubtitle')}</p>
-            </div>
-            <Link className="section-link" href={localeHref(locale, '/categories')}>
-              {t('site.nav.categories')}
-              <IconArrowRight size={15} />
-            </Link>
-          </div>
-          <CategoryGrid categories={visibleCategories} locale={locale} limit={4} />
-        </section>
-      ) : null}
 
       {sections.map((section) => (
         <section className="section" key={section.key}>
