@@ -77,9 +77,7 @@ export function SiteHeader({ config, locale, contentPages }: Props) {
               {initials}
             </span>
           )}
-          <span className="truncate" style={{ maxWidth: 220 }}>
-            {brandName}
-          </span>
+          <span className="site-brand-text truncate">{brandName}</span>
         </Link>
 
         <nav className="site-nav" aria-label={t('site.nav.products')}>
@@ -121,7 +119,7 @@ export function SiteHeader({ config, locale, contentPages }: Props) {
           <WhatsAppCta locale={locale} />
           <button
             type="button"
-            className="icon-button header-icon-button"
+            className="icon-button header-icon-button header-search-button"
             aria-label={t('site.search.label')}
             aria-expanded={searchOpen}
             aria-controls={searchId}

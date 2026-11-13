@@ -92,7 +92,7 @@ export const PUBLIC_PRODUCT_SELECT = {
 export type PublicProductRow = Prisma.ProductGetPayload<{ select: typeof PUBLIC_PRODUCT_SELECT }>;
 type PublicImageRow = PublicProductRow['images'][number];
 
-const PUBLIC_WHERE = {
+export const PUBLIC_PRODUCT_WHERE = {
   publishStatus: 'PUBLISHED' as const,
   lifecycleStatus: { not: 'DISCONTINUED' as const },
 };
@@ -115,7 +115,7 @@ export class PublicCatalogService {
 
   async list(query: PublicProductListQuery) {
     const where = {
-      ...PUBLIC_WHERE,
+      ...PUBLIC_PRODUCT_WHERE,
       // A requested category resolves to the node plus its publicly reachable
       // descendants. An unknown or hidden slug yields an empty id list - never
       // "no filter" - so a hidden branch cannot widen the query to the whole
@@ -184,7 +184,7 @@ export class PublicCatalogService {
 
   async detailBySlug(slug: string, locale = PUBLIC_LOCALE): Promise<PublicProductDetail | null> {
     const product = await this.prisma.product.findFirst({
-      where: { slug, ...PUBLIC_WHERE },
+      where: { slug, ...PUBLIC_PRODUCT_WHERE },
       select: { ...PUBLIC_PRODUCT_SELECT, categoryId: true },
     });
     if (!product) return null;
@@ -212,7 +212,7 @@ export class PublicCatalogService {
   async findPublicSkus(skus: string[]) {
     if (skus.length === 0) return [];
     return this.prisma.product.findMany({
-      where: { sku: { in: skus }, ...PUBLIC_WHERE },
+      where: { sku: { in: skus }, ...PUBLIC_PRODUCT_WHERE },
       select: { sku: true, slug: true, translations: { select: { locale: true, name: true } } },
     });
   }
@@ -250,7 +250,7 @@ export class PublicCatalogService {
     locale: string,
   ): Promise<PublicProductCard[]> {
     const products = await this.prisma.product.findMany({
-      where: { ...PUBLIC_WHERE, ...extraWhere },
+      where: { ...PUBLIC_PRODUCT_WHERE, ...extraWhere },
       orderBy: [{ sortOrder: 'asc' }, { sku: 'asc' }],
       take: Math.min(Math.max(limit, 1), 24),
       select: PUBLIC_PRODUCT_SELECT,
@@ -258,10 +258,7 @@ export class PublicCatalogService {
     return products.map((product) => this.toPublicCard(product, locale));
   }
 
-  private toPublicCard(
-    product: PublicProductRow,
-    locale: string = PUBLIC_LOCALE,
-  ): PublicProductCard {
+  toPublicCard(product: PublicProductRow, locale: string = PUBLIC_LOCALE): PublicProductCard {
     const english = product.translations.find((translation) => translation.locale === locale);
     const images = product.images.map((image) => this.toPublicImage(image));
     const tagCodes = new Set(product.tags.map((productTag) => productTag.tag.code));

@@ -109,6 +109,139 @@
     "lastEvent": "Last event",
     "quickLinks": "Quick links"
   },
+  "homepage": {
+    "title": "Homepage management",
+    "description": "Configure the final New Arrivals display total and curated Homepage collections. Storefront batches remain capped at 24 products.",
+    "refresh": "Refresh",
+    "loading": "Loading Homepage settings…",
+    "loadErrorTitle": "Could not load Homepage settings",
+    "locale": {
+      "en-US": "English",
+      "zh-CN": "Chinese"
+    },
+    "category": {
+      "enabled": "Category enabled",
+      "disabled": "Category disabled",
+      "visible": "Category visible",
+      "hidden": "Category hidden"
+    },
+    "permissions": {
+      "readRequired": "You need the Homepage view permission to open this page.",
+      "configReadOnly": "You can view the display setting but cannot change it.",
+      "categoryRequired": "The Category tree requires the category view permission.",
+      "productRequired": "Product search and selection require the product view permission.",
+      "productUpdateRequired": "You can inspect selected products but cannot change their selection or order."
+    },
+    "config": {
+      "title": "New Arrivals settings",
+      "description": "Set the final number of New Arrivals products the Homepage may show.",
+      "newArrivalsLimit": "Final display total",
+      "newArrivalsLimitHelp": "Enter any positive multiple of 6. Quick values merely fill the input; they are not a business cap.",
+      "quickValues": "Suggested display totals",
+      "enabled": "Homepage display enabled",
+      "enabledHelp": "When disabled, the public Homepage aggregate omits the configured sections.",
+      "databaseRangeHelp": "The only technical ceiling is the PostgreSQL INTEGER maximum (2,147,483,647); the value must remain a positive multiple of 6.",
+      "batchExplanation": "This is the final configured display total, not the number of products in one request. The Storefront shows at most 24 products per batch; each Load More request adds at most 24 more until the configured total or available inventory is reached.",
+      "save": "Save display setting",
+      "saved": "Homepage display setting saved",
+      "savedAt": "Server version saved {{time}}"
+    },
+    "collection": {
+      "title": "Homepage collections",
+      "description": "Each collection points to one existing Category and curates an ordered product selection for the Homepage.",
+      "create": "Add collection",
+      "createSubmit": "Create collection",
+      "edit": "Edit collection",
+      "count": "{{count}} collection(s)",
+      "empty": "No Homepage collections yet",
+      "emptyHint": "Add a collection to curate products from an existing Category.",
+      "columns": {
+        "order": "Order",
+        "title": "Title",
+        "category": "Category",
+        "products": "Selected / total",
+        "state": "State",
+        "updatedAt": "Updated"
+      },
+      "fields": {
+        "category": "Category",
+        "categoryHelp": "Choose an existing Category from the tree. Homepage management never creates Category master data.",
+        "title": "{{locale}} title",
+        "subtitle": "{{locale}} subtitle",
+        "productLimit": "Final product display total",
+        "productLimitHelp": "A positive multiple of 6 with no 24, 36 or 120 business cap. The selected product count must not exceed this total.",
+        "productLimitRange": "48, 120 and 600 are valid saved totals. Only the database integer range is technical.",
+        "enabled": "Collection enabled",
+        "enabledHelp": "Disabled collections remain configured but are omitted from the public Homepage."
+      },
+      "statusEnabled": "Enabled",
+      "statusDisabled": "Disabled",
+      "enable": "Enable",
+      "disable": "Disable",
+      "enabled": "Collection enabled",
+      "disabled": "Collection disabled",
+      "created": "Collection created",
+      "updated": "Collection settings saved",
+      "deleted": "Collection deleted",
+      "reordered": "Collection order saved",
+      "moveUp": "Move {{title}} up",
+      "moveDown": "Move {{title}} down",
+      "missingChinese": "Chinese translation missing",
+      "basicsTitle": "Collection settings",
+      "basicsDescription": "Maintain the Category, bilingual copy, enabled state and final display total.",
+      "categoryLockedHint": "Remove every selected product and save the product list before changing the Category.",
+      "categoryDisabledWarning": "This Category is disabled. The collection remains configured but is not public until the Category is enabled.",
+      "categoryHiddenWarning": "This Category is hidden. The collection remains configured but is not public until the ancestor path is visible.",
+      "loadingDetail": "Loading collection…",
+      "loadDetailError": "Could not load this collection",
+      "saveMetadata": "Save collection settings",
+      "conflictTitle": "Another session changed this collection",
+      "conflictHint": "Your draft is still here. Reload the server version only when you are ready to discard it.",
+      "reloadServer": "Reload server version",
+      "discardTitle": "Discard unsaved collection changes?",
+      "discardDescription": "The collection settings or product selection has unsaved changes. Closing now discards this draft; no Category or Product master data is changed.",
+      "discardConfirm": "Discard draft",
+      "deleteTitle": "Delete Homepage collection",
+      "deleteConfirm": "Delete the collection \"{{title}}\"? This removes only the Homepage display configuration and product selection. Category and Product master data are not deleted."
+    },
+    "products": {
+      "title": "Selected products",
+      "description": "Search products in the collection's exact Category, then save the complete ordered selection.",
+      "count": "{{count}} / {{limit}} selected",
+      "createFirst": "Create the collection first. Product selection becomes available after the server returns its ID.",
+      "unsaved": "Product selection or order has unsaved changes.",
+      "search": "Search products",
+      "searchPlaceholder": "Search by product name or SKU",
+      "searching": "Searching products…",
+      "noResults": "No matching products in this Category",
+      "noResultsHint": "Change the keyword or verify that products belong directly to this exact Category.",
+      "selectSku": "Select product {{sku}}",
+      "noImage": "No image",
+      "pageSize": "20 per page",
+      "range": "{{from}}–{{to}} of {{total}}",
+      "selectedTitle": "Selected products and order",
+      "selectedEmpty": "No products selected yet.",
+      "orderHint": "Use the arrow buttons to reorder the complete selection.",
+      "moveUp": "Move {{sku}} up",
+      "moveDown": "Move {{sku}} down",
+      "removeSku": "Remove {{sku}}",
+      "save": "Save product selection",
+      "saved": "Product selection saved"
+    },
+    "drawer": {
+      "maximize": "Maximize collection editor",
+      "restore": "Restore collection editor",
+      "resize": "Resize collection editor"
+    },
+    "validation": {
+      "categoryRequired": "Choose a Category.",
+      "categoryLocked": "Remove and save all selected products before changing the Category.",
+      "concurrentTokenMissing": "The server version token is missing. Reload the collection before saving.",
+      "productLimitBelowSelection": "The display total is below the number of selected products. Remove products first; nothing is deleted automatically.",
+      "productLimitExceeded": "The selected product count exceeds the configured display total.",
+      "productDuplicate": "That product is already selected."
+    }
+  },
   "products": {
     "title": "Products",
     "description": "Maintain product master data, specifications, packaging, tags, gallery and publish state. The internal price is used for quotations and PIs only and never appears on the storefront.",
@@ -1281,6 +1414,20 @@
       "update": "Edit categories",
       "delete": "Delete categories"
     },
+    "homepage": {
+      "read": "View Homepage settings",
+      "config": {
+        "update": "Edit Homepage display settings"
+      },
+      "collection": {
+        "create": "Create Homepage collections",
+        "update": "Edit Homepage collections",
+        "delete": "Delete Homepage collections"
+      },
+      "product": {
+        "update": "Choose and order Homepage collection products"
+      }
+    },
     "product": {
       "read": "View products",
       "create": "Create products",
@@ -1451,6 +1598,7 @@
     "dictionary": "Dictionaries",
     "setting": "Settings",
     "category": "Categories",
+    "homepage": "Homepage",
     "product": "Products",
     "quotation": "Quotation export",
     "tag": "Tags",

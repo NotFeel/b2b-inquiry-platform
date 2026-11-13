@@ -109,6 +109,139 @@
     "lastEvent": "最后事件时间",
     "quickLinks": "快捷入口"
   },
+  "homepage": {
+    "title": "首页管理",
+    "description": "配置 New Arrivals 的最终展示总数和首页 Collection。前台单次请求仍最多返回 24 个商品。",
+    "refresh": "刷新",
+    "loading": "正在加载首页设置…",
+    "loadErrorTitle": "无法加载首页设置",
+    "locale": {
+      "en-US": "英文",
+      "zh-CN": "中文"
+    },
+    "category": {
+      "enabled": "品类已启用",
+      "disabled": "品类已停用",
+      "visible": "品类可见",
+      "hidden": "品类已隐藏"
+    },
+    "permissions": {
+      "readRequired": "打开此页面需要首页查看权限。",
+      "configReadOnly": "你可以查看展示设置，但没有修改权限。",
+      "categoryRequired": "品类树需要品类查看权限。",
+      "productRequired": "商品搜索与选择需要商品查看权限。",
+      "productUpdateRequired": "你可以查看已选商品，但不能修改选择或排序。"
+    },
+    "config": {
+      "title": "New Arrivals 设置",
+      "description": "设置首页 New Arrivals 最终允许展示的商品总数。",
+      "newArrivalsLimit": "最终展示总数",
+      "newArrivalsLimitHelp": "请输入任意正的 6 的倍数。快捷值只负责填入输入框，不是业务上限。",
+      "quickValues": "建议展示总数",
+      "enabled": "启用首页展示",
+      "enabledHelp": "关闭后，公开首页聚合接口会省略这些已配置区域。",
+      "databaseRangeHelp": "唯一技术上限是 PostgreSQL INTEGER 最大值（2,147,483,647），并且必须是正的 6 的倍数。",
+      "batchExplanation": "这里配置的是最终展示总数，不是单次请求条数。前台每批最多展示 24 个商品；访客继续点击加载更多时，每批最多再加载 24 个，直到达到配置总数或商品耗尽。",
+      "save": "保存展示设置",
+      "saved": "首页展示设置已保存",
+      "savedAt": "服务端版本保存于 {{time}}"
+    },
+    "collection": {
+      "title": "首页 Collection",
+      "description": "每个 Collection 关联一个现有品类，并为首页维护有顺序的商品精选。",
+      "create": "新增 Collection",
+      "createSubmit": "创建 Collection",
+      "edit": "编辑 Collection",
+      "count": "共 {{count}} 个 Collection",
+      "empty": "尚无首页 Collection",
+      "emptyHint": "新增 Collection，从现有品类中精选首页商品。",
+      "columns": {
+        "order": "顺序",
+        "title": "标题",
+        "category": "品类",
+        "products": "已选 / 总数",
+        "state": "状态",
+        "updatedAt": "更新时间"
+      },
+      "fields": {
+        "category": "品类",
+        "categoryHelp": "请从现有品类树中选择。首页管理不会创建重复的品类主数据。",
+        "title": "{{locale}}标题",
+        "subtitle": "{{locale}}副标题",
+        "productLimit": "商品最终展示总数",
+        "productLimitHelp": "必须是正的 6 的倍数，没有 24、36 或 120 的业务上限。已选商品数量不得超过该总数。",
+        "productLimitRange": "48、120、600 都是合法保存值，仅数据库整数范围属于技术限制。",
+        "enabled": "启用 Collection",
+        "enabledHelp": "停用后配置仍保留，但不会出现在公开首页。"
+      },
+      "statusEnabled": "已启用",
+      "statusDisabled": "已停用",
+      "enable": "启用",
+      "disable": "停用",
+      "enabled": "Collection 已启用",
+      "disabled": "Collection 已停用",
+      "created": "Collection 已创建",
+      "updated": "Collection 设置已保存",
+      "deleted": "Collection 已删除",
+      "reordered": "Collection 顺序已保存",
+      "moveUp": "上移 {{title}}",
+      "moveDown": "下移 {{title}}",
+      "missingChinese": "缺少中文翻译",
+      "basicsTitle": "Collection 设置",
+      "basicsDescription": "维护品类、双语文案、启用状态和最终展示总数。",
+      "categoryLockedHint": "更换品类前，请先移除全部已选商品并保存商品列表。",
+      "categoryDisabledWarning": "该品类已停用。Collection 配置会保留，但品类启用前不会公开。",
+      "categoryHiddenWarning": "该品类已隐藏。Collection 配置会保留，但祖先路径可见前不会公开。",
+      "loadingDetail": "正在加载 Collection…",
+      "loadDetailError": "无法加载该 Collection",
+      "saveMetadata": "保存 Collection 设置",
+      "conflictTitle": "其他会话已修改该 Collection",
+      "conflictHint": "当前草稿仍保留。只有确认放弃草稿后，才重新加载服务端版本。",
+      "reloadServer": "重新加载服务端版本",
+      "discardTitle": "放弃未保存的 Collection 修改？",
+      "discardDescription": "Collection 设置或商品选择尚未保存。现在关闭会放弃当前草稿；不会删除任何品类或商品主数据。",
+      "discardConfirm": "放弃草稿",
+      "deleteTitle": "删除首页 Collection",
+      "deleteConfirm": "删除 Collection“{{title}}”？此操作只删除首页展示配置和商品选择关系，不会删除品类与商品主数据。"
+    },
+    "products": {
+      "title": "已选商品",
+      "description": "在该 Collection 的精确品类内搜索商品，并保存完整的有序选择。",
+      "count": "已选 {{count}} / {{limit}}",
+      "createFirst": "请先创建 Collection。服务端返回 ID 后才可选择商品。",
+      "unsaved": "商品选择或排序有未保存的修改。",
+      "search": "搜索商品",
+      "searchPlaceholder": "按商品名称或 SKU 搜索",
+      "searching": "正在搜索商品…",
+      "noResults": "该品类下没有匹配商品",
+      "noResultsHint": "请更换关键词，或确认商品直接属于该精确品类。",
+      "selectSku": "选择商品 {{sku}}",
+      "noImage": "无图片",
+      "pageSize": "每页 20 条",
+      "range": "{{from}}–{{to}} / 共 {{total}} 条",
+      "selectedTitle": "已选商品与顺序",
+      "selectedEmpty": "尚未选择商品。",
+      "orderHint": "使用箭头按钮调整完整选择的顺序。",
+      "moveUp": "上移 {{sku}}",
+      "moveDown": "下移 {{sku}}",
+      "removeSku": "移除 {{sku}}",
+      "save": "保存商品选择",
+      "saved": "商品选择已保存"
+    },
+    "drawer": {
+      "maximize": "最大化 Collection 编辑器",
+      "restore": "还原 Collection 编辑器",
+      "resize": "调整 Collection 编辑器大小"
+    },
+    "validation": {
+      "categoryRequired": "请选择品类。",
+      "categoryLocked": "更换品类前，请移除并保存全部已选商品。",
+      "concurrentTokenMissing": "缺少服务端版本令牌，请重新加载 Collection 后再保存。",
+      "productLimitBelowSelection": "展示总数低于已选商品数量。请先移除商品，系统不会自动删除。",
+      "productLimitExceeded": "已选商品数量超过配置的展示总数。",
+      "productDuplicate": "该商品已被选择。"
+    }
+  },
   "products": {
     "title": "商品管理",
     "description": "维护商品主数据、规格、包装、标签、图片图库与发布状态；内部价格仅用于报价与 PI，不会出现在前台。",
@@ -1282,6 +1415,20 @@
       "update": "编辑品类",
       "delete": "删除品类"
     },
+    "homepage": {
+      "read": "查看首页设置",
+      "config": {
+        "update": "修改首页展示设置"
+      },
+      "collection": {
+        "create": "新建首页 Collection",
+        "update": "编辑首页 Collection",
+        "delete": "删除首页 Collection"
+      },
+      "product": {
+        "update": "选择并排序首页 Collection 商品"
+      }
+    },
     "product": {
       "read": "查看商品",
       "create": "新建商品",
@@ -1452,6 +1599,7 @@
     "dictionary": "字典",
     "setting": "设置",
     "category": "品类",
+    "homepage": "首页",
     "product": "商品",
     "quotation": "报价单导出",
     "tag": "标签",

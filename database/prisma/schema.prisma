@@ -372,11 +372,12 @@ model Category {
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
 
-  parent       Category?             @relation("CategoryTree", fields: [parentId], references: [id], onDelete: Restrict)
-  children     Category[]            @relation("CategoryTree")
-  cover        FileAsset?            @relation("CategoryCover", fields: [coverFileAssetId], references: [id], onDelete: SetNull)
-  translations CategoryTranslation[]
-  products     Product[]
+  parent              Category?             @relation("CategoryTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children            Category[]            @relation("CategoryTree")
+  cover               FileAsset?            @relation("CategoryCover", fields: [coverFileAssetId], references: [id], onDelete: SetNull)
+  translations        CategoryTranslation[]
+  products            Product[]
+  homepageCollections HomepageCollection[]
 
   @@index([parentId, sortOrder])
   @@index([enabled, visible])
@@ -445,15 +446,16 @@ model Product {
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
 
-  category            Category?            @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  createdBy           AdminUser?           @relation("ProductCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  lifecycleStatusItem DictionaryItem?      @relation("ProductLifecycleStatusItem", fields: [lifecycleStatusItemId], references: [id], onDelete: Restrict)
-  publishStatusItem   DictionaryItem?      @relation("ProductPublishStatusItem", fields: [publishStatusItemId], references: [id], onDelete: Restrict)
-  translations        ProductTranslation[]
-  images              ProductImage[]
-  tags                ProductTag[]
-  quotationItems      QuotationItem[]
-  orderItems          OrderItem[]
+  category                Category?                   @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  createdBy               AdminUser?                  @relation("ProductCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  lifecycleStatusItem     DictionaryItem?             @relation("ProductLifecycleStatusItem", fields: [lifecycleStatusItemId], references: [id], onDelete: Restrict)
+  publishStatusItem       DictionaryItem?             @relation("ProductPublishStatusItem", fields: [publishStatusItemId], references: [id], onDelete: Restrict)
+  translations            ProductTranslation[]
+  images                  ProductImage[]
+  tags                    ProductTag[]
+  quotationItems          QuotationItem[]
+  orderItems              OrderItem[]
+  homepageCollectionItems HomepageCollectionProduct[]
 
   @@index([categoryId, publishStatus, lifecycleStatus])
   @@index([publishStatus, isFeatured, sortOrder])
@@ -788,6 +790,79 @@ model HomeSectionTranslation {
 
   @@id([sectionId, locale])
   @@map("home_section_translations")
+}
+
+/// Singleton homepage display settings (docs/45 §3.1).
+///
+/// The service resolves or creates the one active row. `newArrivalsLimit` is
+/// the final configured total, not a request page size; the public API reads it
+/// in 24-item cursor batches. The database only imposes the positive,
+/// multiple-of-six rule and the PostgreSQL INTEGER range. Do not add an
+/// artificial 36/120 business cap here or in DTOs.
+model HomepageDisplayConfig {
+  id               String   @id @default(uuid()) @db.Uuid
+  /// Fixed singleton key. The versioned migration adds a CHECK constraint that
+  /// only permits 'default'; together with this UNIQUE index and Prisma upsert,
+  /// the database permits at most one configuration row. Prisma cannot express
+  /// CHECK constraints in the schema, so the migration is authoritative.
+  configKey        String   @unique @default("default") @db.VarChar(40)
+  newArrivalsLimit Int      @default(12)
+  enabled          Boolean  @default(true)
+  createdAt        DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @db.Timestamptz(6)
+
+  @@map("homepage_display_configs")
+}
+
+/// One administrator-managed storefront collection for an existing Category.
+///
+/// Product names, images and prices are never copied into this model. The
+/// public query reuses the product projection and applies current publication
+/// and visibility rules at read time.
+model HomepageCollection {
+  id           String   @id @default(uuid()) @db.Uuid
+  categoryId   String   @unique @db.Uuid
+  enabled      Boolean  @default(true)
+  sortOrder    Int      @default(0)
+  productLimit Int      @default(6)
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(6)
+
+  category     Category                        @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  translations HomepageCollectionTranslation[]
+  products     HomepageCollectionProduct[]
+
+  @@index([sortOrder])
+  @@index([enabled, sortOrder])
+  @@map("homepage_collections")
+}
+
+model HomepageCollectionTranslation {
+  collectionId String             @db.Uuid
+  locale       String             @db.VarChar(16)
+  title        String             @db.VarChar(240)
+  subtitle     String?            @db.VarChar(500)
+  collection   HomepageCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+
+  @@id([collectionId, locale])
+  @@index([locale])
+  @@map("homepage_collection_translations")
+}
+
+model HomepageCollectionProduct {
+  id           String   @id @default(uuid()) @db.Uuid
+  collectionId String   @db.Uuid
+  productId    String   @db.Uuid
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+
+  collection HomepageCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  product    Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([collectionId, productId])
+  @@index([collectionId, sortOrder, id])
+  @@index([productId])
+  @@map("homepage_collection_products")
 }
 
 model FaqItem {

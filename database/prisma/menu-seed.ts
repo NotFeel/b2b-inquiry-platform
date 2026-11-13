@@ -81,6 +81,14 @@ export const MENU_SEED: MenuSeed[] = [
         sortOrder: 25,
         labels: { 'zh-CN': '标签管理', 'en-US': 'Tags' },
       },
+      {
+        code: 'homepage',
+        route: '/storefront/homepage',
+        icon: 'grid',
+        permissionCode: 'homepage.read',
+        sortOrder: 26,
+        labels: { 'zh-CN': '首页管理', 'en-US': 'Homepage' },
+      },
     ],
   },
   {

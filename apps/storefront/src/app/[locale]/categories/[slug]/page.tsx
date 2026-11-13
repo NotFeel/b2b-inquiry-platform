@@ -59,7 +59,7 @@ export default async function CategoryPage({ params, searchParams }: Props) {
 
   return (
     <div
-      className="container-app stack"
+      className="container-products stack"
       style={{ gap: 'var(--space-6)', marginTop: 'var(--space-5)' }}
     >
       <nav aria-label="Breadcrumb">
@@ -122,7 +122,7 @@ export default async function CategoryPage({ params, searchParams }: Props) {
           <span>{t('catalog.emptyHint')}</span>
         </div>
       ) : (
-        <div className="grid-cards">
+        <div className="product-grid">
           {products.data.map((product) => (
             <ProductCard key={product.sku} product={product} locale={locale} />
           ))}

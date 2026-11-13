@@ -905,6 +905,60 @@ export interface AnalyticsEventBreakdownRow {
   count: number;
 }
 
+/** Singleton homepage display settings managed by DOC-45. */
+export interface HomepageDisplayConfigSummary {
+  /** Final configured New Arrivals total; never a single-request page size. */
+  newArrivalsLimit: number;
+  enabled: boolean;
+  updatedAt: string;
+}
+
+export interface HomepageCollectionTranslationSummary {
+  locale: string;
+  title: string;
+  subtitle: string | null;
+}
+
+/** Selected product metadata for the Admin collection editor. */
+export interface HomepageCollectionProductSummary {
+  productId: string;
+  sku: string;
+  name: string;
+  categoryId: string | null;
+  publishStatus: PublishStatus;
+  lifecycleStatus: ProductLifecycleStatus;
+  sortOrder: number;
+  /** Admin-safe cover URL; internal storage keys are never exposed. */
+  coverImageUrl: string | null;
+  coverImageAlt: string | null;
+}
+
+/** One Homepage collection row; the complete configured total has no 36/120 cap. */
+export interface HomepageCollectionSummary {
+  id: string;
+  categoryId: string;
+  categoryCode: string;
+  categorySlug: string;
+  /** Category name resolved for the request locale, falling back to code. */
+  categoryName: string;
+  categoryEnabled: boolean;
+  categoryVisible: boolean;
+  enabled: boolean;
+  sortOrder: number;
+  /** Final configured product total, independent of Storefront batch size 24. */
+  productLimit: number;
+  /** Label resolved for the request locale. */
+  title: string;
+  subtitle: string | null;
+  translations: HomepageCollectionTranslationSummary[];
+  selectedProductCount: number;
+  updatedAt: string;
+}
+
+export interface HomepageCollectionDetail extends HomepageCollectionSummary {
+  products: HomepageCollectionProductSummary[];
+}
+
 export interface AuditLogRow {
   id: string;
   actorId: string | null;

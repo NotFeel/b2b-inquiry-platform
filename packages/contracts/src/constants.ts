@@ -20,6 +20,13 @@ export function resolveAdminLocale(value: string | null | undefined): SupportedL
 export const DEFAULT_PAGE_SIZE = 20;
 export const MAX_PAGE_SIZE = 100;
 
+/**
+ * PostgreSQL INTEGER upper bound shared by API validation and client-side
+ * forms. Keeping it here avoids importing the server-oriented validation
+ * barrel (which includes commercial-document Node modules) into browser code.
+ */
+export const DATABASE_INTEGER_MAX = 2_147_483_647;
+
 /** Max SKUs accepted in one WhatsApp batch message; configurable per site (docs/01 §5). */
 export const DEFAULT_WHATSAPP_SELECTION_LIMIT = 20;
 
@@ -147,6 +154,13 @@ export const PERMISSIONS = {
   categoryCreate: 'category.create',
   categoryUpdate: 'category.update',
   categoryDelete: 'category.delete',
+  /** Homepage display configuration (docs/45). */
+  homepageRead: 'homepage.read',
+  homepageConfigUpdate: 'homepage.config.update',
+  homepageCollectionCreate: 'homepage.collection.create',
+  homepageCollectionUpdate: 'homepage.collection.update',
+  homepageCollectionDelete: 'homepage.collection.delete',
+  homepageProductUpdate: 'homepage.product.update',
   productRead: 'product.read',
   productCreate: 'product.create',
   productUpdate: 'product.update',
@@ -321,6 +335,15 @@ export const ERROR_CODES = {
   categoryCodeConflict: 'CATEGORY_CODE_CONFLICT',
   categoryParentInvalid: 'CATEGORY_PARENT_INVALID',
   categoryConcurrentUpdate: 'CATEGORY_CONCURRENT_UPDATE',
+  homepageCollectionNotFound: 'HOMEPAGE_COLLECTION_NOT_FOUND',
+  homepageCollectionCategoryConflict: 'HOMEPAGE_COLLECTION_CATEGORY_CONFLICT',
+  homepageCollectionCategoryInvalid: 'HOMEPAGE_COLLECTION_CATEGORY_INVALID',
+  homepageCollectionCategoryChangeBlocked: 'HOMEPAGE_COLLECTION_CATEGORY_CHANGE_BLOCKED',
+  homepageCollectionConcurrentUpdate: 'HOMEPAGE_COLLECTION_CONCURRENT_UPDATE',
+  homepageCollectionProductCategoryMismatch: 'HOMEPAGE_COLLECTION_PRODUCT_CATEGORY_MISMATCH',
+  homepageCollectionProductDuplicate: 'HOMEPAGE_COLLECTION_PRODUCT_DUPLICATE',
+  homepageCollectionProductLimitExceeded: 'HOMEPAGE_COLLECTION_PRODUCT_LIMIT_EXCEEDED',
+  homepageConfigConcurrentUpdate: 'HOMEPAGE_CONFIG_CONCURRENT_UPDATE',
   tagCodeConflict: 'TAG_CODE_CONFLICT',
   tagInUse: 'TAG_IN_USE',
   tagNotFound: 'TAG_NOT_FOUND',
@@ -595,6 +618,7 @@ export const PROTECTED_MENU_CODES: readonly string[] = [
   'orders',
   'categories',
   'tags',
+  'homepage',
   'leads-analytics',
   'customers',
   'analytics',

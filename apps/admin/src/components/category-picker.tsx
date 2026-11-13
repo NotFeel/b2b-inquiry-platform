@@ -44,6 +44,10 @@ export interface CategoryPickerProps {
    * while the tree is still loading, and is never used as the submitted value.
    */
   fallbackLabel?: string | null;
+  /** Homepage collections may reference an existing disabled category and
+   * surface its warning instead of silently preventing selection. Defaults to
+   * false so product and filter flows keep their enabled-only behaviour. */
+  allowDisabledSelection?: boolean;
 }
 
 interface PopoverPosition {
@@ -75,6 +79,7 @@ export function CategoryPicker({
   errorLabel = null,
   onRetry,
   fallbackLabel = null,
+  allowDisabledSelection = false,
 }: CategoryPickerProps) {
   const { t, locale } = useSession();
   const dialogTitleId = useId();
@@ -101,7 +106,10 @@ export function CategoryPicker({
     () => categoryPickerRows(nodes, { term, expandedIds, collapsedIds }),
     [nodes, term, expandedIds, collapsedIds],
   );
-  const selectableRows = useMemo(() => rows.filter((row) => row.node.enabled), [rows]);
+  const selectableRows = useMemo(
+    () => rows.filter((row) => row.node.enabled || allowDisabledSelection),
+    [rows, allowDisabledSelection],
+  );
   const activeRow = rows.find((row) => row.node.id === activeId) ?? null;
 
   const close = useCallback((restoreFocus = true) => {
@@ -258,7 +266,7 @@ export function CategoryPicker({
       toggleExpanded(activeRow.node.id, true);
       return;
     }
-    if (event.key === 'Enter' && activeRow?.node.enabled) {
+    if (event.key === 'Enter' && activeRow && (activeRow.node.enabled || allowDisabledSelection)) {
       event.preventDefault();
       select(activeRow.node.id);
     }
@@ -406,7 +414,7 @@ export function CategoryPicker({
                       rows.map((row) => {
                         const { node, depth, hasChildren, expanded } = row;
                         const selected = value === node.id;
-                        const rowDisabled = !node.enabled;
+                        const rowDisabled = !node.enabled && !allowDisabledSelection;
                         return (
                           <div
                             key={node.id}

@@ -74,6 +74,36 @@ export interface PublicProductDetail extends PublicProductCard {
   updatedAt: string;
 }
 
+/** One cursor batch for a homepage product rail (docs/45 stage D). */
+export interface PublicHomepageProductBatch {
+  products: PublicProductCard[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
+export interface PublicHomepageNewArrivals extends PublicHomepageProductBatch {
+  /** Final configured display total, not the maximum batch size. */
+  limit: number;
+}
+
+export interface PublicHomepageCollection extends PublicHomepageProductBatch {
+  id: string;
+  categoryId: string;
+  categorySlug: string;
+  title: string;
+  subtitle: string | null;
+  /** Final configured display total, not the maximum batch size. */
+  productLimit: number;
+}
+
+/** Aggregated initial homepage payload. Each rail has its own cursor. */
+export interface PublicHomepage {
+  /** Whether administrator-configured collection sections are enabled. */
+  enabled: boolean;
+  newArrivals: PublicHomepageNewArrivals;
+  collections: PublicHomepageCollection[];
+}
+
 export interface PublicCategory {
   id: string;
   code: string;

@@ -9,7 +9,14 @@ import { NextResponse } from 'next/server';
 // route refuses every call and the ISR TTL stays the fallback.
 // `products` covers the catalogue listing and detail caches, which carry the
 // public tag badges (docs/23 §6.4).
-const ALLOWED_TAGS = new Set(['site-config', 'products', 'content', 'faq']);
+const ALLOWED_TAGS = new Set([
+  'site-config',
+  'products',
+  'categories',
+  'homepage',
+  'content',
+  'faq',
+]);
 
 export async function POST(request: Request): Promise<NextResponse> {
   const secret = process.env.REVALIDATE_SECRET;

@@ -18,6 +18,22 @@ const factoryPage = readFileSync(
   fileURLToPath(new URL('../app/[locale]/factory/page.tsx', import.meta.url)),
   'utf8',
 );
+const homePage = readFileSync(
+  fileURLToPath(new URL('../app/[locale]/page.tsx', import.meta.url)),
+  'utf8',
+);
+const homepageSection = readFileSync(
+  fileURLToPath(new URL('../components/homepage-product-section.tsx', import.meta.url)),
+  'utf8',
+);
+const productsPage = readFileSync(
+  fileURLToPath(new URL('../app/[locale]/products/page.tsx', import.meta.url)),
+  'utf8',
+);
+const categoryPage = readFileSync(
+  fileURLToPath(new URL('../app/[locale]/categories/[slug]/page.tsx', import.meta.url)),
+  'utf8',
+);
 
 describe('product card layout contract', () => {
   it('uses a contain-fit square image without clipping the card shell', () => {
@@ -43,17 +59,53 @@ describe('product card layout contract', () => {
     );
   });
 
-  it('uses two columns on phones and falls back to one only on extreme narrow screens', () => {
+  it('uses the required wide product container', () => {
     expect(styles).toMatch(
-      /@media \(max-width: 767px\)[\s\S]*?\.product-grid,[\s\S]*?\.grid-cards\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/,
+      /\.container-products\s*\{[^}]*width:\s*96%[^}]*max-width:\s*1800px[^}]*margin-inline:\s*auto/s,
     );
+  });
+
+  it('uses six, four, three and two product columns at the required breakpoints', () => {
+    expect(styles).toMatch(
+      /\.product-grid,\s*\.product-rail\s*\{[^}]*grid-template-columns:\s*repeat\(6,\s*minmax\(0,\s*1fr\)\)/s,
+    );
+    expect(styles).toMatch(
+      /@media \(max-width: 1199px\)\s*\{[\s\S]*?\.product-grid,[\s\S]*?\.product-rail\s*\{[^}]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/s,
+    );
+    expect(styles).toMatch(
+      /@media \(max-width: 1023px\)\s*\{[\s\S]*?\.product-grid,[\s\S]*?\.product-rail\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/s,
+    );
+    expect(styles).toMatch(
+      /@media \(max-width: 767px\)\s*\{[\s\S]*?\.product-grid,[\s\S]*?\.product-rail,[\s\S]*?\.grid-cards\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/s,
+    );
+  });
+
+  it('never collapses product grids to one column on narrow phones', () => {
     expect(styles).toMatch(
       /@media \(max-width: 767px\)[\s\S]*?\.category-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/,
     );
-    expect(styles).toMatch(
-      /@media \(max-width: 359px\)[\s\S]*?\.product-grid,[\s\S]*?\.grid-cards,[\s\S]*?\.category-grid,[\s\S]*?\.factory-process-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/,
-    );
+    const extremeNarrow = styles.slice(styles.indexOf('@media (max-width: 359px)'));
+    expect(extremeNarrow).not.toContain('.product-grid');
+    expect(extremeNarrow).not.toContain('.product-rail');
     expect(styles).not.toMatch(/@media \(max-width: 420px\)/);
+  });
+
+  it('connects every storefront product listing to the wide product container', () => {
+    expect(homePage).toContain('<HomepageProductSection');
+    expect(homePage).toContain('storefrontApi');
+    expect(homePage).toContain('.getHomepage(locale)');
+    expect(homePage).not.toContain('isPreOrder');
+    expect(homePage).not.toContain('featured: true');
+    expect(homePage).not.toContain('category-grid');
+    expect(homePage).not.toContain('homeSections.data.map');
+    expect(homePage).toContain('key={`new-arrivals:${locale}`}');
+    expect(homePage).toContain('key={`${collection.id}:${locale}`}');
+    expect(homepageSection).toContain('<ProductCard');
+    expect(homepageSection).toContain('className="product-grid"');
+    expect(homepageSection).toContain('loadMoreHomepageSection');
+    expect(productsPage).toContain('className="container-products"');
+    expect(categoryPage).toContain('className="container-products stack"');
+    expect(categoryPage).toContain('className="product-grid"');
   });
 
   it('applies the compact responsive card treatment to quality credentials', () => {

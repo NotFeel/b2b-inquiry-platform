@@ -13,6 +13,7 @@ import { CryptoService } from '../src/common/services/crypto.service';
 import { StorageService } from '../src/common/services/storage.service';
 import { DictionaryService } from '../src/modules/dictionary/dictionary.service';
 import { FilesService } from '../src/modules/files/files.service';
+import { ProductImagesService } from '../src/modules/products/product-images.service';
 import { ProductBulkImportService } from '../src/modules/products/product-bulk-import.service';
 
 loadDotenv({ path: resolve(process.cwd(), '../../.env') });
@@ -159,6 +160,7 @@ async function main(): Promise<void> {
   const crypto = new CryptoService(env);
   const dictionary = new DictionaryService(prisma as never, logger);
   const files = new FilesService(env, prisma as never, storage, crypto, audit, logger);
+  const images = new ProductImagesService(env, prisma as never, storage, audit, logger);
   const importer = new ProductBulkImportService(
     env,
     prisma as never,
@@ -166,6 +168,7 @@ async function main(): Promise<void> {
     files,
     storage,
     audit,
+    images,
   );
 
   console.log('Bulk import acceptance: cleaning isolated fixtures');

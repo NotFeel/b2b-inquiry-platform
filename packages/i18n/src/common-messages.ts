@@ -28,6 +28,24 @@ export const commonMessages: Record<'en-US' | 'zh-CN', Messages> = {
       CATEGORY_PARENT_INVALID: 'The selected parent category is not available.',
       CATEGORY_CONCURRENT_UPDATE:
         'This category was changed by someone else. Reload and try again.',
+      HOMEPAGE_COLLECTION_NOT_FOUND:
+        'The Homepage collection was not found. Refresh the list and try again.',
+      HOMEPAGE_COLLECTION_CATEGORY_CONFLICT:
+        'Another Homepage collection already uses this Category.',
+      HOMEPAGE_COLLECTION_CATEGORY_INVALID:
+        'The selected Category is unavailable. Choose an existing enabled Category from the tree.',
+      HOMEPAGE_COLLECTION_CATEGORY_CHANGE_BLOCKED:
+        'Remove all selected products and save before changing the Category.',
+      HOMEPAGE_COLLECTION_CONCURRENT_UPDATE:
+        'This Homepage collection was changed by another session. Keep your draft and reload the server version.',
+      HOMEPAGE_COLLECTION_PRODUCT_CATEGORY_MISMATCH:
+        'A selected product does not belong to this collection\'s exact Category.',
+      HOMEPAGE_COLLECTION_PRODUCT_DUPLICATE:
+        'The same product cannot be selected twice.',
+      HOMEPAGE_COLLECTION_PRODUCT_LIMIT_EXCEEDED:
+        'The selected products exceed the configured display total. Remove products or raise the total.',
+      HOMEPAGE_CONFIG_CONCURRENT_UPDATE:
+        'The Homepage display setting was changed by another session. Keep your input and reload the server version.',
       TAG_CODE_CONFLICT: 'Another tag already uses this code.',
       TAG_IN_USE:
         'This tag is still attached to products. Disable it or detach it in product management first.',
@@ -304,6 +322,24 @@ export const commonMessages: Record<'en-US' | 'zh-CN', Messages> = {
       username: { invalid: 'Use lowercase letters, numbers, dot, dash or underscore.' },
       currency: { invalid: 'Use a three-letter ISO currency code, for example USD.' },
       piNo: { invalid: 'Use letters, numbers, dot, dash, slash or underscore.' },
+      homepage: {
+        limit: {
+          required: 'Enter a display total.',
+          integer: 'Enter a whole number without decimals.',
+          positive: 'The display total must be greater than zero.',
+          databaseRange: 'The display total exceeds the database integer range.',
+          multipleOfSix: 'The display total must be a positive multiple of 6.',
+        },
+        translation: {
+          localeDuplicate: 'Each language may appear only once.',
+          englishRequired: 'An English title is required.',
+          titleRequired: 'A subtitle requires a title for the same language.',
+          titleTooLong: 'The title must be 240 characters or fewer.',
+          subtitleTooLong: 'The subtitle must be 500 characters or fewer.',
+        },
+        product: { duplicate: 'The same product cannot appear more than once.' },
+        cursor: { invalid: 'The page cursor is invalid or expired. Reload the page.' },
+      },
     },
     common: {
       loading: 'Loading…',
@@ -400,6 +436,21 @@ export const commonMessages: Record<'en-US' | 'zh-CN', Messages> = {
       CATEGORY_CODE_CONFLICT: '该品类编码已被其他品类使用。',
       CATEGORY_PARENT_INVALID: '选择的上级品类不可用。',
       CATEGORY_CONCURRENT_UPDATE: '该品类已被其他人修改，请刷新后重试。',
+      HOMEPAGE_COLLECTION_NOT_FOUND: '未找到该首页 Collection，请刷新列表后重试。',
+      HOMEPAGE_COLLECTION_CATEGORY_CONFLICT: '另一个首页 Collection 已经使用该品类。',
+      HOMEPAGE_COLLECTION_CATEGORY_INVALID:
+        '所选品类不可用，请从现有品类树中选择已启用的品类。',
+      HOMEPAGE_COLLECTION_CATEGORY_CHANGE_BLOCKED:
+        '请先移除全部已选商品并保存，再更换品类。',
+      HOMEPAGE_COLLECTION_CONCURRENT_UPDATE:
+        '该首页 Collection 已被其他会话修改。请保留草稿并重新加载服务端版本。',
+      HOMEPAGE_COLLECTION_PRODUCT_CATEGORY_MISMATCH:
+        '所选商品不属于该 Collection 的精确品类。',
+      HOMEPAGE_COLLECTION_PRODUCT_DUPLICATE: '同一商品不能重复选择。',
+      HOMEPAGE_COLLECTION_PRODUCT_LIMIT_EXCEEDED:
+        '已选商品超过配置的展示总数，请移除商品或提高展示总数。',
+      HOMEPAGE_CONFIG_CONCURRENT_UPDATE:
+        '首页展示设置已被其他会话修改。请保留输入并重新加载服务端版本。',
       TAG_CODE_CONFLICT: '该标签编码已被其他标签使用。',
       TAG_IN_USE: '该标签仍被商品使用：请先停用标签，或在商品管理中解除关联后再删除。',
       TAG_NOT_FOUND: '未找到该标签。',
@@ -617,6 +668,24 @@ export const commonMessages: Record<'en-US' | 'zh-CN', Messages> = {
       username: { invalid: '请使用小写字母、数字、点、连字符或下划线。' },
       currency: { invalid: '请使用三位 ISO 币种代码，例如 USD。' },
       piNo: { invalid: '请使用字母、数字、点、连字符、斜杠或下划线。' },
+      homepage: {
+        limit: {
+          required: '请输入展示总数。',
+          integer: '请输入整数，不能包含小数。',
+          positive: '展示总数必须大于 0。',
+          databaseRange: '展示总数超出数据库整数范围。',
+          multipleOfSix: '展示总数必须是 6 的正整数倍数。',
+        },
+        translation: {
+          localeDuplicate: '每种语言只能出现一次。',
+          englishRequired: '英文标题为必填项。',
+          titleRequired: '填写副标题时必须同时填写同语言标题。',
+          titleTooLong: '标题不能超过 240 个字符。',
+          subtitleTooLong: '副标题不能超过 500 个字符。',
+        },
+        product: { duplicate: '同一商品不能重复出现。' },
+        cursor: { invalid: '分页游标无效或已过期，请刷新页面。' },
+      },
     },
     common: {
       loading: '加载中…',

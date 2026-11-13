@@ -16,6 +16,7 @@ import { DictionaryModule } from './modules/dictionary/dictionary.module';
 import { ExcelPdfModule } from './modules/excel-pdf/excel-pdf.module';
 import { FilesModule } from './modules/files/files.module';
 import { HealthModule } from './modules/health/health.module';
+import { HomepageManagementModule } from './modules/homepage-management/homepage-management.module';
 import { InquiryModule } from './modules/inquiry/inquiry.module';
 import { JobsModule } from './modules/jobs/jobs.module';
 import { LeadsModule } from './modules/leads/leads.module';
@@ -44,6 +45,7 @@ import { UsersModule } from './modules/users/users.module';
     SettingsModule,
     SiteModule,
     CategoriesModule,
+    HomepageManagementModule,
     ProductsModule,
     QuotationExportModule,
     CommercialDocumentsModule,

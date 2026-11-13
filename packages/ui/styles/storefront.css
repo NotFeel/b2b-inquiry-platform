@@ -55,12 +55,18 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  min-width: 0;
   font-family: var(--sf-font-display);
   font-weight: 800;
   font-size: var(--text-lg);
   color: var(--sf-color-ink);
   white-space: nowrap;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+}
+
+.site-brand-text {
+  min-width: 0;
+  max-width: 220px;
 }
 
 .site-brand:hover {
@@ -316,6 +322,88 @@
   border-color: var(--sf-color-pink);
   color: var(--sf-color-ink);
   text-decoration: none;
+}
+
+/* Product surfaces are intentionally wider than editorial content. */
+.container-products {
+  width: 96%;
+  max-width: 1800px;
+  margin-inline: auto;
+}
+
+.homepage-section-head {
+  max-width: 74ch;
+  margin: 0 auto var(--space-6);
+  text-align: center;
+}
+
+.homepage-section-title {
+  font-size: clamp(28px, 3.4vw, 44px);
+  font-weight: 900;
+  letter-spacing: -0.035em;
+  color: var(--sf-color-ink);
+}
+
+.homepage-section-subtitle {
+  max-width: 62ch;
+  margin: var(--space-2) auto 0;
+  color: var(--sf-color-muted);
+}
+
+.homepage-section-ornament {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  color: var(--sf-color-pink);
+}
+
+.homepage-section-ornament::before,
+.homepage-section-ornament::after {
+  width: 42px;
+  height: 1px;
+  background: currentColor;
+  content: '';
+  opacity: 0.65;
+}
+
+.homepage-section[data-theme='mint'] .homepage-section-ornament {
+  color: var(--sf-color-mint);
+}
+
+.homepage-section[data-theme='yellow'] .homepage-section-ornament {
+  color: var(--sf-color-yellow);
+}
+
+.homepage-section[data-theme='lavender'] .homepage-section-ornament {
+  color: var(--sf-color-lavender);
+}
+
+.homepage-section-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+  text-align: center;
+}
+
+.homepage-load-more,
+.homepage-view-all {
+  min-width: min(100%, 280px);
+  justify-content: center;
+}
+
+.homepage-section-error {
+  margin: 0;
+  color: var(--color-danger);
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+
+.homepage-data-error {
+  text-align: center;
 }
 
 /* ----------------------------------------------------------------- hero */
@@ -853,7 +941,7 @@
 .product-grid,
 .product-rail {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: var(--space-4);
 }
 
@@ -1251,6 +1339,20 @@
 
 .trust-tile:nth-child(4) {
   background: var(--sf-color-mint-soft);
+}
+
+.trust-tile-media {
+  padding: var(--space-2);
+}
+
+.trust-tile-media .media-frame {
+  width: 100%;
+  overflow: hidden;
+  border-radius: 16px;
+}
+
+.trust-tile-media > span {
+  padding-inline: var(--space-2);
 }
 
 .final-cta {
@@ -1802,6 +1904,18 @@
 
 /* --------------------------------------------------------- responsive */
 
+@media (max-width: 1200px) {
+  .header-whatsapp span {
+    display: none;
+  }
+
+  .header-whatsapp {
+    width: 40px;
+    padding: 0;
+    justify-content: center;
+  }
+}
+
 @media (max-width: 1180px) {
   .site-nav {
     gap: 0;
@@ -1816,40 +1930,18 @@
     min-width: 150px;
   }
 
-  .header-whatsapp span {
-    display: none;
-  }
-
-  .header-whatsapp {
-    width: 40px;
-    padding: 0;
-    justify-content: center;
-  }
-
-  .product-grid,
-  .product-rail {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
   .category-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
-@media (max-width: 1023px) {
-  .site-nav,
+@media (max-width: 1100px) {
   .site-search {
     display: none;
   }
 
-  .header-icon-button {
+  .header-search-button {
     display: inline-flex;
-  }
-
-  .header-whatsapp {
-    display: inline-flex;
-    width: 40px;
-    padding: 0;
   }
 
   .site-search-panel {
@@ -1863,6 +1955,34 @@
     flex: 1 1 auto;
     min-width: 0;
     max-width: none;
+  }
+}
+
+@media (max-width: 1199px) {
+  .product-grid,
+  .product-rail {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1023px) {
+  .product-grid,
+  .product-rail {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .site-nav {
+    display: none;
+  }
+
+  .header-icon-button {
+    display: inline-flex;
+  }
+
+  .header-whatsapp {
+    display: inline-flex;
+    width: 40px;
+    padding: 0;
   }
 
   .catalog-layout {
@@ -2113,9 +2233,13 @@
   }
 }
 
+@media (max-width: 480px) {
+  .site-brand-text {
+    display: none;
+  }
+}
+
 @media (max-width: 359px) {
-  .product-grid,
-  .product-rail,
   .grid-cards,
   .category-grid,
   .factory-process-grid {

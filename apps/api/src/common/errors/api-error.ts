@@ -56,6 +56,15 @@ const DEFAULT_STATUS: Record<string, number> = {
   [ERROR_CODES.categoryHasChildren]: HttpStatus.CONFLICT,
   [ERROR_CODES.categoryHasProducts]: HttpStatus.CONFLICT,
   [ERROR_CODES.categoryConcurrentUpdate]: HttpStatus.CONFLICT,
+  [ERROR_CODES.homepageCollectionNotFound]: HttpStatus.NOT_FOUND,
+  [ERROR_CODES.homepageCollectionCategoryConflict]: HttpStatus.CONFLICT,
+  [ERROR_CODES.homepageCollectionCategoryInvalid]: HttpStatus.BAD_REQUEST,
+  [ERROR_CODES.homepageCollectionCategoryChangeBlocked]: HttpStatus.CONFLICT,
+  [ERROR_CODES.homepageCollectionConcurrentUpdate]: HttpStatus.CONFLICT,
+  [ERROR_CODES.homepageCollectionProductCategoryMismatch]: HttpStatus.UNPROCESSABLE_ENTITY,
+  [ERROR_CODES.homepageCollectionProductDuplicate]: HttpStatus.CONFLICT,
+  [ERROR_CODES.homepageCollectionProductLimitExceeded]: HttpStatus.UNPROCESSABLE_ENTITY,
+  [ERROR_CODES.homepageConfigConcurrentUpdate]: HttpStatus.CONFLICT,
   // Products and the image gallery (docs/24 §6.3). Every new business code
   // belongs in this table: an unmapped code would silently surface as HTTP 400
   // and hide the difference between "invalid input" and "conflict"/"not found".

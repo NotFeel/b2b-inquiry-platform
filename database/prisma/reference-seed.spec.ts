@@ -50,6 +50,29 @@ describe('reference authorization and navigation seed', () => {
     }
   });
 
+  it('defines separate homepage permissions and grants writes only to catalogue maintainers', () => {
+    const homePermissions = REFERENCE_PERMISSIONS.map((permission) => permission.code).filter(
+      (code) => code.startsWith('homepage.'),
+    );
+    expect(homePermissions).toEqual([
+      'homepage.read',
+      'homepage.config.update',
+      'homepage.collection.create',
+      'homepage.collection.update',
+      'homepage.collection.delete',
+      'homepage.product.update',
+    ]);
+
+    const catalogue = REFERENCE_ROLES.find((role) => role.code === 'catalog_manager');
+    expect(catalogue?.permissions).toEqual(expect.arrayContaining(homePermissions));
+
+    const viewer = REFERENCE_ROLES.find((role) => role.code === 'viewer');
+    expect(viewer?.permissions).toContain('homepage.read');
+    for (const permission of homePermissions.filter((code) => code !== 'homepage.read')) {
+      expect(viewer?.permissions).not.toContain(permission);
+    }
+  });
+
   it('acquires the transaction advisory lock before touching reference tables', async () => {
     const sentinel = new Error('permission query reached');
     const tx = {

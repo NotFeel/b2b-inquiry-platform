@@ -41,6 +41,22 @@ export const publicLocaleQuerySchema = z.object({
   locale: z.enum(['en-US', 'zh-CN']).default('en-US'),
 });
 
+/**
+ * Homepage rail reads never accept a caller-controlled page size (docs/45 §4.4).
+ * The cursor is opaque and strict: malformed values fail before a database read.
+ */
+export const publicHomepageQuerySchema = publicLocaleQuerySchema.extend({
+  cursor: z
+    .string()
+    .trim()
+    .min(1)
+    .max(1024)
+    .regex(/^[A-Za-z0-9_-]+$/, 'validation.homepage.cursor.invalid')
+    .optional(),
+});
+
+export type PublicHomepageQuery = z.infer<typeof publicHomepageQuerySchema>;
+
 export const publicAdQuerySchema = z.object({
   placement: z.string().trim().min(1).max(100),
   locale: z.enum(['en-US', 'zh-CN']).default('en-US'),
@@ -81,9 +97,7 @@ export const inquiryIntentSchema = z.object({
    * selection list so older clients remain compatible; quantities only enrich
    * the prefilled WhatsApp message.
    */
-  quantities: z
-    .record(z.string().trim().max(64), z.number().int().min(1).max(999_999))
-    .optional(),
+  quantities: z.record(z.string().trim().max(64), z.number().int().min(1).max(999_999)).optional(),
   sourcePath: z.string().trim().max(1000).optional(),
   /** Absolute public product/catalogue URL shown to the sales team. */
   sourceUrl: z

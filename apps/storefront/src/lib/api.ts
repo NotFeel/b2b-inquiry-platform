@@ -6,6 +6,9 @@ import type {
   PublicContentPageRef,
   PublicFactoryContent,
   PublicFaqItem,
+  PublicHomepage,
+  PublicHomepageCollection,
+  PublicHomepageNewArrivals,
   PublicHomeSection,
   PublicInquiryIntentResult,
   PublicProductCard,
@@ -14,6 +17,7 @@ import type {
   PublicSiteConfig,
   PublicTagFilter,
 } from '@b2b/contracts';
+import { HOMEPAGE_CACHE_TAGS } from './homepage-cache';
 
 // Server-side API access.
 //
@@ -130,6 +134,34 @@ export const storefrontApi = {
       },
       revalidate: 60,
       tags: ['products'],
+    });
+  },
+  getHomepage(locale: string): Promise<{ data: PublicHomepage }> {
+    return apiGet('/public/homepage', {
+      query: { locale },
+      revalidate: 60,
+      tags: [...HOMEPAGE_CACHE_TAGS],
+    });
+  },
+  getHomepageNewArrivals(
+    locale: string,
+    cursor?: string,
+  ): Promise<{ data: PublicHomepageNewArrivals }> {
+    return apiGet('/public/homepage/new-arrivals', {
+      query: { locale, cursor },
+      revalidate: 60,
+      tags: [...HOMEPAGE_CACHE_TAGS],
+    });
+  },
+  getHomepageCollectionProducts(
+    id: string,
+    locale: string,
+    cursor?: string,
+  ): Promise<{ data: PublicHomepageCollection }> {
+    return apiGet(`/public/homepage/collections/${encodeURIComponent(id)}/products`, {
+      query: { locale, cursor },
+      revalidate: 60,
+      tags: [...HOMEPAGE_CACHE_TAGS],
     });
   },
   getProduct(slug: string, locale: string): Promise<{ data: PublicProductDetail }> {

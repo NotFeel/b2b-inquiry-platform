@@ -181,7 +181,7 @@ export default async function ProductsPage({ params, searchParams }: Props) {
   );
 
   return (
-    <div className="container-app" style={{ marginTop: 'var(--space-5)' }}>
+    <div className="container-products" style={{ marginTop: 'var(--space-5)' }}>
       <nav aria-label="Breadcrumb">
         <ol className="breadcrumb">
           <li>

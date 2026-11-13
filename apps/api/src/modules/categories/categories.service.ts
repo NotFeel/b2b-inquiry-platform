@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { DEFAULT_ADMIN_LOCALE, ERROR_CODES, PUBLIC_LOCALE } from '@b2b/contracts';
 import type {
   CategoryDetail,
@@ -20,6 +20,7 @@ import { JsonLogger } from '../../common/logger.service';
 import { AuditService } from '../../common/services/audit.service';
 import { StorageService } from '../../common/services/storage.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { APP_ENV, type AppEnv } from '../../config/config.module';
 import {
   MAX_CATEGORY_DEPTH,
   assertCategoryNotModified,
@@ -66,6 +67,7 @@ type DirectCounts = Map<string, number>;
 @Injectable()
 export class CategoriesService {
   constructor(
+    @Inject(APP_ENV) private readonly env: AppEnv,
     private readonly prisma: PrismaService,
     private readonly logger: JsonLogger,
     private readonly audit: AuditService,
@@ -288,6 +290,7 @@ export class CategoriesService {
         locales: input.translations.map((translation) => translation.locale),
       },
     });
+    await this.revalidatePublicCategories('category_created');
     return { id: category.id };
   }
 
@@ -352,6 +355,7 @@ export class CategoriesService {
       // must not copy free text into the audit row (docs/22 §8.2).
       metadata: this.diffMetadata(row, input),
     });
+    await this.revalidatePublicCategories('category_updated');
     return { id };
   }
 
@@ -384,6 +388,7 @@ export class CategoriesService {
         ...(sortOrder !== undefined ? { sortOrder } : {}),
       },
     });
+    await this.revalidatePublicCategories('category_moved');
     return { id };
   }
 
@@ -413,6 +418,7 @@ export class CategoriesService {
       requestId,
       metadata: { parentId, orderedIds },
     });
+    await this.revalidatePublicCategories('categories_reordered');
     return { reordered: orderedIds.length };
   }
 
@@ -448,6 +454,7 @@ export class CategoriesService {
       requestId,
       metadata: { code: row.code, slug: row.slug, parentId: row.parentId },
     });
+    await this.revalidatePublicCategories('category_deleted');
     return { deleted: true };
   }
 
@@ -542,6 +549,23 @@ export class CategoriesService {
     if (options.includeDescendants === false) return [row.id];
     return [row.id, ...collectDescendantIds(rows, row.id)].filter((id) =>
       isPubliclyReachable(rows, id),
+    );
+  }
+
+  /**
+   * Batch-check exact category ids against the same public ancestor rule used
+   * by product listing. Homepage collections need the node itself, not its
+   * descendants, and loading the category refs once avoids one tree scan per
+   * section (docs/45 §4.3, §10).
+   */
+  async filterPublicCategoryIds(categoryIds: string[]): Promise<Set<string>> {
+    if (categoryIds.length === 0) return new Set();
+    const wanted = new Set(categoryIds);
+    const rows = await this.loadRefs();
+    return new Set(
+      rows
+        .filter((row) => wanted.has(row.id) && isPubliclyReachable(rows, row.id))
+        .map((row) => row.id),
     );
   }
 
@@ -834,5 +858,31 @@ export class CategoriesService {
       { count: orphans.length, categoryIds: orphans },
       'CategoriesService',
     );
+  }
+
+  /** Invalidates public category trees and homepage sections after a committed write. */
+  private async revalidatePublicCategories(reason: string): Promise<void> {
+    const secret = this.env.REVALIDATE_SECRET;
+    if (!secret) {
+      this.logger.info('categories.revalidate_skipped', {
+        reason,
+        cause: 'REVALIDATE_SECRET is not configured',
+      });
+      return;
+    }
+    try {
+      const response = await fetch(`${this.env.APP_BASE_URL}/api/revalidate?tag=categories`, {
+        method: 'POST',
+        headers: { 'x-revalidate-secret': secret },
+      });
+      if (!response.ok) {
+        this.logger.warn('categories.revalidate_failed', { reason, status: response.status });
+      }
+    } catch (error) {
+      this.logger.warn('categories.revalidate_failed', {
+        reason,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }

@@ -26,6 +26,7 @@ import { StorageService } from '../../common/services/storage.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { DictionaryService } from '../dictionary/dictionary.service';
 import { FilesService } from '../files/files.service';
+import { ProductImagesService } from './product-images.service';
 
 const PRODUCT_STATUS_MAP = {
   draft: 'DRAFT',
@@ -65,6 +66,7 @@ export class ProductBulkImportService {
     private readonly files: FilesService,
     private readonly storage: StorageService,
     private readonly audit: AuditService,
+    private readonly images: ProductImagesService,
   ) {}
 
   async template(): Promise<Buffer> {
@@ -241,8 +243,9 @@ export class ProductBulkImportService {
     // verifies ownership/metadata; it never decodes Base64 or writes bytes to PG.
     const staged = await this.resolveStagedAssets(payload, actor.id);
     let createdCount = 0;
+    let completedAt: Date;
     try {
-      const completedAt = await this.prisma.$transaction(async (transaction) => {
+      completedAt = await this.prisma.$transaction(async (transaction) => {
         const consumed = await transaction.productImportValidation.updateMany({
           where: {
             id: validation.id,
@@ -363,11 +366,6 @@ export class ProductBulkImportService {
         });
         return completedAt;
       });
-      return {
-        batchId: validation.id,
-        createdCount,
-        completedAt: completedAt.toISOString(),
-      };
     } catch (error) {
       await this.cleanupStaged(staged, actor.id, requestId);
       await this.audit.record({
@@ -389,6 +387,13 @@ export class ProductBulkImportService {
         { status: 409 },
       );
     }
+    const result = {
+      batchId: validation.id,
+      createdCount,
+      completedAt: completedAt.toISOString(),
+    };
+    await this.images.revalidatePublicCatalogue('product_import_committed');
+    return result;
   }
 
   private async resolveStagedAssets(
