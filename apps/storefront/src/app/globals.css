@@ -1,4 +1,4 @@
-@import '../../../../packages/ui/styles/index.css';
+@import '../../../../packages/ui/styles/storefront-entry.css';
 
 /* Storefront-specific adjustments on top of the shared design tokens. */
 .site-main {

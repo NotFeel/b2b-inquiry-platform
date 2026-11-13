@@ -1,0 +1,7 @@
+/* Storefront-only entry: keeps docs-46 theme work out of the admin bundle.
+   Admin continues to import index.css, which still includes storefront.css for
+   backward compatibility. */
+@import './tokens.css';
+@import './base.css';
+@import './components.css';
+@import './storefront.css';
