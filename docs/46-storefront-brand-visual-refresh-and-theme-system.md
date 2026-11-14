@@ -50,6 +50,19 @@
 
 ---
 
+
+
+### 0.4 首页视觉架构冻结决策（2026-11-14，优先级高于旧版 Hero 草案）
+
+用户已明确确认以下基础页面方向。本节与第 15 节是后续 AI 实施的权威依据；若本文旧章节仍出现 Mixed 四图拼贴、左右分栏 Hero 或非固定导航等旧描述，以本节和第 15 节为准。
+
+- **Hero 主视觉：A — 品牌 Campaign 大图。** 使用一张具有完整摄影构图的宽幅品牌主视觉作为首屏核心，不再使用当前四张独立商品小图拼贴作为 Hero 主体。
+- **导航：固定白色 Sticky Header。** 页面滚动时始终固定在视口顶部；初始和滚动状态均保持高可读性，不采用透明叠加在 Hero 上的导航方案。
+- **桌面 Hero 高度：75–85vh。** 采用沉浸式大图首屏，具体高度以视口和内容可读性为准，不得遮挡标题、CTA 或导致下一内容区产生异常空白。
+- **移动端采用独立构图。** 不得简单把桌面横图强行裁切成手机图；优先使用同一 Campaign 的移动端竖版/近方形裁切素材，或通过现有图片能力提供 art-directed source。
+- **阶段门禁：** 阶段 0–3 已按此前阶段报告完成；本次仅冻结基础页面视觉架构并更新实施文档。**阶段 4（移动端/无障碍/性能专项）及阶段 5–6（主题系统）均不得因此自动启动。** 先按第 15 节完成首页架构设计规格和素材准备；视觉架构确认后，再由用户明确授权进入后续阶段。
+- 本次决策只约束视觉和页面布局，不授权新增数据库模型、公开 API、后台配置能力、第三方依赖或生产部署。
+
 ## 1. 仓库现状审查基线（实施前再次核对）
 
 本任务书制定时已读取 main 分支下列文件。AI 开发时必须重新读取最新版本，不能把本文件当作代码现状的永久替代：
@@ -182,20 +195,72 @@
 - 不增加全品类导航 mega-menu，除非另行评审。
 - 验证所有 Storefront 路由，不仅首页。
 
-### 3.2 Hero：Mixed Product Editorial
+### 3.2 Hero：Full-width Brand Campaign Editorial（冻结方向）
 
-保留 `page.tsx` 当前 Hero 数据源和行为：Hero Ads 优先提供内容，图片继续从 PublicHomepage 商品 DTO 取得；没有图片时保留现有安全 fallback。
+**本节已由 0.4 / 15 节的新决策更新。** 旧版 3–4 张商品图 Mixed collage 不再作为 Hero 主体方案；商品图片仍可在后续 New Arrivals / Collections 中以真实商品卡片呈现。
 
-视觉方向：
-- 左侧/上方：一个短 eyebrow（如 “TOY STUDIO · WHOLESALE”）、主标题、简短品类描述、两个 CTA。
-- 推荐主标题方向：`A Little More Joy. A Lot More Squishy.` 或 `Discover Your Next Favorite Toy.`。最终文案应通过现有 i18n/广告内容管理，不把营销文案硬编码在组件内。
-- 副标题控制为一至两行，优先说明核心商品类别：Squishy Toys · Building Blocks · Creative Toys。
-- CTA 继续使用 Browse Products 和 WhatsApp Inquiry 现有行为；不得虚构链接。
-- 视觉区使用 3–4 张真实产品图片的 Mixed collage，布局有大小变化和错落感，但商品主体完整。
-- 不添加固定写死的 SKU、商品名、统计数字或不存在的客户背书。
-- Hero 图片沿用 MediaFrame、srcSet、alt、尺寸预留和加载优先级；只让真正首屏关键图片 eager，其余 lazy。
-- 桌面端文字与图片可采用 45/55 或 42/58 的视觉比例；移动端压缩文案后展示图片，确保首屏仍有清晰 CTA。
-- Hero 不应依赖节日大背景图才能成立；节日主题只叠加轻量装饰和可选 campaign banner。
+#### 3.2.1 目标体验
+
+- 进入首页首先看到一张有品牌识别度、摄影质感和视觉冲击力的完整 Campaign 大图。
+- Hero 是品牌首页入口，不是商品列表缩略图墙，也不是零售促销结账 Banner。
+- 画面传达 WuXuan 是面向品牌商、零售商、进口商和分销商的潮流玩具制造商，突出 Squishy Toys、Building Blocks、Creative Toys 与 OEM/ODM 能力。
+- 参考 Satorisan 的大幅沉浸式图片、简洁叠加文案和页面浏览节奏；只借鉴布局与体验原则，不复制其 Logo、字体、图片、文案、图形、代码或独特品牌资产。
+
+#### 3.2.2 桌面端构图
+
+- Hero 宽度：使用 Storefront 主内容容器/视口全宽策略，需与当前 Header 和页面最大宽度体系协调；优先呈现宽幅 Campaign 画面。
+- 高度：**75–85vh**；建议以 `clamp()` 约束极端屏幕，建议初始可评估 `min-height: 640px`、`max-height: 900px`，最终以 1366×768、1440×900、1920×1080 实测为准。
+- 主素材：一张完整的品牌 Campaign 摄影图，优先使用横向 16:9 或更宽构图。
+- 文案位置：优先放在图片左下/左侧留白区域；如果原图主体分布不允许，使用经过验证的对比渐变/柔和遮罩保证可读性。不得用厚重不透明文字卡片遮住主要商品。
+- 内容层级：小型 eyebrow → 主标题 → 1–2 行说明 → 两个 CTA → 可选的一行能力标签。
+- CTA：主按钮 Browse Products；次按钮 WhatsApp Inquiry。继续使用现有真实路由和 WhatsApp 消息行为。
+- 允许轻量的渐变、色块或小型品牌装饰，但不得重新引入四张独立商品卡片拼贴、漂浮 SKU 卡片或无数据依据的数字背书。
+- 首屏标题、说明和 CTA 必须在常见桌面高度内完整可见；不得因为 85vh 高度而让关键操作落到首屏之外。
+
+#### 3.2.3 推荐 Hero 文案（通过现有 i18n / 广告配置维护）
+
+英文默认方向：
+- Eyebrow：`TOY STUDIO · FACTORY DIRECT · B2B`
+- Headline：`Made to Play. Built for Your Brand.`
+- Description：`Creative squishy toys, building blocks and playful ideas — made for brands, retailers and distributors.`
+- Primary CTA：`Explore Products` 或保留现有 `Browse Products`（需统一全站用词）
+- Secondary CTA：`Start an Inquiry` / `WhatsApp Inquiry`
+
+中文方向：
+- Headline：`为快乐而创造，为品牌而制造。`
+- Description：`创意捏捏乐、积木和潮流玩具，为品牌商、零售商和全球经销商提供产品与定制制造服务。`
+- CTA：`浏览产品`、`WhatsApp 询盘`
+
+实施时优先沿用当前已验证的 en-US / zh-CN 文案键与现有广告内容优先级；不得在 JSX 中硬编码仅英文文案。若广告配置覆盖标题/描述，继续遵守现有优先级和安全规则。
+
+#### 3.2.4 图片素材与数据规则
+
+- 图片必须真实表现 WuXuan 实际可供货的产品或经用户批准的真实产品组合；不允许用 AI 生成的虚构商品包装、错误 Logo、错误 SKU 或不存在的产品作为真实商品宣传。
+- 优先顺序：现有已批准 Hero/Campaign 广告媒体（若具备合适宽幅图片）→ 现有公开 R2/CDN 商品图片中经过人工挑选的真实素材组合 → 经用户批准新增的 Campaign 摄影资产。
+- 不得假设当前广告 DTO 已支持 desktop/mobile 双图字段。实施前先审计 DTO、Admin 编辑能力和图片服务；若没有字段，**不得顺带新增数据库/API**。先以静态受控素材路径或现有安全配置落地，并将后台可编辑 Campaign Media 作为独立 ADR/后续需求。
+- 推荐准备 desktop 与 mobile 两种 art direction；可以是同一组真实产品重新构图，不要求商品内容完全不同。
+- 图片使用现有 MediaFrame / 图片服务 / CDN 规范；明确 `width`、`height` 或 `aspect-ratio`，避免 CLS；关键首屏主图优先加载，其余非首屏媒体 lazy。
+- 若当前组件支持 `srcSet` / `sizes`，必须提供合理断点和尺寸；不要向手机设备无条件发送桌面超大图。
+- 主图 alt 应描述真实画面；纯装饰背景图使用空 alt 或 CSS 背景并确保不重复朗读。
+- 图片无法加载时使用品牌安全 fallback，不允许出现破图或空白大区域。
+
+#### 3.2.5 移动端构图
+
+- 手机端不是桌面版等比缩小。主视觉优先使用竖版或近方形裁切，建议素材比例 4:5、3:4 或适合首屏的 9:16 安全构图。
+- 首屏图片占主要视觉面积；标题、简短描述和 CTA 采用图片下方内容区或图片底部高对比叠加区，按真实素材留白决定。
+- 关键商品主体必须完整可见；不能仅依赖 `object-position: center`，需要根据真实图片内容设置受控焦点位置。
+- 主标题建议 34–46px 流式字号，最多 2–3 行；描述最多 2–3 行；CTA 垂直排列、可全宽。
+- 不得出现四张商品小图挤压文字、CTA 被折叠或首屏只剩图片没有明确询盘/浏览入口。
+- 检查 360 / 375 / 390 / 430px 宽度，以及 667 / 740 / 844 / 932px 常见高度；横屏另做验证。
+
+#### 3.2.6 Hero 禁止事项
+
+- 禁止把当前四图商品拼贴简单放大后继续作为主方案。
+- 禁止使用未经批准的虚构产品、客户 Logo、工厂资质、销量数字或评价背书。
+- 禁止让节日装饰成为 Hero 的必要结构；Default Campaign 本身必须全年成立。
+- 禁止把 WhatsApp 绿色覆盖为品牌主色；WhatsApp 保持官方语义色。
+- 禁止为了视觉效果删除 Browse Products / WhatsApp Inquiry 任一主要转化路径。
+- 禁止在公开 Hero 数据、SSR HTML 或页面 props 中加入价格字段。
 
 ### 3.3 Homepage Section Heading：建立明确视觉入口
 
@@ -745,3 +810,205 @@ AI 不得将建议路径当作已存在路径。先检查目录结构、导出�
 - 文档、运营更新流程、回滚方式齐全。
 
 **执行口令：每次只执行用户明确指定的一个阶段。完成并报告后必须停止，不得自动开始下一阶段。**
+
+
+---
+
+## 15. Homepage Visual Architecture Freeze — Full-width Campaign + Sticky Header（2026-11-14）
+
+> **状态：用户已确认视觉方向；本节是 AI 后续执行的强制规格。**  
+> 用户确认：Hero = A 品牌 Campaign 大图；导航 = 固定白色 Sticky Header；桌面 Hero = 75–85vh 沉浸式大图。  
+> 本节只冻结设计和素材要求，不代表代码已实施，也不授权自动进入阶段 4、主题开发、提交代码或部署。
+
+### 15.1 设计目标与参考边界
+
+目标是把 WuXuan 首页从“文字 + 四张小商品图拼贴”的目录式首屏，升级为有品牌 Campaign 识别度的 B2B 玩具制造商官网。
+
+参考网站：`https://row.satorisan.com/`。允许借鉴：
+- 首屏以一张大幅摄影图建立品牌情绪；
+- 文案和 CTA 简洁叠加在主视觉上；
+- 页面滚动时导航仍可使用；
+- 桌面与移动端采用不同的图片构图和内容排列；
+- 页面内容有明确节奏，不把所有信息塞入首屏。
+
+禁止复制参考网站的 Logo、商标、字体文件、摄影图片、文案、独特图形、HTML/CSS/JS 或其他受保护品牌资产。WuXuan 必须形成自己的玩具品牌表达。
+
+### 15.2 全站首页信息架构（冻结顺序）
+
+1. **Sticky Header**：固定白色主导航，覆盖首页和所有 Storefront 页面。
+2. **Full-width Brand Campaign Hero**：75–85vh 桌面大图；移动端独立构图。
+3. **New Arrivals**：首页第一个商品区，沿用当前真实数据、配置总数和 cursor/Load More。
+4. **Homepage Collections**：按后台排序逐个呈现，每个 Collection 独立 Section 和商品网格；不增加全品类总览卡片墙。
+5. **Brand / Product Story（可选且需有真实素材）**：介绍产品创意、品类开发或设计能力；若没有真实内容，不新增空洞营销区块。
+6. **Factory & OEM / ODM**：展示真实工厂、生产流程、质量控制、OEM/ODM、包装定制能力；沿用已有页面/内容，不编造认证或产能数字。
+7. **How to Get a Quote**：Choose Models → Send Inquiry → Get Quotation，继续强调无购物车、无在线结账。
+8. **Final Inquiry CTA**：Browse Products + WhatsApp Inquiry。
+9. **Footer**：公司、产品导航、联系信息、政策等现有内容。
+
+说明：
+- 第 2 项必须紧接 Header；第 3 项必须是 Hero 后第一个商品区域。
+- 不新增独立的 “Shop by Collection” / “Explore Our Collections” 全品类目录墙。
+- 不把 New Arrivals 和后台 Collections 改成横向 Carousel；保持既有网格和分页。
+- 若 Brand / Product Story 没有真实素材/有效内容，可省略，不得为了凑结构制造空区块。
+- 既有 URL、locale、SEO、公开 DTO、Inquiry 和 WhatsApp 业务规则完全保留。
+
+### 15.3 Sticky Header 规格
+
+**桌面端**
+- 白色/奶油白不透明背景；不使用透明文字叠在 Hero 图片上的方案。
+- 默认高度建议 72–80px；内容垂直居中。
+- 左侧：WuXuan Logo/品牌名。
+- 中间：Home、Products、Our Factory、Quality & Awards、FAQ（以现有真实路由和可用页面为准）。
+- 右侧：搜索、WhatsApp 入口、Inquiry List（含数量）。
+- 页面滚动时始终固定在视口顶部；滚动状态可增加轻微阴影或细边框，不做明显跳动/高度突变。
+- 使用稳定层级，确保下拉菜单、搜索面板和移动抽屉层级正确。
+
+**移动端**
+- 高度建议 60–68px。
+- Logo 清晰可识别；菜单、搜索和 Inquiry 数量入口有足够触控空间。
+- WhatsApp 可以位于移动菜单或固定联系入口中，避免 Header 横向拥挤；但必须容易找到。
+- 菜单打开时支持键盘/屏幕阅读器语义、Escape 关闭、焦点管理和背景滚动控制（按现有组件模式实现）。
+- 所有交互触控目标至少 44×44 CSS px。
+- 页面锚点/滚动定位需考虑 sticky header 高度，避免标题被遮挡。
+- 验证 Products、详情页、Inquiry、Factory、Quality、FAQ 等全部 Storefront 路由，不只首页。
+
+**实现约束**
+- 复用现有 Site Header / Site Shell；禁止另建首页专属 Header。
+- 优先 `position: sticky; top: 0`，除非现有布局结构证明必须采用 fixed；不得造成页面跳动。
+- 不改 Admin Header，不修改共享 Admin 样式。
+- 保留现有 locale、搜索、WhatsApp、Inquiry、移动菜单行为。
+
+### 15.4 Hero 桌面布局规格
+
+- 高度：75–85vh；通过流式 CSS 和上下限适配屏幕，建议初始评估 `clamp(640px, 80vh, 900px)`，最终以截图验收为准。
+- 宽度：优先全宽 Campaign 画面；若受现有页面容器限制，需明确说明并保持视觉上接近 edge-to-edge。
+- 图片：单张完整 Campaign 主图，横向 16:9 或更宽；主体应为真实的多品类玩具产品组合。
+- 构图：左侧或左下预留文字安全区；右侧/中部呈现产品主视觉。可按实际素材镜像/调整，但文字不能压住产品关键主体。
+- 叠字区域：使用足够对比的自然留白、局部渐变或柔和遮罩；不允许无依据叠加厚重面板。
+- 标题建议：`Made to Play. Built for Your Brand.`；可以在品牌审核后微调，不得把它写死在组件内。
+- 标题字号：桌面建议 56–76px 流式；行宽受控，避免在常见桌面宽度下形成过多断行。
+- 说明：最多 1–2 行，说明 Squishy Toys / Building Blocks / Creative Toys 与 B2B/OEM/ODM 服务。
+- CTA：主按钮 Browse Products；次按钮 WhatsApp Inquiry / Start an Inquiry。按钮必须使用现有真实 href 和消息行为。
+- 信任点：可在 CTA 下方显示 Factory Direct、OEM/ODM、Custom Packaging 等能力标签，但不得添加虚构认证、客户数量或交付承诺。
+- 不再显示 Hero 四图拼贴、悬浮商品 SKU 标签卡、无意义装饰星点作为主体。
+
+### 15.5 Hero 移动端布局规格
+
+- 不得把桌面图粗暴裁切成移动端图。应提供移动端独立构图/焦点。
+- 图片建议 4:5 或 3:4；若采用高屏沉浸式，可用 9:16 素材，但要避免重要产品主体过小。
+- 图片是移动端首屏视觉主体；文案可放在图片底部有对比的叠加区域，或放在图片紧接下方的文字区域。最终选择以真实图片留白和可读性为准。
+- 标题 34–46px 流式，最多 2–3 行；说明 2–3 行以内。
+- CTA 垂直全宽或足够宽，主次层级明确；WhatsApp 入口不能被隐藏到用户难以发现的位置。
+- 保证 360 / 375 / 390 / 430px 视口无横向溢出；常见手机高度下标题和至少一个明确 CTA 可见。
+- 检查安全区、动态地址栏、底部手势区域、Facebook/Instagram 内置浏览器和 Safari/Chrome 移动浏览器。
+
+### 15.6 图片素材清单与规格
+
+**必须准备的主素材**
+1. `home-hero-desktop`：桌面 Campaign 横幅，建议 2400×1350 或更高质量源图；主体和文字安全区明确。
+2. `home-hero-mobile`：移动端独立构图，建议 1200×1500（4:5）或 1200×1600（3:4）；重要商品主体不被裁切。
+3. `home-hero-fallback`：主图加载失败时的品牌安全 fallback；可使用已批准的单张真实商品组合图。
+4. `home-brand-story`（可选）：产品开发/设计过程真实照片。
+5. `factory-overview`：真实工厂环境/生产线照片。
+6. `factory-quality-control`：真实质检/包装流程照片。
+7. `factory-custom-packaging`：真实包装定制/打样照片。
+8. New Arrivals / Collections 继续使用商品自身真实图片，不重复制作一套静态商品图库。
+
+**摄影内容要求**
+- 产品组合建议涵盖 squishy fruit/food、动物/角色造型、building blocks、creative toys；以当前真实在售/可供货 SKU 为准。
+- 画面需体现产品质感、色彩、尺寸层次和真实包装；避免廉价白底图拼贴。
+- 背景可使用奶油白、柔和粉、薄荷绿、暖黄色等品牌色，但产品本身颜色必须真实。
+- 真实商品包装、商标、SKU 和外观必须与实际产品一致；拍摄或合成不得虚构认证、客户 Logo 或合作品牌。
+- Campaign 图片可通过专业摄影或经批准的图像合成制作；若使用 AI 辅助，仅可用于背景/构图辅助，不能将虚构产品当作真实商品宣传。
+- 需取得图片使用权/供应商授权，并记录素材来源。
+
+**格式与交付**
+- 优先 AVIF/WebP，保留可追溯高质量原始文件。
+- 为桌面/移动端提供响应式尺寸；避免移动端加载 2K/4K 原图。
+- 关键图片预先声明尺寸/比例，避免 CLS。
+- 记录文件名、尺寸、格式、文件大小、来源、版权/授权状态、alt 文案、桌面/移动焦点位置。
+- 具体文件存储位置需先遵循仓库现有 public assets / R2 / image pipeline 约定；不得随意新增第二套图片托管机制。
+
+### 15.7 视觉系统与内容风格
+
+- 保留 Default Playful Premium：奶油白基底、珊瑚色行动色、草莓粉/薄荷绿/薰衣草紫/奶油黄作为辅助。
+- 相比当前四图拼贴，减少卡片边框、漂浮标签、装饰星点和多层阴影；让摄影和标题承担主要视觉。
+- 页面采用明确留白和节奏：大图 Hero → 清晰商品网格 → 精选系列 → 工厂能力 → 询盘转化。
+- Section Heading 与阶段 3 的 kicker / 标题 / 副标题 / View All 层级保持一致。
+- 商品卡片仍用现有 homepage variant；不在本次架构冻结中再次设计 ProductCard。
+- 不改变桌面 6 列、平板自适应、手机 2 列商品网格规则。
+- 不新增价格、购物车、在线支付、折扣或零售促销语义。
+
+### 15.8 代码实施建议（后续获得授权后）
+
+实施前必须重新读取最新 main 和工作区状态，至少检查：
+- `AGENTS.md`、`.agents/skills/frontend-ui/SKILL.md`、DOC-45、DOC-46；
+- `apps/storefront/src/components/site-header.tsx`、`site-shell.tsx`、`apps/storefront/src/app/[locale]/page.tsx`；
+- `apps/storefront/src/lib/homepage.ts`、广告/Site Config DTO 与 Admin Hero 编辑能力；
+- `packages/ui/styles/storefront-entry.css`、`tokens.css`、`storefront.css`；
+- 当前图片组件、R2/CDN、srcSet/sizes 和图片 fallback 实现。
+
+预计涉及范围（以审计为准）：
+- Site Header / Site Shell：Sticky 行为和响应式导航。
+- Homepage page / Hero 组件：由 Mixed collage 改为 Campaign Hero。
+- i18n：en-US / zh-CN 文案和可访问名称。
+- Storefront CSS：Hero 桌面/移动构图、Header sticky 状态、focus、reduced-motion。
+- 测试：Hero 结构、Header 滚动、locale、CTA、图片加载和价格隔离。
+
+严格禁止：
+- 不重构 ProductCard / HomepageProductSection，除非发现 Hero 接口有明确必要改动且先说明。
+- 不改 API/DTO/数据库/权限/缓存/商品排序/去重/分页/Inquiry/WhatsApp 业务逻辑。
+- 不新增第三方轮播/动画库。
+- 不创建独立首页 Header。
+- 不自动提交、推送或部署，除非用户明确授权。
+- 若发现需新增 Admin 可编辑 desktop/mobile Campaign Media 字段，先写 ADR 并暂停等待批准。
+
+### 15.9 首页视觉架构验收矩阵
+
+**桌面截图**
+- 1920×1080
+- 1600×900
+- 1440×900
+- 1366×768
+- 1280×800
+
+**平板截图**
+- 1024×768
+- 768×1024
+
+**手机截图**
+- 430×932
+- 390×844
+- 375×812
+- 360×740
+
+**验收项**
+- 首屏首先呈现完整品牌 Campaign 大图，而不是四张商品缩略图拼贴。
+- Sticky Header 在首页及内页滚动过程中保持固定、清晰且不遮挡内容。
+- 桌面 Hero 高度在 75–85vh 设计范围内，标题、说明和双 CTA 完整可用。
+- 移动端使用适配构图，主体完整，标题和 CTA 清楚。
+- Hero 主图没有明显拉伸、错误裁切、CLS 或破图。
+- New Arrivals 紧接 Hero，仍是第一个商品区域。
+- 后台 Collections 顺序、标题、商品、Load More / View All 正常。
+- Factory / OEM / ODM 内容真实可信，不虚构产能、认证、客户或回复承诺。
+- Products、Factory、Quality、FAQ、Search、Inquiry、WhatsApp 等现有入口可用。
+- en-US / zh-CN 文案不溢出、不混语言。
+- 不显示价格，不产生 Add to Cart / Checkout 等零售语义。
+- 桌面/平板/手机均无横向滚动。
+- Header、Hero、图片、按钮满足键盘操作、焦点可见和对比度要求。
+
+### 15.10 本次冻结后的阶段门禁与 VS Code AI 执行提示词
+
+本次只完成 DOC-46 设计规格更新。后续 AI 应按以下顺序：
+
+1. **Visual Architecture Readback（只读）**：重新读取 DOC-46 第 0.4、3.1、3.2、15 节和 DOC-45；核对当前实现与规格差异，输出差异表、素材缺口和预计改动文件，不改代码。
+2. **Campaign Asset Preparation（素材准备）**：先准备并审核桌面/移动端 Campaign 图片和真实工厂素材；没有用户批准的真实素材，不得把虚构产品图投入网站。
+3. **Homepage Visual Implementation（单独授权）**：按冻结规格实现 Sticky Header + Campaign Hero + 首页内容顺序；仍按小阶段实施，每阶段报告后停下等待验收。
+4. **Visual Acceptance（单独验收）**：使用第 15.9 节截图矩阵和业务回归完成视觉验收。
+5. **Stage 4**：只有基础页面布局和视觉架构验收通过后，用户明确授权，才进入 DOC-46 阶段 4。
+6. **Stage 5–6**：在基础页面稳定并通过阶段 4 后，才实施主题注册表、Resolver 和 11 个节日预设。
+
+**交给 VS Code AI 的提示词：**
+
+“请先只读阅读 `docs/46-storefront-brand-visual-refresh-and-theme-system.md` 的第 0.4、3.1、3.2、7、15 节，以及 `docs/45-homepage-product-display-and-collections.md`。本次用户已冻结首页方向：品牌 Campaign 单张大图、白色固定 Sticky Header、桌面 Hero 75–85vh。旧版 Mixed 四图 Hero 规格已被新决策取代。请审计当前 main/工作区代码，输出当前实现与冻结规格的差异、所需真实素材清单、素材缺口、拟修改文件、风险和测试计划。**本次只读，不得修改代码、文档、依赖、数据库，不得提交/推送/部署，不得开始阶段 4 或主题系统开发。** 等待用户批准后再执行具体实现阶段。”
+
