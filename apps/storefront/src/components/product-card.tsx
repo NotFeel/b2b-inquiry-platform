@@ -7,27 +7,31 @@ import { getTranslator, localeHref } from '../lib/i18n';
 import { PRODUCT_GRID_IMAGE_SIZES, imageSrcSet } from '../lib/image-srcset';
 import { SelectProductButton, useInquiry } from './inquiry-list';
 
+type ProductCardVariant = 'catalog' | 'homepage';
+
 interface Props {
   product: PublicProductCard;
   locale: string;
+  /** Homepage keeps the same card behaviour with a lower information density. */
+  variant?: ProductCardVariant;
 }
 
 // Catalogue card (docs/16 §6.5): square image, badges, multi-select checkbox,
 // 2-line title, SKU with copy, 2-line summary, key meta line, two light actions.
 // Rendering a price is impossible here: PublicProductCard has no price field.
-export function ProductCard({ product, locale }: Props) {
+export function ProductCard({ product, locale, variant = 'catalog' }: Props) {
   const t = getTranslator(locale).t;
   const { has } = useInquiry();
   const selected = has(product.sku);
+  const isHomepage = variant === 'homepage';
+  const preOrder = product.isPreOrder || product.lifecycleStatus === 'preorder';
 
   const badges = [
     product.isFeatured
       ? { key: 'featured', label: t('badges.featured'), tone: 'badge-brand' }
       : null,
     product.isNew ? { key: 'new', label: t('badges.new'), tone: 'badge-info' } : null,
-    product.isPreOrder || product.lifecycleStatus === 'preorder'
-      ? { key: 'preorder', label: t('badges.preorder'), tone: 'badge-warning' }
-      : null,
+    preOrder ? { key: 'preorder', label: t('badges.preorder'), tone: 'badge-warning' } : null,
   ].filter((badge): badge is { key: string; label: string; tone: string } => badge !== null);
 
   const extraTags = product.tags.filter(
@@ -41,8 +45,9 @@ export function ProductCard({ product, locale }: Props) {
       tone: 'badge-neutral',
     })),
   ];
-  // Two labels plus an overflow counter stay readable in two-column mobile cards.
-  const visibleBadges = allBadges.slice(0, 2);
+  // Homepage cards can show the three core merchandising states; catalogue
+  // cards keep two so large filters and user tags do not crowd the image.
+  const visibleBadges = allBadges.slice(0, isHomepage ? 3 : 2);
   const remainingBadges = Math.max(0, allBadges.length - visibleBadges.length);
 
   const inquiryItem = {
@@ -53,8 +58,13 @@ export function ProductCard({ product, locale }: Props) {
     imageVariants: product.coverImage?.variants ?? [],
   };
 
+  const cardClassName = ['product-card', isHomepage ? 'product-card-homepage' : '']
+    .filter(Boolean)
+    .join(' ');
+  const showMeta = Boolean(product.category) || (!isHomepage && preOrder);
+
   return (
-    <article className="product-card" data-selected={selected}>
+    <article className={cardClassName} data-selected={selected} data-variant={variant}>
       <div className="product-card-media">
         <MediaFrame
           src={product.coverImage?.url ?? null}
@@ -104,14 +114,16 @@ export function ProductCard({ product, locale }: Props) {
           />
         </span>
 
-        {product.summary ? <p className="product-card-summary clamp-2">{product.summary}</p> : null}
+        {!isHomepage && product.summary ? (
+          <p className="product-card-summary clamp-2">{product.summary}</p>
+        ) : null}
 
-        <div className="product-card-meta">
-          {product.category ? <span>{product.category.name}</span> : null}
-          {product.isPreOrder || product.lifecycleStatus === 'preorder' ? (
-            <span>{t('badges.preorder')}</span>
-          ) : null}
-        </div>
+        {showMeta ? (
+          <div className="product-card-meta">
+            {product.category ? <span>{product.category.name}</span> : null}
+            {!isHomepage && preOrder ? <span>{t('badges.preorder')}</span> : null}
+          </div>
+        ) : null}
       </div>
 
       <div className="product-card-actions">
@@ -120,7 +132,7 @@ export function ProductCard({ product, locale }: Props) {
           href={localeHref(locale, `/products/${product.slug}`)}
         >
           <span>{t('product.details')}</span>
-          <IconArrowRight size={15} />
+          {!isHomepage ? <IconArrowRight size={15} /> : null}
         </Link>
         <SelectProductButton item={inquiryItem} variant="primary" />
       </div>

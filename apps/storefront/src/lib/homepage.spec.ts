@@ -10,7 +10,7 @@ import {
   mergeHomepageProducts,
 } from './homepage';
 
-function product(sku: string): PublicProductCard {
+function product(sku: string, categorySlug?: string): PublicProductCard {
   return {
     sku,
     slug: sku.toLowerCase(),
@@ -20,7 +20,9 @@ function product(sku: string): PublicProductCard {
     isNew: false,
     isFeatured: false,
     isPreOrder: false,
-    category: null,
+    category: categorySlug
+      ? { id: categorySlug, slug: categorySlug, name: categorySlug.replaceAll('-', ' ') }
+      : null,
     coverImage: null,
     tags: [],
   };
@@ -146,6 +148,25 @@ describe('homepage helpers', () => {
     );
 
     expect(homepageHeroProducts(homepage, 3).map((item) => item.sku)).toEqual(['H1', 'H2', 'H3']);
+  });
+
+  it('leads the hero with category breadth before filling the remaining slots', () => {
+    const homepage = homepageFixture();
+    homepage.newArrivals.products = [product('S1', 'squishy-toys'), product('S2', 'squishy-toys')];
+    const collection = homepage.collections[0];
+    if (!collection) throw new Error('fixture collection missing');
+    collection.products = [
+      product('B1', 'building-blocks'),
+      product('C1', 'creative-toys'),
+      product('S3', 'squishy-toys'),
+    ];
+
+    expect(homepageHeroProducts(homepage, 4).map((item) => item.sku)).toEqual([
+      'S1',
+      'B1',
+      'C1',
+      'S2',
+    ]);
   });
 
   it('uses the three required cache tags', () => {

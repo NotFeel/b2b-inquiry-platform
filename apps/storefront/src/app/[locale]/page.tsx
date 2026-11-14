@@ -84,11 +84,11 @@ export default async function HomePage({ params }: Props) {
   return (
     <div className="homepage-page">
       <div className="container-app">
-        <section className="hero">
+        <section className="hero" aria-labelledby="home-hero-title">
           <div className="hero-inner">
             <div className="hero-copy">
               <span className="hero-eyebrow">{t('home.eyebrow')}</span>
-              <h1>
+              <h1 id="home-hero-title">
                 {hero?.title ? (
                   hero.title
                 ) : (
@@ -101,57 +101,71 @@ export default async function HomePage({ params }: Props) {
               </h1>
               <p className="hero-lede">{hero?.description ?? t('home.heroSubtitle')}</p>
               <div className="hero-actions">
-                <Link className="btn btn-lg" href={localeHref(locale, '/products')}>
+                <Link className="btn btn-lg hero-browse-cta" href={localeHref(locale, '/products')}>
                   {t('home.heroCta')}
+                  <IconArrowRight size={17} />
                 </Link>
                 <WhatsAppCta
                   locale={locale}
-                  className="btn btn-secondary btn-lg"
+                  className="btn btn-secondary btn-lg hero-whatsapp-cta"
                   label={t('home.heroSecondaryCta')}
                 />
               </div>
               <ul className="hero-points">
                 <li>
-                  <IconCheck size={16} />
-                  {t('home.heroPointCatalogue')}
+                  <IconCheck size={15} />
+                  {t('home.heroPointFactory')}
                 </li>
                 <li>
-                  <IconCheck size={16} />
+                  <IconCheck size={15} />
+                  {t('home.heroPointOem')}
+                </li>
+                <li>
+                  <IconCheck size={15} />
                   {t('home.heroPointPackaging')}
-                </li>
-                <li>
-                  <IconCheck size={16} />
-                  {t('home.heroPointReply')}
                 </li>
               </ul>
             </div>
             <div className="hero-visual">
-              <div className="hero-visual-grid">
+              <div
+                className="hero-collage"
+                data-count={Math.max(1, Math.min(heroProducts.length, 4))}
+              >
                 {heroProducts.length > 0 ? (
                   heroProducts.map((product, index) => (
-                    <div className="hero-tile" key={product.sku}>
+                    <Link
+                      className="hero-tile"
+                      href={localeHref(locale, `/products/${product.slug}`)}
+                      aria-label={t('home.heroProductLink', { name: product.name })}
+                      key={product.sku}
+                    >
                       <MediaFrame
                         src={product.coverImage?.url ?? null}
                         srcSet={imageSrcSet(product.coverImage?.variants)}
                         sizes={HOME_HERO_IMAGE_SIZES}
                         alt={product.coverImage?.alt || product.name}
                         ratio="4 / 3"
+                        fit="contain"
                         loading={index === 0 ? 'eager' : 'lazy'}
                         fallbackLabel={t('product.imageUnavailable')}
                         fallbackSeed={`${product.sku} ${product.name}`}
                       />
                       <span className="hero-tile-caption">
+                        {product.category ? (
+                          <span className="hero-tile-category">{product.category.name}</span>
+                        ) : null}
                         <strong>{product.name}</strong>
-                        {product.sku}
                       </span>
-                    </div>
+                    </Link>
                   ))
                 ) : (
-                  <div className="hero-tile" style={{ gridColumn: 'span 2' }}>
+                  <div className="hero-tile hero-tile-fallback">
                     <MediaFrame
                       src={null}
                       alt={config.data.companyName}
-                      ratio="16 / 9"
+                      ratio="4 / 3"
+                      fit="contain"
+                      loading="eager"
                       fallbackLabel={t('catalog.categoryImageFallback')}
                       fallbackSeed="catalogue"
                     />
@@ -159,7 +173,8 @@ export default async function HomePage({ params }: Props) {
                 )}
               </div>
               <span className="hero-sticker" aria-hidden="true">
-                {t('home.heroSticker')}
+                <span>{t('home.heroStickerKicker')}</span>
+                <strong>{t('home.heroSticker')}</strong>
               </span>
             </div>
           </div>
@@ -172,6 +187,7 @@ export default async function HomePage({ params }: Props) {
           kind="new-arrivals"
           sectionId="new-arrivals"
           locale={locale}
+          kicker={t('home.newArrivalsKicker')}
           title={t('home.newTitle')}
           subtitle={t('home.newArrivalsSubtitle')}
           initialBatch={newArrivals}
@@ -187,6 +203,7 @@ export default async function HomePage({ params }: Props) {
           sectionId={collection.id}
           collectionId={collection.id}
           locale={locale}
+          kicker={t('home.collectionKicker')}
           title={collection.title}
           subtitle={collection.subtitle}
           initialBatch={collection}

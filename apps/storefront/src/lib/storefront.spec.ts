@@ -12,6 +12,17 @@ describe('storefront helpers', () => {
     expect(zh.t('product.select')).toBe('加入询价');
   });
 
+  it('localises homepage section headings and collection actions', () => {
+    const en = getTranslator('en-US');
+    const zh = getTranslator('zh-CN');
+    expect(en.t('home.newArrivalsKicker')).toBe('Just dropped');
+    expect(en.t('home.collectionKicker')).toBe('Collection edit');
+    expect(en.t('home.collectionViewAllShort')).toBe('View all');
+    expect(zh.t('home.newArrivalsKicker')).toBe('新品上架');
+    expect(zh.t('home.collectionKicker')).toBe('精选系列');
+    expect(zh.t('home.collectionViewAllShort')).toBe('查看全部');
+  });
+
   it('builds locale-prefixed links without doubling the slash', () => {
     expect(localeHref('en-US', '/products')).toBe('/en-US/products');
     expect(localeHref('zh-CN', '/')).toBe('/zh-CN');

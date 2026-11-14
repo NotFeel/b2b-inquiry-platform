@@ -28,14 +28,36 @@ export function mergeHomepageProducts(
 /** Hero imagery is borrowed from real homepage products, never copied data. */
 export function homepageHeroProducts(
   homepage: PublicHomepage | null,
-  count = 3,
+  count = 4,
 ): PublicProductCard[] {
   if (!homepage || count <= 0) return [];
-  return mergeHomepageProducts(
+
+  const candidates = mergeHomepageProducts(
     homepage.newArrivals.products,
     homepage.collections.flatMap((collection) => collection.products),
-    count,
   );
+  const selected: PublicProductCard[] = [];
+  const selectedSkus = new Set<string>();
+  const selectedCategories = new Set<string>();
+
+  // Lead with one product per public category so the first screen represents
+  // the breadth of the catalogue instead of repeating the newest category.
+  for (const product of candidates) {
+    const categoryKey = product.category?.slug ?? product.category?.id ?? null;
+    if (!categoryKey || selectedCategories.has(categoryKey)) continue;
+    selected.push(product);
+    selectedSkus.add(product.sku);
+    selectedCategories.add(categoryKey);
+    if (selected.length >= count) return selected;
+  }
+
+  for (const product of candidates) {
+    if (selectedSkus.has(product.sku)) continue;
+    selected.push(product);
+    if (selected.length >= count) break;
+  }
+
+  return selected;
 }
 
 /** The existing Products category filter is the public collection destination. */

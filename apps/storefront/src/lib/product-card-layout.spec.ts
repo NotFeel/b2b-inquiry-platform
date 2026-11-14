@@ -90,6 +90,43 @@ describe('product card layout contract', () => {
     expect(styles).not.toMatch(/@media \(max-width: 420px\)/);
   });
 
+  it('uses one ProductCard with a lower-density homepage variant', () => {
+    expect(homepageSection).toContain('{props.kicker}');
+    expect(homepageSection).toContain('className="homepage-section-kicker"');
+    expect(homepageSection).toContain('className="homepage-section-view-all"');
+    expect(homepageSection).toContain('variant="homepage"');
+    expect(homepageSection).not.toContain('HomepageProductCard');
+    expect(component).toContain("type ProductCardVariant = 'catalog' | 'homepage'");
+    expect(component).toContain("variant = 'catalog'");
+    expect(component).toContain('!isHomepage && product.summary');
+    expect(component).toContain('allBadges.slice(0, isHomepage ? 3 : 2)');
+    expect(homePage).toContain("kicker={t('home.newArrivalsKicker')}");
+    expect(homePage).toContain("kicker={t('home.collectionKicker')}");
+  });
+
+  it('builds an editorial section heading with a collection destination', () => {
+    expect(styles).toMatch(
+      /\.homepage-section-kicker\s*\{[^}]*border:\s*1px solid var\(--section-accent\)/s,
+    );
+    expect(styles).toMatch(
+      /\.homepage-section-title\s*\{[^}]*text-transform:\s*uppercase[^}]*text-wrap:\s*balance/s,
+    );
+    expect(styles).toMatch(
+      /\.homepage-section-view-all\s*\{[^}]*min-height:\s*var\(--touch-target\)/s,
+    );
+    expect(styles).toMatch(/\.homepage-section\[data-theme='mint'\]\s*\{[^}]*--section-accent:/s);
+  });
+
+  it('keeps card lift and image zoom for fine-pointer hover only', () => {
+    expect(styles).toMatch(/@media \(hover: hover\) and \(pointer: fine\)/);
+    expect(styles).toMatch(
+      /@media \(hover: hover\) and \(pointer: fine\)[\s\S]*?\.product-card:hover\s*\{[^}]*transform:\s*translateY\(-3px\)/,
+    );
+    expect(styles).toMatch(
+      /\.product-card-actions > \.btn:last-child\s*\{[^}]*background:\s*var\(--sf-color-primary\)/s,
+    );
+  });
+
   it('connects every storefront product listing to the wide product container', () => {
     expect(homePage).toContain('<HomepageProductSection');
     expect(homePage).toContain('storefrontApi');
@@ -103,6 +140,7 @@ describe('product card layout contract', () => {
     expect(homepageSection).toContain('<ProductCard');
     expect(homepageSection).toContain('className="product-grid"');
     expect(homepageSection).toContain('loadMoreHomepageSection');
+    expect(homepageSection).toContain('initialProducts.length < props.displayLimit');
     expect(productsPage).toContain('className="container-products"');
     expect(categoryPage).toContain('className="container-products stack"');
     expect(categoryPage).toContain('className="product-grid"');
