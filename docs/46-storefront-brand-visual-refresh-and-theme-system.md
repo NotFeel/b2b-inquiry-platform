@@ -63,6 +63,19 @@
 - **阶段门禁：** 阶段 0–3 已按此前阶段报告完成；本次仅冻结基础页面视觉架构并更新实施文档。**阶段 4（移动端/无障碍/性能专项）及阶段 5–6（主题系统）均不得因此自动启动。** 先按第 15 节完成首页架构设计规格和素材准备；视觉架构确认后，再由用户明确授权进入后续阶段。
 - 本次决策只约束视觉和页面布局，不授权新增数据库模型、公开 API、后台配置能力、第三方依赖或生产部署。
 
+### 0.5 后台 Campaign 大图管理（新增冻结需求）
+
+用户要求完整品牌 Campaign 主视觉必须预留后台维护能力。后续实现不得将 Hero 主图、桌面/移动端图片或年度 Campaign 资源硬编码在 React 组件中。
+
+- 在现有 Admin `Storefront → Homepage` 管理入口内预留独立的 **Hero Campaign** 管理区域/Tab；不另建重复的 Homepage 管理系统。
+- 管理员可在后台创建、编辑、预览、启用/停用 Campaign，并维护桌面端和移动端主图。
+- 图片上传优先复用项目现有媒体上传、R2 存储、图片变体/CDN、权限和审计能力。
+- 支持 Campaign 文案、图片替换、发布时间窗口、默认 Campaign 回退；详细字段与规则见第 15.11 节。
+- Campaign 内容必须与商品数据、Homepage Collections、节日主题 Token 解耦。换主图/换文案/换活动不应要求修改前端组件。
+- 当前仓库已有 Homepage 管理页面，但不能据此推断已支持 Campaign 图片上传或桌面/移动端媒体字段。AI 必须先审计实际 Admin 组件、API、DTO、Prisma 模型、媒体服务和权限。
+- 如果现有广告管理能力完整覆盖本节需求，优先扩展/复用现有能力，并在后台提供清晰的 Homepage Campaign 管理体验；如果不能覆盖，再提出独立 Campaign 配置模型/API 的 ADR。
+- 本节是明确的产品需求预留，不等于授权立即新增数据库迁移或 API。实现前须先给出复用方案、数据模型/API 差异、权限/审计/缓存策略和迁移计划，分阶段实施并等待用户验收。
+
 ## 1. 仓库现状审查基线（实施前再次核对）
 
 本任务书制定时已读取 main 分支下列文件。AI 开发时必须重新读取最新版本，不能把本文件当作代码现状的永久替代：
@@ -996,6 +1009,109 @@ AI 不得将建议路径当作已存在路径。先检查目录结构、导出�
 - 不显示价格，不产生 Add to Cart / Checkout 等零售语义。
 - 桌面/平板/手机均无横向滚动。
 - Header、Hero、图片、按钮满足键盘操作、焦点可见和对比度要求。
+
+### 15.11 Admin Hero Campaign 管理规格（必须预留）
+
+**产品目标：** 网站运营人员可以不改代码、不登录服务器、不直接操作 R2，独立完成首页品牌 Campaign 主视觉的日常维护。Campaign 管理是 Homepage 管理能力的一部分，面向非开发运营人员设计。
+
+#### 15.11.1 后台入口与页面结构
+
+- 后台入口：沿用现有 `Storefront → Homepage` 路由和页面，增加 `Hero Campaign` 区域或 Tab；现有 New Arrivals / Homepage Collections 配置不受影响。
+- Campaign 列表展示：名称、预览缩略图、状态（Draft / Scheduled / Published / Disabled / Expired）、生效时间、更新时间、操作者。
+- 提供创建、编辑、复制为新 Campaign、预览、发布、停用等操作。
+- 同一时间同一市场/语言范围只允许一个 Campaign 成为当前主展示；冲突时按明确优先级解决，不得随机选择。
+- 必须有一个 Default Campaign 作为长期兜底。活动 Campaign 到期、被停用或资源异常时自动回退 Default，不允许首页出现空白 Hero。
+- 后台表单复用现有 Admin 表单、媒体选择器、上传组件、RBAC、审计日志、校验和 toast 规范。
+
+#### 15.11.2 Campaign 字段清单
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| Campaign Name | 是 | 后台识别名称，例如 Evergreen Brand Campaign / Christmas 2026 |
+| Campaign Key / Slug | 是 | 稳定唯一标识，供内部引用，不作为公开 URL |
+| Status | 是 | Draft / Scheduled / Published / Disabled；Expired 可由系统计算 |
+| Desktop Hero Image | 发布时必填 | 桌面宽幅主图 |
+| Mobile Hero Image | 发布时必填 | 手机专用构图；不能默认强制复用桌面图 |
+| Desktop Image Alt | 是 | 图片语义描述；装饰图按无障碍规则处理 |
+| Mobile Image Alt | 是 | 图片语义描述 |
+| Eyebrow | 否 | 例如 TOY STUDIO · FACTORY DIRECT · B2B |
+| Headline | 是 | 支持现有 locale；至少覆盖默认语言 |
+| Description | 否 | 简短品牌说明 |
+| Primary CTA Label | 是 | 默认 Browse Products |
+| Primary CTA Target | 是 | 第一版白名单：Products 页面；不得接受任意危险 URL |
+| Secondary CTA Label | 是 | 默认 WhatsApp Inquiry |
+| Secondary CTA Target | 是 | 第一版使用现有 WhatsApp CTA 行为，不存任意脚本或任意 URL |
+| Start At / End At | 否 | Campaign 生效窗口，明确使用站点配置时区并存 UTC |
+| Market / Locale Scope | 否 | 若项目现有站点配置支持市场/语言范围则复用；否则第一版默认全站/全部支持语言 |
+| Priority | 否 | 仅在允许多个 Campaign 规则并存时使用；数值范围和排序规则需明确 |
+| Focal Point | 否 | 桌面和移动端分别设置图片焦点位置，避免裁切关键产品 |
+| Internal Notes | 否 | 仅后台可见，不进入公开 DTO |
+
+**发布校验：**
+- 必须存在可访问的桌面图和移动图；图片 MIME、大小、尺寸、比例均需校验。
+- 必须有默认语言标题；CTA 标签和目标必须通过白名单校验。
+- Start At 必须早于 End At；时间范围冲突必须在保存/发布时阻止或要求明确解决。
+- 未发布 Campaign 不得进入公开 DTO。
+- 停用/过期 Campaign 不得继续展示；必须安全回退 Default。
+- 删除已被历史页面/配置引用的媒体前，需检查引用关系；不能直接删除仍被使用的 R2 对象。
+
+#### 15.11.3 媒体上传与 R2 约束
+
+- 优先复用现有 R2 上传签名/上传 API、MediaAsset 记录、图片处理、缩略图、CDN URL 和访问控制；不得在 Admin 页面直接拼接或暴露 R2 凭据。
+- 原图与优化变体需可追溯；后台显示预览、文件大小、图片尺寸、上传状态和错误原因。
+- 推荐桌面图源文件比例 16:9 或更宽，建议源图 2400×1350 起；移动图建议 4:5 / 3:4，建议源图 1200×1500 或 1200×1600。尺寸只是建议值，实际校验需结合图片管线与性能预算制定。
+- 输出 WebP/AVIF 等优化格式并提供响应式资源；保留源文件和媒体引用记录。
+- 前台公开 DTO 只返回当前有效 Campaign 所需的公开字段与可访问 CDN URL；不返回 R2 内部 bucket、凭据、对象管理信息或后台备注。
+- 图片替换后需触发相关缓存 revalidation；发布、定时生效、到期、停用均需有可靠缓存刷新机制。
+- 媒体缺失、CDN 404 或图片加载失败时使用 Default Campaign fallback。
+
+#### 15.11.4 预览、发布和运营工作流
+
+1. 管理员创建 Draft Campaign。
+2. 上传桌面图和移动图，填写各语言文案、alt、CTA、活动时间。
+3. 在后台分别预览 Desktop / Tablet / Mobile；预览必须使用真实图片资源和最终叠字效果。
+4. 校验图片裁切焦点、标题长度、CTA 可读性和链接目标。
+5. 保存 Draft；Draft 不影响线上首页。
+6. 管理员明确点击 Publish 或 Schedule；发布/定时操作写入审计日志。
+7. 当前 Campaign 生效后，首页读取最新公开 Campaign；结束或停用后回退 Default。
+8. 运营可复制上一年度 Campaign 作为新草稿，但新草稿必须重新确认图片、日期和文案。
+
+第一版可不做复杂的可视化拖拽编辑器；提供清晰表单、桌面/移动预览和发布流程即可。
+
+#### 15.11.5 权限、审计与安全
+
+- 仅具有 Homepage/Campaign 对应权限的管理员可创建、编辑、发布、停用 Campaign；普通运营只读角色按现有 RBAC 约定处理。
+- 发布、停用、修改生效时间、替换图片必须记录操作者、时间、动作和关键字段变更。
+- 所有写操作服务端重新校验；不能只依赖前端表单校验。
+- CTA 目标使用枚举/白名单，不允许注入 javascript:、data: 等协议。
+- 公共接口不得返回 Draft、Disabled、Expired Campaign 或内部备注。
+- 上传文件校验真实 MIME、文件大小和图片可解码性；不接受可执行文件伪装成图片。
+- 保持现有 CSRF、认证、权限、速率限制和审计规范。
+
+#### 15.11.6 数据模型与 API 决策门禁
+
+- 第一优先级：检查现有 Ads / Home Hero / GlobalSetting / MediaAsset 能力是否已经支持 desktop/mobile 双图、语言文案、状态、排期、优先级、预览、审计和安全发布。
+- 若现有 Ads 模型能满足，优先在现有模型/管理页面上扩展，不创建重复 Campaign 表。
+- 若不能满足，提交 ADR，比较扩展 Ads 与独立 HomepageCampaign 模型的字段、关系、索引、唯一约束、迁移风险、API DTO、缓存标签、权限和审计成本。
+- 只有经用户批准方案后，才能新增 Prisma 模型/migration、Admin API、Public DTO 和后台管理 UI。
+- 不得为了赶进度把图片 URL 硬编码进 `page.tsx`、CSS、环境变量或代码常量；环境变量不能替代运营后台。
+- 公开首页只获取当前生效的一个 Campaign，不把整个后台 Campaign 列表暴露给 Storefront。
+- 不得影响现有 Hero Ads 兼容逻辑；切换期间应定义明确优先级和 fallback，并有回归测试。
+
+#### 15.11.7 验收标准
+
+- Admin 可创建 Draft、编辑、预览、发布、定时发布、停用 Campaign。
+- Admin 可分别上传和替换桌面图/移动图，图片走现有安全媒体管线。
+- 未发布/已停用/已过期 Campaign 不会出现在公开首页。
+- 定时开始和结束按站点时区规则正确生效；边界时刻测试通过。
+- 同时存在多个候选 Campaign 时，优先级/冲突规则稳定且可解释。
+- 当前 Campaign 图片失效时自动显示 Default，不出现空白 Hero。
+- 后台预览与真实 Storefront 的图片、文案、CTA 一致。
+- 不同 locale 的文案正确，缺失翻译按默认语言 fallback。
+- Publish / Schedule / Disable 操作具有审计记录。
+- 公共 DTO 不含内部备注、R2 凭据、未发布内容或价格字段。
+- Campaign 修改后 CDN/页面缓存按预期刷新。
+- 现有 Homepage Collections、New Arrivals、Products、Inquiry List、WhatsApp 不回归。
 
 ### 15.10 本次冻结后的阶段门禁与 VS Code AI 执行提示词
 
